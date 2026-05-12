@@ -1,5 +1,9 @@
 DiskPulse
 
+<img width="2289" height="1814" alt="image" src="https://github.com/user-attachments/assets/2de353c6-e683-4c48-bdfa-f9b1c54bb62f" />
+
+
+
 中文介绍
 
 DiskPulse 是一个基于 HTML 的轻量级磁盘检测与对比分析工具。
@@ -15,3 +19,5 @@ DiskPulse is a lightweight HTML-based disk monitoring and comparison tool.
 It records disk scan results and compares them with previous data to analyze changes in disk status. It can calculate percentage drops in performance or health-related metrics, helping users understand whether their disk condition has noticeably declined.
 
 The project focuses on simplicity, lightweight design, and a clean user interface, making it suitable for local disk status tracking, comparison, and visual analysis.
+
+
