@@ -1,6 +1,8 @@
-DiskPulse
+# DiskPulse
 
-中文介绍
+![DiskPulse](project-diskpulse.jpg)
+
+## 中文介绍
 
 DiskPulse 是一个基于 HTML 的轻量级磁盘检测与对比分析工具。
 
@@ -8,7 +10,7 @@ DiskPulse 是一个基于 HTML 的轻量级磁盘检测与对比分析工具。
 
 本项目注重简洁、轻量和优雅的界面设计，适合作为本地化磁盘状态记录、对比和可视化分析工具使用。
 
-English Introduction
+## English Introduction
 
 DiskPulse is a lightweight HTML-based disk monitoring and comparison tool.
 
