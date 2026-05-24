@@ -10,7 +10,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $logFile  = "storage_history.csv"
-$htmlFile = "disk_monitor.html"
+$htmlFile = "DiskPulse.html"
 $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
 $maxHistoryRows = 3650
 
