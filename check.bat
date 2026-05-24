@@ -9,7 +9,7 @@ exit /b
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$logFile  = "storage_history.csv"
+$logFile  = "DiskPulse.csv"
 $htmlFile = "DiskPulse.html"
 $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
 $maxHistoryRows = 3650
@@ -589,7 +589,7 @@ $html = @'
       <label class="toggle"><input id="compact" type="checkbox">紧凑</label>
       <button class="button" id="themeBtn">主题</button>
       <button class="button" id="copy">复制摘要</button>
-      <a class="button" href="storage_history.csv" download>下载历史</a>
+      <a class="button" href="DiskPulse.csv" download>下载历史</a>
     </div>
   </header>
 

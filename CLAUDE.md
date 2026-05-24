@@ -9,7 +9,7 @@ DiskPulse is a zero-dependency Windows disk storage monitor. A single polyglot B
 ## Files
 
 - `check.bat` — the entire backend (polyglot: BAT preamble on lines 1-6 invokes the PowerShell code on lines 9-863)
-- `storage_history.csv` — historical data store (columns: Timestamp, ID, Total, Free, Used, Percent; capped at 3650 rows; deduped — identical consecutive samples are skipped)
+- `DiskPulse.csv` — historical data store (columns: Timestamp, ID, Total, Free, Used, Percent; capped at 3650 rows; deduped — identical consecutive samples are skipped)
 - `disk_monitor.html` — generated output artifact, overwritten each run (not hand-edited)
 
 ## How to Run
@@ -41,7 +41,7 @@ The HTML template is a full single-page app embedded in the PowerShell here-stri
 
 ## Key Constants (in check.bat)
 
-- `$logFile` = `"storage_history.csv"` (line 12)
+- `$logFile` = `"DiskPulse.csv"` (line 12)
 - `$htmlFile` = `"disk_monitor.html"` (line 13)
 - `$maxHistoryRows` = `3650` (line 15)
 
