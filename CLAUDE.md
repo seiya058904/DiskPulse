@@ -37,7 +37,6 @@ The HTML template is a full single-page app embedded in the PowerShell here-stri
 - Keyboard shortcut 'C' to toggle compact mode
 - Pre-indexed history map for fast per-drive lookups
 - Linear regression for days-until-full estimation (last 20 samples)
-- Next-run sampling time indicator
 
 ## Key Constants (in check.bat)
 

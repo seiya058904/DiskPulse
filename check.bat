@@ -575,7 +575,6 @@ $html = @'
       <div class="eyebrow">System Storage</div>
       <h1>磁盘容量看板</h1>
       <div class="timestamp" id="ts"></div>
-      <div class="timestamp" id="nextRun" style="font-size:11px;margin-top:4px"></div>
     </div>
     <div class="actions">
       <input class="search" id="search" type="search" placeholder="筛选盘符">
@@ -634,19 +633,6 @@ const $ = (id) => document.getElementById(id);
 
 $("ts").textContent = "更新于 " + TS;
 $("footer").textContent = "历史记录保留最近 " + HISTORY.length + " 条采样";
-
-(function() {
-  var last = new Date(TS.replace(/-/g, "/"));
-  var next = new Date(last.getTime() + 3600000);
-  var now = new Date();
-  var diffMs = next - now;
-  var el = $("nextRun");
-  if (diffMs > 0) {
-    el.textContent = "下次采样预计 " + Math.round(diffMs / 60000) + " 分钟后";
-  } else {
-    el.textContent = "下次采样应已到期，请检查计划任务";
-  }
-})();
 
 function fmt(gb) {
   const value = Number(gb) || 0;
