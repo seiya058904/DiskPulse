@@ -496,6 +496,13 @@ $html = @'
     font-weight: 800;
   }
 
+  .mini small {
+    display: block;
+    color: var(--muted);
+    font-size: 11px;
+    margin-top: 4px;
+  }
+
   .spark-row {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
@@ -759,6 +766,7 @@ function renderCards() {
   $("grid").innerHTML = drives.map((d) => {
     const rows = historyFor(d.id);
     const lastSeen = rows.length ? rows[rows.length - 1].Timestamp : TS;
+    const prev = rows.length >= 2 ? rows[rows.length - 2] : null;
     return `
       <article class="card ${d.status}">
         <div class="card-top">
@@ -770,9 +778,9 @@ function renderCards() {
         </div>
         <div class="bar-track"><div class="bar-fill" data-w="${d.percent}%"></div></div>
         <div class="meta">
-          <div class="mini"><span>已用</span><b>${fmt(d.used)}</b></div>
-          <div class="mini"><span>剩余</span><b>${fmt(d.free)}</b></div>
-          <div class="mini"><span>总量</span><b>${fmt(d.total)}</b></div>
+          <div class="mini"><span>已用</span><b>${fmt(d.used)}</b>${prev ? `<small>上次 ${fmt(prev.Used)}</small>` : ""}</div>
+          <div class="mini"><span>剩余</span><b>${fmt(d.free)}</b>${prev ? `<small>上次 ${fmt(prev.Free)}</small>` : ""}</div>
+          <div class="mini"><span>总量</span><b>${fmt(d.total)}</b>${prev ? `<small>上次 ${fmt(prev.Total)}</small>` : ""}</div>
         </div>
         <div class="spark-row">
           ${sparkline(rows)}
