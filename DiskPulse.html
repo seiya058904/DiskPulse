@@ -213,6 +213,13 @@
     line-height: 1.35;
   }
 
+  .metric-prev {
+    color: var(--orange);
+    font-size: 13px;
+    font-weight: 700;
+    margin: 6px 0 4px;
+  }
+
   .insights {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
@@ -448,7 +455,7 @@
 <script>
 const DATA = [{"id":"C:","total":300,"free":196.44,"used":103.56,"percent":34.5,"diff":0.01,"status":"good"},{"id":"D:","total":500,"free":320.6,"used":179.4,"percent":35.9,"diff":0,"status":"good"},{"id":"E:","total":1107.41,"free":577.93,"used":529.48,"percent":47.8,"diff":0,"status":"good"}];
 const HISTORY = [{"Timestamp":"2026-05-08 07:36:28","ID":"D:","Total":0,"Free":0,"Used":282.06,"Percent":0},{"Timestamp":"2026-05-08 07:36:28","ID":"C:","Total":0,"Free":0,"Used":99.43,"Percent":0},{"Timestamp":"2026-05-08 07:36:28","ID":"E:","Total":0,"Free":0,"Used":529.13,"Percent":0},{"Timestamp":"2026-05-09 07:36:28","ID":"D:","Total":500,"Free":217.94,"Used":282.06,"Percent":56.4},{"Timestamp":"2026-05-09 07:36:28","ID":"C:","Total":300,"Free":200.54,"Used":99.46,"Percent":33.2},{"Timestamp":"2026-05-09 07:36:28","ID":"E:","Total":1107.41,"Free":578.28,"Used":529.13,"Percent":47.8},{"Timestamp":"2026-05-09 07:38:55","ID":"C:","Total":300,"Free":200.53,"Used":99.47,"Percent":33.2},{"Timestamp":"2026-05-09 07:38:55","ID":"D:","Total":500,"Free":217.94,"Used":282.06,"Percent":56.4},{"Timestamp":"2026-05-09 07:38:55","ID":"E:","Total":1107.41,"Free":578.28,"Used":529.13,"Percent":47.8},{"Timestamp":"2026-05-09 07:39:24","ID":"C:","Total":300,"Free":200.53,"Used":99.47,"Percent":33.2},{"Timestamp":"2026-05-09 07:39:24","ID":"D:","Total":500,"Free":217.94,"Used":282.06,"Percent":56.4},{"Timestamp":"2026-05-09 07:39:24","ID":"E:","Total":1107.41,"Free":578.28,"Used":529.13,"Percent":47.8},{"Timestamp":"2026-05-09 07:39:43","ID":"C:","Total":300,"Free":200.53,"Used":99.47,"Percent":33.2},{"Timestamp":"2026-05-09 07:39:43","ID":"D:","Total":500,"Free":217.94,"Used":282.06,"Percent":56.4},{"Timestamp":"2026-05-09 07:39:43","ID":"E:","Total":1107.41,"Free":578.28,"Used":529.13,"Percent":47.8},{"Timestamp":"2026-05-09 07:41:06","ID":"C:","Total":300,"Free":200.51,"Used":99.49,"Percent":33.2},{"Timestamp":"2026-05-09 07:41:06","ID":"D:","Total":500,"Free":217.94,"Used":282.06,"Percent":56.4},{"Timestamp":"2026-05-09 07:41:06","ID":"E:","Total":1107.41,"Free":578.28,"Used":529.13,"Percent":47.8},{"Timestamp":"2026-05-09 08:02:47","ID":"C:","Total":300,"Free":200.5,"Used":99.5,"Percent":33.2},{"Timestamp":"2026-05-09 08:02:47","ID":"D:","Total":500,"Free":217.94,"Used":282.06,"Percent":56.4},{"Timestamp":"2026-05-09 08:02:47","ID":"E:","Total":1107.41,"Free":578.28,"Used":529.13,"Percent":47.8},{"Timestamp":"2026-05-09 11:11:23","ID":"C:","Total":300,"Free":199.61,"Used":100.39,"Percent":33.5},{"Timestamp":"2026-05-09 11:11:23","ID":"D:","Total":500,"Free":217.91,"Used":282.09,"Percent":56.4},{"Timestamp":"2026-05-09 11:11:23","ID":"E:","Total":1107.41,"Free":578.23,"Used":529.18,"Percent":47.8},{"Timestamp":"2026-05-09 15:29:08","ID":"C:","Total":300,"Free":190.7,"Used":109.3,"Percent":36.4},{"Timestamp":"2026-05-09 15:29:08","ID":"D:","Total":500,"Free":217.94,"Used":282.06,"Percent":56.4},{"Timestamp":"2026-05-09 15:29:08","ID":"E:","Total":1107.41,"Free":578.46,"Used":528.95,"Percent":47.8},{"Timestamp":"2026-05-09 15:56:48","ID":"C:","Total":300,"Free":204.53,"Used":95.47,"Percent":31.8},{"Timestamp":"2026-05-09 15:56:48","ID":"D:","Total":500,"Free":217.94,"Used":282.06,"Percent":56.4},{"Timestamp":"2026-05-09 15:56:48","ID":"E:","Total":1107.41,"Free":578.46,"Used":528.95,"Percent":47.8},{"Timestamp":"2026-05-09 15:56:51","ID":"C:","Total":300,"Free":204.53,"Used":95.47,"Percent":31.8},{"Timestamp":"2026-05-09 15:56:51","ID":"D:","Total":500,"Free":217.94,"Used":282.06,"Percent":56.4},{"Timestamp":"2026-05-09 15:56:51","ID":"E:","Total":1107.41,"Free":578.46,"Used":528.95,"Percent":47.8},{"Timestamp":"2026-05-10 11:39:52","ID":"C:","Total":300,"Free":202.83,"Used":97.17,"Percent":32.4},{"Timestamp":"2026-05-10 11:39:52","ID":"D:","Total":500,"Free":217.94,"Used":282.06,"Percent":56.4},{"Timestamp":"2026-05-10 11:39:52","ID":"E:","Total":1107.41,"Free":578.46,"Used":528.95,"Percent":47.8},{"Timestamp":"2026-05-10 21:20:51","ID":"C:","Total":300,"Free":200.03,"Used":99.97,"Percent":33.3},{"Timestamp":"2026-05-10 21:20:51","ID":"D:","Total":500,"Free":217.93,"Used":282.07,"Percent":56.4},{"Timestamp":"2026-05-10 21:20:51","ID":"E:","Total":1107.41,"Free":578.45,"Used":528.96,"Percent":47.8},{"Timestamp":"2026-05-11 12:19:47","ID":"C:","Total":300,"Free":195.74,"Used":104.26,"Percent":34.8},{"Timestamp":"2026-05-11 12:19:47","ID":"D:","Total":500,"Free":217.92,"Used":282.08,"Percent":56.4},{"Timestamp":"2026-05-11 12:19:47","ID":"E:","Total":1107.41,"Free":578.45,"Used":528.96,"Percent":47.8},{"Timestamp":"2026-05-12 19:41:47","ID":"C:","Total":300,"Free":200.38,"Used":99.62,"Percent":33.2},{"Timestamp":"2026-05-12 19:41:47","ID":"D:","Total":500,"Free":217.75,"Used":282.25,"Percent":56.4},{"Timestamp":"2026-05-12 19:41:47","ID":"E:","Total":1107.41,"Free":578.41,"Used":529,"Percent":47.8},{"Timestamp":"2026-05-15 16:51:13","ID":"C:","Total":300,"Free":197.34,"Used":102.66,"Percent":34.2},{"Timestamp":"2026-05-15 16:51:13","ID":"D:","Total":500,"Free":217.42,"Used":282.58,"Percent":56.5},{"Timestamp":"2026-05-15 16:51:13","ID":"E:","Total":1107.41,"Free":577.75,"Used":529.66,"Percent":47.8},{"Timestamp":"2026-05-15 22:12:43","ID":"C:","Total":300,"Free":195.88,"Used":104.12,"Percent":34.7},{"Timestamp":"2026-05-15 22:12:43","ID":"D:","Total":500,"Free":216.54,"Used":283.46,"Percent":56.7},{"Timestamp":"2026-05-15 22:12:43","ID":"E:","Total":1107.41,"Free":577.74,"Used":529.67,"Percent":47.8},{"Timestamp":"2026-05-18 23:37:09","ID":"C:","Total":300,"Free":201.01,"Used":98.99,"Percent":33},{"Timestamp":"2026-05-18 23:37:09","ID":"D:","Total":500,"Free":324.5,"Used":175.5,"Percent":35.1},{"Timestamp":"2026-05-18 23:37:09","ID":"E:","Total":1107.41,"Free":577.71,"Used":529.7,"Percent":47.8},{"Timestamp":"2026-05-20 08:02:50","ID":"C:","Total":300,"Free":198.93,"Used":101.07,"Percent":33.7},{"Timestamp":"2026-05-20 08:02:50","ID":"D:","Total":500,"Free":324.47,"Used":175.53,"Percent":35.1},{"Timestamp":"2026-05-20 08:02:50","ID":"E:","Total":1107.41,"Free":577.7,"Used":529.71,"Percent":47.8},{"Timestamp":"2026-05-20 17:38:57","ID":"C:","Total":300,"Free":201.06,"Used":98.94,"Percent":33},{"Timestamp":"2026-05-20 17:38:57","ID":"D:","Total":500,"Free":323.54,"Used":176.46,"Percent":35.3},{"Timestamp":"2026-05-20 17:38:57","ID":"E:","Total":1107.41,"Free":577.66,"Used":529.75,"Percent":47.8},{"Timestamp":"2026-05-21 10:33:07","ID":"C:","Total":300,"Free":200.04,"Used":99.96,"Percent":33.3},{"Timestamp":"2026-05-21 10:33:07","ID":"D:","Total":500,"Free":324.02,"Used":175.98,"Percent":35.2},{"Timestamp":"2026-05-21 10:33:07","ID":"E:","Total":1107.41,"Free":578.03,"Used":529.38,"Percent":47.8},{"Timestamp":"2026-05-24 16:27:54","ID":"C:","Total":300,"Free":195.61,"Used":104.39,"Percent":34.8},{"Timestamp":"2026-05-24 16:27:54","ID":"D:","Total":500,"Free":320.63,"Used":179.37,"Percent":35.9},{"Timestamp":"2026-05-24 16:27:54","ID":"E:","Total":1107.41,"Free":577.91,"Used":529.5,"Percent":47.8},{"Timestamp":"2026-05-24 16:35:31","ID":"C:","Total":300,"Free":195.63,"Used":104.37,"Percent":34.8},{"Timestamp":"2026-05-25 10:10:23","ID":"C:","Total":300,"Free":196.48,"Used":103.52,"Percent":34.5},{"Timestamp":"2026-05-25 10:10:23","ID":"D:","Total":500,"Free":320.6,"Used":179.4,"Percent":35.9},{"Timestamp":"2026-05-25 10:10:23","ID":"E:","Total":1107.41,"Free":577.96,"Used":529.45,"Percent":47.8},{"Timestamp":"2026-05-25 10:12:58","ID":"C:","Total":300,"Free":196.46,"Used":103.54,"Percent":34.5},{"Timestamp":"2026-05-25 10:12:58","ID":"E:","Total":1107.41,"Free":577.93,"Used":529.48,"Percent":47.8},{"Timestamp":"2026-05-25 10:16:04","ID":"C:","Total":300,"Free":196.45,"Used":103.55,"Percent":34.5}];
-const TS = "2026-05-25 10:26:45";
+const TS = "2026-05-25 10:28:42";
 
 const historyMap = {};
 HISTORY.forEach((row) => {
@@ -552,8 +559,27 @@ function totals() {
   }, { total: 0, used: 0, free: 0, diff: 0 });
 }
 
+function prevTotals() {
+  var timestamps = {};
+  HISTORY.forEach(function(r) {
+    var ts = String(r.Timestamp);
+    timestamps[ts] = true;
+  });
+  var sorted = Object.keys(timestamps).sort();
+  if (sorted.length < 2) return null;
+  var prevTs = sorted[sorted.length - 2];
+  var prevRows = HISTORY.filter(function(r) { return String(r.Timestamp) === prevTs; });
+  return prevRows.reduce(function(acc, r) {
+    acc.total += Number(r.Total) || 0;
+    acc.used += Number(r.Used) || 0;
+    acc.free += Number(r.Free) || 0;
+    return acc;
+  }, { total: 0, used: 0, free: 0 });
+}
+
 function renderOverview() {
   const t = totals();
+  const pt = prevTotals();
   const overallPct = t.total > 0 ? (t.used / t.total) * 100 : 0;
   const mostFull = [...DATA].sort((a, b) => b.percent - a.percent)[0];
   const fastest = [...DATA].sort((a, b) => b.diff - a.diff)[0];
@@ -565,9 +591,9 @@ function renderOverview() {
         <div class="overall-copy">共 ${DATA.length} 个磁盘，已用 ${fmt(t.used)}，剩余 ${fmt(t.free)}。本次采样较上次${t.diff >= 0 ? "增加" : "减少"} ${fmt(Math.abs(t.diff))}。</div>
       </div>
     </article>
-    ${metric("总容量", fmt(t.total), "所有本地固定磁盘合计")}
-    ${metric("已使用", fmt(t.used), "当前占用空间")}
-    ${metric("剩余", fmt(t.free), "可继续写入空间")}
+    ${metric("总容量", fmt(t.total), "所有本地固定磁盘合计", pt ? fmt(pt.total) : "")}
+    ${metric("已使用", fmt(t.used), "当前占用空间", pt ? fmt(pt.used) : "")}
+    ${metric("剩余", fmt(t.free), "可继续写入空间", pt ? fmt(pt.free) : "")}
     ${metric("最高使用率", mostFull ? `${mostFull.id} ${pct(mostFull.percent)}` : "-", mostFull ? statusText(mostFull.status) : "-")}
   `;
   $("insights").innerHTML = [
@@ -577,8 +603,9 @@ function renderOverview() {
   ].join("");
 }
 
-function metric(label, value, note) {
-  return `<article class="metric"><div class="metric-label">${label}</div><div class="metric-value">${value}</div><div class="metric-note">${note}</div></article>`;
+function metric(label, value, note, prev) {
+  var prevHtml = prev ? '<div class="metric-prev">上次 ' + prev + '</div>' : '';
+  return `<article class="metric"><div class="metric-label">${label}</div><div class="metric-value">${value}</div>${prevHtml}<div class="metric-note">${note}</div></article>`;
 }
 
 function insight(title, body, status = "good") {

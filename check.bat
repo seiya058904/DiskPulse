@@ -377,6 +377,13 @@ $html = @'
     line-height: 1.35;
   }
 
+  .metric-prev {
+    color: var(--orange);
+    font-size: 13px;
+    font-weight: 700;
+    margin: 6px 0 4px;
+  }
+
   .insights {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
@@ -716,8 +723,27 @@ function totals() {
   }, { total: 0, used: 0, free: 0, diff: 0 });
 }
 
+function prevTotals() {
+  var timestamps = {};
+  HISTORY.forEach(function(r) {
+    var ts = String(r.Timestamp);
+    timestamps[ts] = true;
+  });
+  var sorted = Object.keys(timestamps).sort();
+  if (sorted.length < 2) return null;
+  var prevTs = sorted[sorted.length - 2];
+  var prevRows = HISTORY.filter(function(r) { return String(r.Timestamp) === prevTs; });
+  return prevRows.reduce(function(acc, r) {
+    acc.total += Number(r.Total) || 0;
+    acc.used += Number(r.Used) || 0;
+    acc.free += Number(r.Free) || 0;
+    return acc;
+  }, { total: 0, used: 0, free: 0 });
+}
+
 function renderOverview() {
   const t = totals();
+  const pt = prevTotals();
   const overallPct = t.total > 0 ? (t.used / t.total) * 100 : 0;
   const mostFull = [...DATA].sort((a, b) => b.percent - a.percent)[0];
   const fastest = [...DATA].sort((a, b) => b.diff - a.diff)[0];
@@ -729,9 +755,9 @@ function renderOverview() {
         <div class="overall-copy">共 ${DATA.length} 个磁盘，已用 ${fmt(t.used)}，剩余 ${fmt(t.free)}。本次采样较上次${t.diff >= 0 ? "增加" : "减少"} ${fmt(Math.abs(t.diff))}。</div>
       </div>
     </article>
-    ${metric("总容量", fmt(t.total), "所有本地固定磁盘合计")}
-    ${metric("已使用", fmt(t.used), "当前占用空间")}
-    ${metric("剩余", fmt(t.free), "可继续写入空间")}
+    ${metric("总容量", fmt(t.total), "所有本地固定磁盘合计", pt ? fmt(pt.total) : "")}
+    ${metric("已使用", fmt(t.used), "当前占用空间", pt ? fmt(pt.used) : "")}
+    ${metric("剩余", fmt(t.free), "可继续写入空间", pt ? fmt(pt.free) : "")}
     ${metric("最高使用率", mostFull ? `${mostFull.id} ${pct(mostFull.percent)}` : "-", mostFull ? statusText(mostFull.status) : "-")}
   `;
   $("insights").innerHTML = [
@@ -741,8 +767,9 @@ function renderOverview() {
   ].join("");
 }
 
-function metric(label, value, note) {
-  return `<article class="metric"><div class="metric-label">${label}</div><div class="metric-value">${value}</div><div class="metric-note">${note}</div></article>`;
+function metric(label, value, note, prev) {
+  var prevHtml = prev ? '<div class="metric-prev">上次 ' + prev + '</div>' : '';
+  return `<article class="metric"><div class="metric-label">${label}</div><div class="metric-value">${value}</div>${prevHtml}<div class="metric-note">${note}</div></article>`;
 }
 
 function insight(title, body, status = "good") {
