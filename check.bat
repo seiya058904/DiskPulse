@@ -498,9 +498,12 @@ $html = @'
 
   .mini small {
     display: block;
-    color: var(--muted);
-    font-size: 11px;
-    margin-top: 4px;
+    color: var(--orange);
+    font-size: 12px;
+    font-weight: 700;
+    margin-top: 6px;
+    padding-top: 4px;
+    border-top: 1px dashed var(--line);
   }
 
   .spark-row {
@@ -767,6 +770,9 @@ function renderCards() {
     const rows = historyFor(d.id);
     const lastSeen = rows.length ? rows[rows.length - 1].Timestamp : TS;
     const prev = rows.length >= 2 ? rows[rows.length - 2] : null;
+    const prevUsed = prev ? '<small>上次 ' + fmt(prev.Used) + '</small>' : '';
+    const prevFree = prev ? '<small>上次 ' + fmt(prev.Free) + '</small>' : '';
+    const prevTotal = prev ? '<small>上次 ' + fmt(prev.Total) + '</small>' : '';
     return `
       <article class="card ${d.status}">
         <div class="card-top">
@@ -778,9 +784,9 @@ function renderCards() {
         </div>
         <div class="bar-track"><div class="bar-fill" data-w="${d.percent}%"></div></div>
         <div class="meta">
-          <div class="mini"><span>已用</span><b>${fmt(d.used)}</b>${prev ? `<small>上次 ${fmt(prev.Used)}</small>` : ""}</div>
-          <div class="mini"><span>剩余</span><b>${fmt(d.free)}</b>${prev ? `<small>上次 ${fmt(prev.Free)}</small>` : ""}</div>
-          <div class="mini"><span>总量</span><b>${fmt(d.total)}</b>${prev ? `<small>上次 ${fmt(prev.Total)}</small>` : ""}</div>
+          <div class="mini"><span>已用</span><b>${fmt(d.used)}</b>${prevUsed}</div>
+          <div class="mini"><span>剩余</span><b>${fmt(d.free)}</b>${prevFree}</div>
+          <div class="mini"><span>总量</span><b>${fmt(d.total)}</b>${prevTotal}</div>
         </div>
         <div class="spark-row">
           ${sparkline(rows)}
