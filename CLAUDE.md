@@ -8,9 +8,9 @@ DiskPulse is a zero-dependency Windows disk storage monitor. A single polyglot B
 
 ## Files
 
-- `check.bat` — the entire backend (polyglot: BAT preamble on lines 1-6 invokes the PowerShell code on lines 9-863)
+- `check.bat` — the entire backend (polyglot: BAT preamble on lines 1-6 invokes the PowerShell code on lines 9-885)
 - `DiskPulse.csv` — historical data store (columns: Timestamp, ID, Total, Free, Used, Percent; capped at 3650 rows; deduped — identical consecutive samples are skipped)
-- `disk_monitor.html` — generated output artifact, overwritten each run (not hand-edited)
+- `DiskPulse.html` — generated output artifact, overwritten each run (not hand-edited)
 
 ## How to Run
 
@@ -28,8 +28,8 @@ The PowerShell code in `check.bat` follows a linear pipeline:
 2. **Query disks** (lines 87-105) — primary: `Get-CimInstance Win32_LogicalDisk` (DriveType 3); fallback: `[System.IO.DriveInfo]::GetDrives()`
 3. **Compute metrics** (lines 108-150) — per-drive GB values, usage %, diff vs last sample, status thresholds (good <75%, warning 75-89%, critical >=90%). Critical drives trigger a Windows balloon notification. CSV dedup: skips appending if data matches previous sample.
 4. **Persist history** (lines 152-157) — trim to `$maxHistoryRows`, write CSV
-5. **Generate HTML** (lines 164-849) — a here-string template with three placeholders: `INJECT_DATA`, `INJECT_HISTORY`, `INJECT_TS`, replaced via string substitution (lines 851-853). Written as UTF-8 without BOM.
-6. **Open browser** (lines 858-863) — `Start-Process` on the HTML file
+5. **Generate HTML** (lines 164-871) — a here-string template with three placeholders: `INJECT_DATA`, `INJECT_HISTORY`, `INJECT_TS`, replaced via string substitution (lines 873-875). Written as UTF-8 without BOM.
+6. **Open browser** (lines 880-885) — `Start-Process` on the HTML file
 
 The HTML template is a full single-page app embedded in the PowerShell here-string. It contains all CSS and JavaScript inline. Features include:
 - Dark mode with manual toggle button (persists via localStorage, defaults to system preference)
@@ -42,7 +42,7 @@ The HTML template is a full single-page app embedded in the PowerShell here-stri
 ## Key Constants (in check.bat)
 
 - `$logFile` = `"DiskPulse.csv"` (line 12)
-- `$htmlFile` = `"disk_monitor.html"` (line 13)
+- `$htmlFile` = `"DiskPulse.html"` (line 13)
 - `$maxHistoryRows` = `3650` (line 15)
 
 ## Status Thresholds (line 117)
