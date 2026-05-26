@@ -1,6 +1,8 @@
 # DiskPulse
 
-![DiskPulse](project-diskpulse.jpg)
+
+<img width="1672" height="941" alt="project-diskpulse" src="https://github.com/user-attachments/assets/4b06b439-eb31-4c4f-9e0e-f17e7529a342" />
+
 
 ## 中文介绍
 
