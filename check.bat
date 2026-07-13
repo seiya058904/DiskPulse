@@ -854,7 +854,7 @@ foreach ($driveSnapshot in $snapshot.drives) {
     $baselineSnapshot = Find-DriveBaseline -Snapshots @($priorSnapshots) -Drive $driveSnapshot.drive -Current $snapshot
     $baselineDrive = if ($baselineSnapshot) { $baselineSnapshot.drives | Where-Object drive -eq $driveSnapshot.drive | Select-Object -First 1 } else { $null }
     $changes = Compare-DriveRecords $driveSnapshot $baselineDrive
-    $directoryResults.Add([PSCustomObject]@{ drive=$driveSnapshot.drive; status=$driveSnapshot.status; baselineScanId=if($baselineSnapshot){$baselineSnapshot.scanId}else{$null}; changes=$changes; coverage=Get-ChangeCoverage $driveSnapshot $baselineDrive $changes; errors=$driveSnapshot.errors; excluded=$driveSnapshot.excluded })
+    $directoryResults.Add([PSCustomObject]@{ drive=$driveSnapshot.drive; status=$driveSnapshot.status; baselineScanId=if($baselineSnapshot){$baselineSnapshot.scanId}else{$null}; baselineCompletedAt=if($baselineSnapshot){$baselineSnapshot.completedAt}else{$null}; changes=$changes; coverage=Get-ChangeCoverage $driveSnapshot $baselineDrive $changes; errors=$driveSnapshot.errors; unavailable=$driveSnapshot.unavailable; excluded=$driveSnapshot.excluded })
 }
 Invoke-SnapshotRetention $paths (@($priorSnapshots)+@($snapshot)) @($snapshot.drives.drive) $scanId
 
@@ -868,6 +868,7 @@ $historyRows | Export-Csv $logFile -NoTypeInformation -Force -Encoding UTF8
 $jsonArray = ConvertTo-JsonArray $currentResults
 $historyJson = ConvertTo-JsonArray $historyRows
 $directoryJson = ConvertTo-JsonArray ([object[]]$directoryResults)
+$scanMetaJson = $snapshot | Select-Object scanId,startedAt,completedAt,status,@{n='driveCount';e={@($_.drives).Count}} | ConvertTo-Json -Compress
 if ([string]::IsNullOrWhiteSpace($jsonArray)) { $jsonArray = "[]" }
 if ([string]::IsNullOrWhiteSpace($historyJson)) { $historyJson = "[]" }
 
@@ -919,6 +920,7 @@ $html = @'
     color: var(--text);
     min-height: 100vh;
     padding: 32px 20px 56px;
+    overflow-x: hidden;
   }
 
   .shell {
@@ -1215,7 +1217,7 @@ $html = @'
 
   .mini small {
     display: block;
-    color: var(--orange);
+    color: var(--muted);
     font-size: 12px;
     font-weight: 700;
     margin-top: 6px;
@@ -1251,10 +1253,6 @@ $html = @'
   .trend-st { color: var(--muted); font-weight: 700; }
 
   .directory-overview { margin: 16px 0; }
-  .change-summary { background: var(--panel); border-radius: 8px; padding: 20px; }
-  .change-head { display: flex; justify-content: space-between; gap: 18px; align-items: flex-start; margin-bottom: 16px; }
-  .change-head h2 { font-size: 20px; margin-bottom: 6px; }
-  .change-head p { color: var(--muted); line-height: 1.5; }
   .change-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
   .change-metric { background: var(--track); border-radius: 8px; padding: 12px; }
   .change-metric span { color: var(--muted); display: block; font-size: 12px; margin-bottom: 5px; }
@@ -1313,7 +1311,7 @@ $html = @'
   .section-intro { display: flex; justify-content: space-between; align-items: end; gap: 16px; margin: 30px 2px 12px; }
   .section-intro h2 { font-size: 20px; letter-spacing: -.015em; }
   .section-intro p { color: var(--muted); font-size: 13px; }
-  .panel, .metric, .card, .change-summary, .change-list { border: 0; border-radius: 16px; box-shadow: none; }
+  .panel, .metric, .card, .change-list { border: 0; border-radius: 16px; box-shadow: none; }
   .overview { gap: 10px; }
   .panel { padding: 22px; }
   .metric { padding: 20px; min-height: 124px; }
@@ -1323,9 +1321,6 @@ $html = @'
   .insight, .insight.warn, .insight.critical, .insight.good { border-left: 0; border-radius: 0; min-height: 82px; padding: 16px 18px; }
   .insight-title { text-transform: none; letter-spacing: 0; font-weight: 600; }
   .directory-overview { margin-top: 0; }
-  .change-summary { padding: 24px; }
-  .change-head h2 { font-size: 22px; letter-spacing: -.02em; }
-  .change-head p { max-width: 72ch; }
   .change-metrics { gap: 1px; overflow: hidden; border-radius: 12px; background: var(--line); }
   .change-metric { border-radius: 0; background: var(--track); padding: 14px 16px; }
   .change-controls { margin: 14px 0 10px; }
@@ -1334,6 +1329,7 @@ $html = @'
   .change-lists.single-sided { grid-template-columns: minmax(0, 1fr); }
   .change-lists.single-sided .change-list:has(> div > .baseline-guide) { display: none; }
   .change-list { padding: 18px 18px 8px; min-height: 0; }
+  .state-change-list { margin-top: 10px; }
   .change-item { min-height: 48px; }
   .growth-value { color: var(--orange); }
   .release-value { color: var(--green); }
@@ -1351,6 +1347,100 @@ $html = @'
   .directory-card-extra p { margin: 0; }
   footer { margin-top: 34px; }
   @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; } }
+
+  /* Frozen dashboard hierarchy: semantic color, quiet surfaces, no decorative motion. */
+  :root {
+    --bg: #f4f6f9; --panel: #ffffff; --track: #eef2f7; --line: #e5e7eb;
+    --text: #111827; --muted: #6b7280; --blue: #2563eb; --green: #059669;
+    --orange: #d97706; --red: #dc2626; --unknown: #64748b;
+  }
+  [data-theme="dark"] {
+    --bg: #0b0f17; --panel: #121826; --track: #182033; --line: #263244;
+    --text: #f3f6fa; --muted: #94a3b8; --blue: #2563eb; --green: #059669;
+    --orange: #d97706; --red: #dc2626; --unknown: #64748b;
+  }
+  .overview, .insights { display: block; margin: 0; background: transparent; border-radius: 0; overflow: visible; }
+  .summary-grid { display: grid; grid-template-columns: 1.05fr 1.65fr .9fr; grid-template-areas: "capacity change confidence"; gap: 12px; margin: 8px 0 14px; }
+  .summary-card, .system-conclusion, .scan-metadata { background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 22px; min-width: 0; }
+  .summary-card { transition: transform 160ms ease, border-color 160ms ease; }
+  .summary-card:hover { transform: translateY(-2px); }
+  .capacity-summary { grid-area: capacity; }
+  .latest-change { grid-area: change; color: #f3f6fa; background: linear-gradient(145deg,#111827,#1e293b); border-color: transparent; }
+  [data-theme="dark"] .latest-change { background: linear-gradient(145deg,#172033,#1e293b); }
+  .comparison-confidence { grid-area: confidence; }
+  .summary-label { color: var(--muted); font-size: 12px; font-weight: 700; margin-bottom: 14px; }
+  .latest-change .summary-label, .latest-change .summary-note { color: #aeb9c9; }
+  .summary-title { font-size: 20px; letter-spacing: -.02em; margin-bottom: 8px; }
+  .summary-note { color: var(--muted); font-size: 12px; line-height: 1.55; }
+  .capacity-layout { display: grid; grid-template-columns: 92px 1fr; gap: 16px; align-items: center; }
+  .capacity-layout .ring { width: 92px; }
+  .capacity-layout .ring span { font-size: 20px; }
+  .capacity-layout .summary-title { font-size: 18px; }
+  .summary-facts { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; margin-top: 16px; }
+  .summary-fact { min-width: 0; }
+  .summary-fact span { color: var(--muted); display: block; font-size: 11px; margin-bottom: 3px; }
+  .summary-fact b { font-size: 15px; }
+  .change-hero { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin: 3px 0 12px; }
+  .change-hero b { font-size: clamp(25px,3vw,36px); letter-spacing: -.04em; }
+  .latest-change .change-metrics { background: rgba(255,255,255,.12); }
+  .latest-change .change-metric { background: rgba(255,255,255,.06); }
+  .latest-change .change-metric span { color: #aeb9c9; }
+  .reliability-badge, .status-badge { display: inline-flex; align-items: center; width: fit-content; border-radius: 999px; padding: 6px 9px; font-size: 11px; font-weight: 700; }
+  .reliability-badge { color: #dff8ed; background: rgba(5,150,105,.25); }
+  .confidence-count { font-size: 34px; font-weight: 800; letter-spacing: -.04em; margin: 4px 0; }
+  .confidence-list { display: grid; gap: 8px; margin-top: 14px; font-size: 12px; color: var(--muted); }
+  .confidence-state.complete { color: var(--green); } .confidence-state.waiting { color: var(--unknown); }
+  .confidence-state.partial { color: var(--orange); } .confidence-state.failed { color: var(--red); }
+  .system-conclusion { padding: 15px 20px; }
+  .conclusion-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; }
+  .conclusion-item { display: grid; grid-template-columns: auto minmax(0,1fr); gap: 8px; align-items: center; min-width: 0; border-radius: 10px; background: var(--track); padding: 10px 12px; }
+  .conclusion-item span { color: var(--blue); font-size: 11px; font-weight: 800; }
+  .conclusion-item b { color: var(--text); font-size: 13px; font-weight: 650; line-height: 1.35; }
+  .change-controls { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); padding: 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; }
+  .change-controls .select, .change-controls .search { width: 100%; min-width: 0; background: var(--track); }
+  .change-item { grid-template-columns: minmax(0,1fr) auto; gap: 8px 12px; }
+  .change-main { min-width: 0; }
+  .change-path { display: block; font-weight: 650; }
+  .change-context { color: var(--muted); font-size: 11px; margin-top: 4px; }
+  .change-side { display: flex; gap: 9px; align-items: center; }
+  .change-lists.release-empty { grid-template-columns: 2fr 1fr; }
+  .change-lists.growth-empty { grid-template-columns: 1fr 2fr; }
+  .change-lists.release-empty .change-list:last-child, .change-lists.growth-empty .change-list:first-child { padding-bottom: 12px; }
+  .intensity-track { grid-column: 1/-1; height: 3px; border-radius: 99px; background: var(--track); overflow: hidden; }
+  .intensity-fill { display: block; height: 100%; width: var(--intensity); background: currentColor; transition: width 160ms ease; }
+  .contribution { color: var(--muted); font-size: 11px; white-space: nowrap; }
+  .grid { grid-template-columns: repeat(3,minmax(0,1fr)); }
+  .card { min-width: 0; }
+  .card-top-actions { display: flex; gap: 8px; align-items: center; }
+  .status-badge.complete { color: var(--green); background: color-mix(in srgb,var(--green) 11%,transparent); }
+  .status-badge.waiting { color: var(--unknown); background: color-mix(in srgb,var(--unknown) 13%,transparent); }
+  .status-badge.partial { color: var(--orange); background: color-mix(in srgb,var(--orange) 11%,transparent); }
+  .status-badge.failed { color: var(--red); background: color-mix(in srgb,var(--red) 11%,transparent); }
+  .top-paths { display: grid; gap: 8px; margin-top: 10px; }
+  .top-path-row { display: grid; grid-template-columns: minmax(0,1fr) auto auto; gap: 8px; align-items: center; min-width: 0; }
+  .top-path-name { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; min-width: 0; }
+  .drive-details { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 12px; }
+  .drive-details summary { cursor: pointer; font-size: 12px; font-weight: 700; }
+  .drive-details-body { display: grid; gap: 12px; margin-top: 12px; color: var(--muted); font-size: 12px; }
+  .detail-groups { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .detail-group { background: var(--track); border-radius: 10px; padding: 12px; min-width: 0; }
+  .detail-group ul { margin: 7px 0 0 17px; }
+  .scan-details { margin-top: 28px; border: 1px solid var(--line); }
+  .scan-completeness-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .scan-metadata { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 12px; margin-top: 12px; }
+  .metadata-item span { display: block; color: var(--muted); font-size: 11px; margin-bottom: 4px; }
+  .metadata-item b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+  .snapshot-value { display: flex; align-items: center; gap: 6px; min-width: 0; }
+
+  @media (max-width: 1500px) {
+    .grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  }
+
+  @media (max-width: 980px) {
+    .summary-grid { grid-template-columns: 1.05fr .9fr; grid-template-areas: "capacity confidence" "change change"; }
+    .change-controls { grid-template-columns: repeat(3,minmax(0,1fr)); }
+    .conclusion-grid { grid-template-columns: 1fr; gap: 6px; }
+  }
 
   .empty {
     display: none;
@@ -1380,6 +1470,7 @@ $html = @'
     .panel { grid-column: 1 / -1; }
     .insights { grid-template-columns: 1fr; }
     .change-metrics, .change-lists { grid-template-columns: 1fr 1fr; }
+    .change-lists.release-empty, .change-lists.growth-empty { grid-template-columns: 1fr; }
     .grid { grid-template-columns: 1fr; }
   }
 
@@ -1396,6 +1487,13 @@ $html = @'
     .search, .select, .button, .toggle { height: 44px; font-size: 15px; padding: 0 16px; }
     .toggle { padding: 0 14px; }
     .toggle input { width: 20px; height: 20px; }
+    .summary-grid { display: flex; flex-direction: column; }
+    .latest-change { order: 1; } .capacity-summary { order: 2; } .comparison-confidence { order: 3; }
+    .capacity-layout { grid-template-columns: 78px 1fr; } .capacity-layout .ring { width: 78px; }
+    .summary-facts, .change-metrics, .change-controls, .scan-metadata, .scan-completeness-grid, .detail-groups { grid-template-columns: 1fr; }
+    .change-side { align-items: flex-end; flex-direction: column; }
+    .change-path.is-expanded, .top-path-name.is-expanded { white-space: normal; overflow-wrap: anywhere; }
+    .top-path-row { grid-template-columns: minmax(0,1fr) auto; }
   }
 </style>
 </head>
@@ -1423,26 +1521,34 @@ $html = @'
     </div>
   </header>
 
-  <div class="section-intro"><div><h2>存储概览</h2><p>容量、趋势与当前压力</p></div></div>
-  <section class="overview" id="overview"></section>
-  <section class="insights" id="insights"></section>
-  <div class="section-intro"><div><h2>本次变化</h2><p>只展示有可靠基线支持的变化</p></div></div>
-  <section class="directory-overview" id="directory-overview">
-    <div class="change-summary" id="change-summary"></div>
+  <section class="overview" aria-label="磁盘摘要">
+    <div class="summary-grid" id="summary-grid">
+      <article class="summary-card capacity-summary" id="capacity-summary"></article>
+      <article class="summary-card latest-change" id="latest-change"></article>
+      <article class="summary-card comparison-confidence" id="comparison-confidence"></article>
+    </div>
+  </section>
+  <section class="insights" aria-label="系统结论"><div class="system-conclusion" id="system-conclusion"></div></section>
+  <div class="section-intro"><div><h2>变化详情</h2><p>摘要和排行会随筛选同步更新，整体容量保持不变</p></div></div>
+  <section class="directory-overview" id="change-details">
     <div class="change-controls">
       <label>磁盘<select class="select" id="change-drive-filter" aria-label="筛选磁盘"></select></label>
-      <label>目录层级<select class="select" id="change-level-filter" aria-label="筛选目录层级"><option value="1">一级目录</option><option value="2">二级目录</option></select></label>
+      <label>目录层级<select class="select" id="change-level-filter" aria-label="筛选目录层级"><option value="1">一级目录</option><option value="2">二级目录</option><option value="all">全部层级</option></select></label>
       <label>变化方向<select class="select" id="change-direction-filter" aria-label="筛选变化方向"><option value="all">全部变化</option><option value="growth">仅增长</option><option value="release">仅释放</option></select></label>
+      <label>数据状态<select class="select" id="change-state-filter" aria-label="筛选数据状态"><option value="reliable">可靠变化</option><option value="unknown">未知</option><option value="unavailable">不可用</option></select></label>
+      <label>路径搜索<input class="search" id="change-path-filter" type="search" placeholder="筛选目录路径" aria-label="筛选目录路径"></label>
     </div>
     <div class="change-lists">
-      <div class="change-list"><h3>增长最多</h3><div id="growth-list"></div></div>
-      <div class="change-list"><h3>释放最多</h3><div id="release-list"></div></div>
+      <div class="change-list"><h3>Top 增长</h3><div id="growth-list"></div></div>
+      <div class="change-list"><h3>Top 释放</h3><div id="release-list"></div></div>
     </div>
-    <details class="scan-details" id="scan-details"><summary>扫描详情与排除项</summary><div id="scan-detail-body"></div></details>
+    <div class="change-list state-change-list" id="state-change-list" hidden><h3 id="state-change-title">数据状态</h3><div id="state-change-body"></div></div>
   </section>
   <div class="section-intro"><div><h2>磁盘详情</h2><p>容量趋势、比较可信度与目录来源</p></div></div>
   <section class="grid" id="grid"></section>
   <div class="empty" id="empty">没有匹配的磁盘</div>
+  <details class="scan-details" id="scan-completeness"><summary>扫描完整性与详细原因</summary><div id="scan-detail-body"></div></details>
+  <section class="scan-metadata" id="scan-metadata" aria-label="扫描元数据"></section>
   <footer id="footer"></footer>
 </main>
 
@@ -1450,9 +1556,11 @@ $html = @'
 const RAW_DATA = INJECT_DATA;
 const RAW_HISTORY = INJECT_HISTORY;
 const RAW_DIRECTORY = INJECT_DIRECTORY;
+const RAW_SCAN_META = INJECT_SCAN_META;
 const DATA = Array.isArray(RAW_DATA) ? RAW_DATA : RAW_DATA ? [RAW_DATA] : [];
 const HISTORY = Array.isArray(RAW_HISTORY) ? RAW_HISTORY : RAW_HISTORY ? [RAW_HISTORY] : [];
 const DIRECTORY = Array.isArray(RAW_DIRECTORY) ? RAW_DIRECTORY : RAW_DIRECTORY ? [RAW_DIRECTORY] : [];
+const SCAN_META = RAW_SCAN_META || {};
 const TS = "INJECT_TS";
 
 const historyMap = {};
@@ -1468,7 +1576,8 @@ Object.values(historyMap).forEach((arr) =>
 const state = {
   query: "",
   sort: "percent-desc",
-  compact: false
+  compact: false,
+  driveLevels: {}
 };
 
 const $ = (id) => document.getElementById(id);
@@ -1542,9 +1651,9 @@ function estimateDays(drive, rows) {
 
 function trend(diff) {
   const value = Number(diff) || 0;
-  if (value > 0) return `<span class="trend-up">增加 ${fmt(value)}</span>`;
-  if (value < 0) return `<span class="trend-dn">减少 ${fmt(Math.abs(value))}</span>`;
-  return `<span class="trend-st">无变化</span>`;
+  const text = formatCapacityDelta(value);
+  if (text === "容量基本不变") return `<span class="trend-st">${text}</span>`;
+  return `<span class="${value > 0 ? "trend-up" : "trend-dn"}">${text}</span>`;
 }
 
 function totals() {
@@ -1644,20 +1753,104 @@ function directoryCoverage(id) {
   return DIRECTORY.find((item) => item.drive.replace(/\\/g, "") === id)?.coverage || null;
 }
 
+// TESTABLE_CHANGE_HELPERS_START
+const defaultChangeFilters = { drive: "all", level: "1", direction: "all", state: "reliable", query: "" };
+
 function isReliableChange(row) {
   return ["created", "changed", "removed"].includes(row.state);
 }
 
 function reliableChanges(item, level) {
-  return item && item.baselineScanId ? item.changes.filter((row) => isReliableChange(row) && (!level || row.level === level)) : [];
+  return item && item.baselineScanId ? (item.changes || []).filter((row) => isReliableChange(row) && (!level || row.level === level)) : [];
+}
+
+function filterChangeRows(items, filters) {
+  const level = filters.level === "all" ? null : Number(filters.level);
+  const query = String(filters.query || "").trim().toLowerCase();
+  return items.filter((item) => filters.drive === "all" || item.drive === filters.drive).flatMap((item) =>
+    (item.changes || []).filter((row) => {
+      const stateMatches = filters.state === "reliable" ? Boolean(item.baselineScanId) && isReliableChange(row) : row.state === filters.state;
+      const levelMatches = !level || Number(row.level) === level;
+      const directionMatches = filters.direction === "all" || (filters.direction === "growth" ? Number(row.deltaBytes) > 0 : Number(row.deltaBytes) < 0);
+      return stateMatches && levelMatches && directionMatches && (!query || String(row.displayPath || row.path || "").toLowerCase().includes(query));
+    }).map((row) => ({...row, drive:item.drive}))
+  );
+}
+
+function rankChanges(rows) {
+  return {
+    growth: rows.filter((row) => isReliableChange(row) && Number(row.deltaBytes) > 0).sort((a,b) => Number(b.deltaBytes)-Number(a.deltaBytes)),
+    release: rows.filter((row) => isReliableChange(row) && Number(row.deltaBytes) < 0).sort((a,b) => Number(a.deltaBytes)-Number(b.deltaBytes))
+  };
+}
+
+function emptyChangeCopy(context) {
+  if (context.waiting) return "当前磁盘正在建立首次完整基线";
+  if (context.comparable && context.kind === "release") return "本次没有明显释放";
+  return "当前没有可可靠归因的目录变化";
+}
+
+function classifyScanEvidence(items) {
+  const expected = [], unexpected = [];
+  items.forEach((item) => {
+    (item.excluded || []).forEach((entry) => (entry.reason === "access-denied" ? unexpected : expected).push({...entry,drive:item.drive}));
+    [...(item.unavailable || []),...(item.errors || [])].forEach((entry) => unexpected.push({...entry,drive:item.drive}));
+  });
+  return { expected, unexpected };
+}
+
+function formatCapacityDelta(gb) {
+  const value = Number(gb) || 0;
+  const bytes = Math.abs(value) * 1024 * 1024 * 1024;
+  if (bytes < 1024) return "容量基本不变";
+  const units = bytes >= 1024 ** 3 ? [1024 ** 3,"GB"] : bytes >= 1024 ** 2 ? [1024 ** 2,"MB"] : [1024,"KB"];
+  return `${value > 0 ? "增加" : "减少"} ${(bytes / units[0]).toFixed(1)} ${units[1]}`;
+}
+
+function formatLocalDate(value) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "-";
+  const pad = (part) => String(part).padStart(2,"0");
+  return `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+function shortSnapshotId(value) {
+  const text = String(value || "-");
+  return text.length > 9 ? `${text.slice(0,8)}…` : text;
+}
+
+function currentSizeBytes(row) {
+  return Number(row?.sizeBytes || 0);
+}
+
+function summarizeChanges(items, rows) {
+  const comparable = items.filter((item) => item.baselineScanId);
+  const added = rows.filter((row) => isReliableChange(row) && row.deltaBytes > 0).reduce((sum,row) => sum + Number(row.deltaBytes),0);
+  const released = rows.filter((row) => isReliableChange(row) && row.deltaBytes < 0).reduce((sum,row) => sum + Math.abs(Number(row.deltaBytes)),0);
+  const located = added - released;
+  const actual = comparable.reduce((sum,item) => sum + Number(item.coverage?.actualNetBytes || 0),0);
+  const activityPreferred = comparable.some((item) => item.coverage?.activityPreferred) || (actual && located && Math.sign(actual) !== Math.sign(located));
+  const rate = !activityPreferred && Math.abs(actual) >= 1 ? Math.min(100, Math.abs(located) / Math.abs(actual) * 100) : null;
+  return { comparable, added, released, located, actual, activityPreferred, rate };
+}
+
+function confidenceFor(items) {
+  const comparable = items.filter((item) => item.baselineScanId && item.status !== "failed");
+  const waiting = items.filter((item) => !item.baselineScanId && item.status !== "failed");
+  const incomplete = items.filter((item) => item.status === "partial");
+  const failed = items.filter((item) => item.status === "failed");
+  const state = items.length && failed.length === items.length ? "failed" : incomplete.length || failed.length ? "partial" : waiting.length ? "waiting" : "complete";
+  const inspect = failed[0] || incomplete[0] || waiting[0] || items[0];
+  return { comparable, waiting, incomplete, failed, state, inspect };
 }
 
 function statusLabel(status, hasBaseline) {
+  if (status === "failed") return "扫描失败";
   if (!hasBaseline) return "等待完整基线";
   if (status === "complete" || status === "baseline") return "扫描完整";
-  if (status === "failed") return "扫描失败";
   return "扫描不完整";
 }
+// TESTABLE_CHANGE_HELPERS_END
 
 function coverageLabel(item) {
   if (!item?.baselineScanId) return "等待完整基线";
@@ -1670,9 +1863,66 @@ function directoryTopThree(id) {
   return reliableChanges(item, 1).sort((a,b) => Math.abs(b.deltaBytes) - Math.abs(a.deltaBytes)).slice(0,3);
 }
 
-function changeRow(row, index) {
+function changeRow(row, maxMagnitude, contributionBase) {
   const valueClass = row.deltaBytes >= 0 ? "growth-value" : "release-value";
-  return `<div class="change-item"><span class="change-path" title="${escapeHtml(row.displayPath)}">${escapeHtml(row.displayPath)}</span><b class="${valueClass}">${row.deltaBytes >= 0 ? "+" : ""}${fmtBytes(row.deltaBytes)}</b><button class="copy-path" type="button" data-path-index="${index}">复制路径</button></div>`;
+  const intensity = maxMagnitude ? Math.max(4, Math.abs(Number(row.deltaBytes)) / maxMagnitude * 100) : 0;
+  const contribution = contributionBase ? `${(Math.abs(Number(row.deltaBytes)) / contributionBase * 100).toFixed(1)}%` : "-";
+  return `<div class="change-item"><div class="change-main"><span class="change-path expandable-path" title="${escapeHtml(row.displayPath)}">${escapeHtml(row.displayPath)}</span><div class="change-context">${escapeHtml(row.drive)} · ${row.level} 级 · 当前 ${fmtBytes(currentSizeBytes(row))} · 贡献 ${contribution}</div></div><div class="change-side"><b class="${valueClass}">${row.deltaBytes >= 0 ? "+" : ""}${fmtBytes(row.deltaBytes)}</b><button class="copy-path" type="button" data-copy-path="${escapeHtml(row.displayPath)}">复制路径</button></div><div class="intensity-track ${valueClass}"><span class="intensity-fill" style="--intensity:${intensity.toFixed(1)}%"></span></div></div>`;
+}
+
+function stateChangeRow(row) {
+  const label = row.state === "unknown" ? "未知变化" : "当前不可用";
+  return `<div class="change-item"><div class="change-main"><span class="change-path expandable-path" title="${escapeHtml(row.displayPath)}">${escapeHtml(row.displayPath)}</span><div class="change-context">${escapeHtml(row.drive)} · ${row.level} 级 · ${label}</div></div><span class="status-badge waiting">${label}</span></div>`;
+}
+
+function currentChangeFilters() {
+  return {
+    drive: $("change-drive-filter").value || defaultChangeFilters.drive,
+    level: $("change-level-filter").value || defaultChangeFilters.level,
+    direction: $("change-direction-filter").value || defaultChangeFilters.direction,
+    state: $("change-state-filter").value || defaultChangeFilters.state,
+    query: $("change-path-filter").value || defaultChangeFilters.query
+  };
+}
+
+function selectedItems(filters) {
+  return DIRECTORY.filter((item) => filters.drive === "all" || item.drive === filters.drive);
+}
+
+function capacityStatement(mostFull) {
+  if (!mostFull || Number(mostFull.percent) < 75) return "当前没有明显容量压力";
+  return `${mostFull.id} 使用率最高，建议关注`;
+}
+
+function renderCapacitySummary() {
+  const t = totals();
+  const overallPct = t.total > 0 ? t.used / t.total * 100 : 0;
+  const mostFull = [...DATA].sort((a,b) => b.percent-a.percent)[0];
+  $("capacity-summary").innerHTML = `<div class="summary-label">整体容量</div><div class="capacity-layout"><div class="ring" style="--pct:${overallPct.toFixed(1)}"><span>${pct(overallPct)}</span></div><div><h2 class="summary-title">${capacityStatement(mostFull)}</h2><p class="summary-note">最高使用率 ${mostFull ? `${mostFull.id} ${pct(mostFull.percent)}` : "-"}</p></div></div><div class="summary-facts"><div class="summary-fact"><span>已用</span><b>${fmt(t.used)}</b></div><div class="summary-fact"><span>总容量</span><b>${fmt(t.total)}</b></div><div class="summary-fact"><span>剩余</span><b>${fmt(t.free)}</b></div></div>`;
+}
+
+function renderConfidence(items) {
+  const c = confidenceFor(items);
+  $("comparison-confidence").innerHTML = `<div class="summary-label">比较可信度</div><div class="confidence-count confidence-state ${c.state}">${c.comparable.length} / ${items.length}</div><h2 class="summary-title">个磁盘可可靠比较</h2><div class="confidence-list"><span>${c.waiting.length} 个等待完整基线</span><span>${c.incomplete.length + c.failed.length} 个扫描不完整</span><span>优先查看：${c.inspect ? escapeHtml(c.inspect.drive) : "无需检查"}</span></div>`;
+}
+
+function renderChangeSummary(items, summary, rankings) {
+  const main = rankings.growth[0] || rankings.release[0];
+  const gross = summary.added + summary.released;
+  const contribution = main && gross ? Math.abs(Number(main.deltaBytes)) / gross * 100 : null;
+  const headline = main ? `${main.deltaBytes > 0 ? "主要增长" : "主要释放"}来自 ${escapeHtml(main.displayPath)}` : emptyChangeCopy({waiting:!summary.comparable.length,comparable:summary.comparable.length > 0,kind:"all"});
+  const fourthLabel = summary.activityPreferred ? "活动总量" : "目录解释率";
+  const fourthValue = summary.activityPreferred ? fmtBytes(gross) : summary.rate === null ? "不适用" : `${summary.rate.toFixed(1)}%`;
+  $("latest-change").innerHTML = `<div class="summary-label">最新变化</div><h2 class="summary-title">${headline}</h2><div class="change-hero"><b>${main ? `${main.deltaBytes > 0 ? "+" : ""}${fmtBytes(main.deltaBytes)}` : "—"}</b><span class="summary-note">${contribution === null ? "没有可靠变化排行" : `主路径贡献 ${contribution.toFixed(1)}%`}</span></div><div class="change-metrics"><div class="change-metric"><span>可靠新增</span><b>+${fmtBytes(summary.added)}</b></div><div class="change-metric"><span>可靠释放</span><b>${summary.released ? "-" : ""}${fmtBytes(summary.released)}</b></div><div class="change-metric"><span>已定位净变化</span><b>${fmtBytes(summary.located)}</b></div><div class="change-metric"><span>${fourthLabel}</span><b>${fourthValue}</b></div></div><div class="reliability-badge">${summary.comparable.length} / ${items.length} 个磁盘可可靠比较</div>`;
+}
+
+function renderConclusion(items, summary, rankings) {
+  const mostFull = [...DATA].sort((a,b) => b.percent-a.percent)[0];
+  const c = confidenceFor(items);
+  const mainPaths = [...rankings.growth,...rankings.release].slice(0,2).map((row) => row.displayPath);
+  const change = mainPaths.length ? `主要来自 ${mainPaths.join(" 和 ")}` : emptyChangeCopy({waiting:!summary.comparable.length,comparable:summary.comparable.length > 0,kind:"all"});
+  const reliability = c.state === "complete" ? `${c.comparable.length} 个磁盘均可比较${summary.rate === null ? "" : ` · 解释率 ${summary.rate.toFixed(1)}%`}` : `${c.comparable.length} 个可比较 · ${c.waiting.length} 个等待 · ${c.incomplete.length + c.failed.length} 个不完整`;
+  $("system-conclusion").innerHTML = `<div class="conclusion-grid"><div class="conclusion-item"><span>容量</span><b>${escapeHtml(capacityStatement(mostFull))}</b></div><div class="conclusion-item"><span>变化</span><b>${escapeHtml(change)}</b></div><div class="conclusion-item"><span>可信度</span><b>${escapeHtml(reliability)}</b></div></div>`;
 }
 
 function renderDirectoryChanges() {
@@ -1681,34 +1931,31 @@ function renderDirectoryChanges() {
     driveFilter.add(new Option("全部磁盘", "all"));
     DIRECTORY.forEach((item) => driveFilter.add(new Option(item.drive, item.drive)));
   }
-  const selectedDrive = driveFilter.value;
-  const level = Number($("change-level-filter").value);
-  const direction = $("change-direction-filter").value;
-  const selected = DIRECTORY.filter((item) => selectedDrive === "all" || item.drive === selectedDrive);
-  const rows = selected.flatMap((item) => reliableChanges(item, level).map((row) => ({...row, drive:item.drive})));
-  const growth = rows.filter((row) => row.deltaBytes > 0).sort((a,b) => b.deltaBytes-a.deltaBytes).slice(0,10);
-  const release = rows.filter((row) => row.deltaBytes < 0).sort((a,b) => a.deltaBytes-b.deltaBytes).slice(0,10);
-  const visibleGrowth = direction === "release" ? [] : growth;
-  const visibleRelease = direction === "growth" ? [] : release;
-  $("directory-overview").querySelector(".change-lists").classList.toggle("single-sided", !visibleGrowth.length || !visibleRelease.length);
-  window.directoryPaths = [...visibleGrowth, ...visibleRelease].map((row) => row.displayPath);
-  $("growth-list").innerHTML = visibleGrowth.map((row,index) => changeRow(row,index)).join("") || '<div class="baseline-guide">暂无增长记录。</div>';
-  $("release-list").innerHTML = visibleRelease.map((row,index) => changeRow(row,index+visibleGrowth.length)).join("") || '<div class="baseline-guide">暂无释放记录。</div>';
-
-  const comparable = selected.filter((item) => item.baselineScanId);
-  const coverages = comparable.map((item) => item.coverage).filter(Boolean);
-  const actual = coverages.reduce((sum,item) => sum + Number(item.actualNetBytes || 0),0);
-  const located = coverages.reduce((sum,item) => sum + Number(item.locatedNetBytes || 0),0);
-  const added = coverages.reduce((sum,item) => sum + Number(item.addedBytes || 0),0);
-  const released = coverages.reduce((sum,item) => sum + Number(item.releasedBytes || 0),0);
-  const rateText = !coverages.length || Math.abs(actual) < 1 ? "不适用" : `${Math.min(100, Math.abs(located)/Math.abs(actual)*100).toFixed(1)}%`;
-  const source = growth[0];
-  const incomplete = selected.filter((item) => item.status === "partial" || item.status === "failed");
-  const waiting = selected.filter((item) => !item.baselineScanId).map((item) => item.drive);
-  const summary = !comparable.length ? "尚无可比较的完整基线。本次只记录当前目录规模，不计算增长来源。" : `可靠比较磁盘净变化 ${fmtBytes(actual)}，已定位 ${fmtBytes(located)}。${source ? `主要增长来自 ${escapeHtml(source.displayPath)}。` : "没有发现明确增长来源。"}${waiting.length ? ` ${waiting.join("、")} 正在等待完整基线。` : ""}`;
-  $("change-summary").innerHTML = `<div class="change-head"><div><h2>本次发生了什么</h2><p>${summary}</p></div><span class="${incomplete.length ? "completeness-warning" : ""}">${incomplete.length ? `${incomplete.length} 个磁盘扫描不完整` : "全部扫描完整"}</span></div><div class="change-metrics"><div class="change-metric"><span>可靠新增</span><b class="growth-value">+${fmtBytes(added)}</b></div><div class="change-metric"><span>可靠释放</span><b class="release-value">${released ? "-" : ""}${fmtBytes(released)}</b></div><div class="change-metric"><span>已定位净变化</span><b>${fmtBytes(located)}</b></div><div class="change-metric"><span>解释率</span><b>${rateText}</b></div></div>`;
-  const details = selected.flatMap((item) => [...(item.errors || []).map((e) => `${item.drive} 无法访问：${e.path} · ${e.reason}`), ...(item.excluded || []).map((e) => `${item.drive} 预期排除：${e.path} · ${e.reason}`)]);
-  $("scan-detail-body").innerHTML = details.length ? `<ul>${details.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>` : "没有排除项或访问错误。";
+  const filters = currentChangeFilters();
+  const items = selectedItems(filters);
+  const rows = filterChangeRows(DIRECTORY, filters);
+  const rankings = rankChanges(rows);
+  const growth = rankings.growth.slice(0,10), release = rankings.release.slice(0,10);
+  const maxMagnitude = Math.max(0,...growth.concat(release).map((row) => Math.abs(Number(row.deltaBytes))));
+  const gross = rows.filter(isReliableChange).reduce((sum,row) => sum + Math.abs(Number(row.deltaBytes)),0);
+  const waiting = items.length > 0 && items.every((item) => !item.baselineScanId);
+  const reliableView = filters.state === "reliable";
+  const lists = $("change-details").querySelector(".change-lists");
+  lists.hidden = !reliableView;
+  lists.classList.toggle("release-empty",reliableView && growth.length > 0 && release.length === 0);
+  lists.classList.toggle("growth-empty",reliableView && release.length > 0 && growth.length === 0);
+  $("state-change-list").hidden = reliableView;
+  if (reliableView) {
+    $("growth-list").innerHTML = growth.map((row) => changeRow(row,maxMagnitude,gross)).join("") || `<div class="baseline-guide">${emptyChangeCopy({waiting,comparable:!waiting,kind:"growth"})}</div>`;
+    $("release-list").innerHTML = release.map((row) => changeRow(row,maxMagnitude,gross)).join("") || `<div class="baseline-guide">${emptyChangeCopy({waiting,comparable:!waiting,kind:"release"})}</div>`;
+  } else {
+    $("state-change-title").textContent = filters.state === "unknown" ? "未知变化" : "不可用项目";
+    $("state-change-body").innerHTML = rows.map(stateChangeRow).join("") || '<div class="baseline-guide">当前筛选没有对应项目。</div>';
+  }
+  const summary = summarizeChanges(items,rows);
+  renderChangeSummary(items,summary,rankings);
+  renderConfidence(items);
+  renderConclusion(items,summary,rankings);
 }
 
 function renderCards() {
@@ -1724,6 +1971,13 @@ function renderCards() {
     const directory = DIRECTORY.find((item) => item.drive.replace(/\\/g, "") === d.id);
     const coverage = directoryCoverage(d.id);
     const topThree = directoryTopThree(d.id);
+    const topThreeMax = Math.max(0,...topThree.map((row) => Math.abs(Number(row.deltaBytes))));
+    const detailLevel = Number(state.driveLevels[d.id] || 1);
+    const topTen = reliableChanges(directory,detailLevel).sort((a,b) => Math.abs(b.deltaBytes)-Math.abs(a.deltaBytes)).slice(0,10);
+    const detailMax = Math.max(0,...topTen.map((row) => Math.abs(Number(row.deltaBytes))));
+    const scanEvidence = classifyScanEvidence(directory ? [directory] : []);
+    const cardStatus = !directory?.baselineScanId ? "waiting" : directory.status === "failed" ? "failed" : directory.status === "partial" ? "partial" : "complete";
+    const activityLabel = coverage?.activityPreferred ? `活动总量 ${fmtBytes(Number(coverage.addedBytes || 0)+Number(coverage.releasedBytes || 0))}` : `目录解释率 ${directory ? coverageLabel(directory) : "-"}`;
     return `
       <article class="card ${d.status}">
         <div class="card-top">
@@ -1731,7 +1985,7 @@ function renderCards() {
             <div class="drive-name">磁盘 ${d.id}</div>
             <div class="drive-sub">最近采样 ${lastSeen}</div>
           </div>
-          <div class="badge">使用率 ${pct(d.percent)}</div><!-- badge-copy-v2 -->
+          <div class="card-top-actions"><span class="status-badge ${cardStatus}">${directory ? statusLabel(directory.status,directory.baselineScanId) : "未扫描"}</span><div class="badge">使用率 ${pct(d.percent)}</div><!-- badge-copy-v2 --></div>
         </div>
         <div class="bar-track"><div class="bar-fill" data-w="${d.percent}%"></div></div>
         <div class="meta">
@@ -1746,7 +2000,8 @@ function renderCards() {
             <div>${estimateDays(d, rows)}</div>
           </div>
         </div>
-        <div class="directory-card-extra"><b>${directory?.baselineScanId ? `目录净变化 ${fmtBytes(coverage?.actualNetBytes)}` : "当前目录规模已记录"}</b><span>解释率 ${directory ? coverageLabel(directory) : "-"} · ${directory ? statusLabel(directory.status, directory.baselineScanId) : "未扫描"}</span>${topThree.length ? `<ul>${topThree.map((row) => `<li title="${escapeHtml(row.displayPath)}">${escapeHtml(row.displayPath)} <b class="${row.deltaBytes >= 0 ? "growth-value" : "release-value"}">${row.deltaBytes >= 0 ? "+" : ""}${fmtBytes(row.deltaBytes)}</b></li>`).join("")}</ul>` : `<p>${directory?.baselineScanId ? "本次没有可靠目录变化。" : "建立完整基线后显示目录变化 Top 3。"}</p>`}</div>
+        <div class="directory-card-extra"><b>${directory?.baselineScanId ? `目录净变化 ${fmtBytes(coverage?.actualNetBytes)}` : "当前目录规模已记录"}</b><span>${activityLabel}</span>${topThree.length ? `<div class="top-paths">${topThree.map((row) => `<div class="top-path-row"><span class="top-path-name expandable-path" title="${escapeHtml(row.displayPath)}">${escapeHtml(row.displayPath)}</span><b class="${row.deltaBytes >= 0 ? "growth-value" : "release-value"}">${row.deltaBytes >= 0 ? "+" : ""}${fmtBytes(row.deltaBytes)}</b><button class="copy-path" type="button" data-copy-path="${escapeHtml(row.displayPath)}">复制</button><span class="intensity-track ${row.deltaBytes>=0?"growth-value":"release-value"}"><span class="intensity-fill" style="--intensity:${topThreeMax?Math.max(4,Math.abs(Number(row.deltaBytes))/topThreeMax*100).toFixed(1):0}%"></span></span></div>`).join("")}</div>` : `<p>${directory?.baselineScanId ? "本次没有可靠目录变化。" : "建立完整基线后显示目录变化 Top 3。"}</p>`}</div>
+        <details class="drive-details"><summary>展开目录与扫描详情</summary><div class="drive-details-body"><label>目录层级 <select class="select drive-level-switch" data-drive="${escapeHtml(d.id)}"><option value="1" ${detailLevel===1?"selected":""}>一级目录</option><option value="2" ${detailLevel===2?"selected":""}>二级目录</option></select></label><div class="top-paths">${topTen.length ? topTen.map((row) => `<div class="top-path-row"><span class="top-path-name expandable-path" title="${escapeHtml(row.displayPath)}">${escapeHtml(row.displayPath)}</span><b class="${row.deltaBytes >= 0 ? "growth-value" : "release-value"}">${row.deltaBytes >= 0 ? "+" : ""}${fmtBytes(row.deltaBytes)}</b><button class="copy-path" type="button" data-copy-path="${escapeHtml(row.displayPath)}">复制</button><span class="intensity-track ${row.deltaBytes>=0?"growth-value":"release-value"}"><span class="intensity-fill" style="--intensity:${detailMax ? Math.max(4,Math.abs(Number(row.deltaBytes))/detailMax*100).toFixed(1):0}%"></span></span></div>`).join("") : `<p>${emptyChangeCopy({waiting:!directory?.baselineScanId,comparable:Boolean(directory?.baselineScanId),kind:"all"})}</p>`}</div><div class="detail-groups"><div class="detail-group"><b>预期排除</b>${scanEvidence.expected.length?`<ul>${scanEvidence.expected.map((item)=>`<li title="${escapeHtml(item.path)}">${escapeHtml(item.path)} · ${escapeHtml(item.reason)}</li>`).join("")}</ul>`:"<p>无</p>"}</div><div class="detail-group"><b>意外不可用</b>${scanEvidence.unexpected.length?`<ul>${scanEvidence.unexpected.map((item)=>`<li title="${escapeHtml(item.path)}">${escapeHtml(item.path)} · ${escapeHtml(item.reason)}</li>`).join("")}</ul>`:"<p>无</p>"}</div></div><p>基线时间：${directory?.baselineCompletedAt?escapeHtml(directory.baselineCompletedAt):"等待完整基线"} · 扫描状态：${directory?statusLabel(directory.status,directory.baselineScanId):"未扫描"}</p><div>${sparkline(rows)}</div></div></details>
       </article>
     `;
   }).join("");
@@ -1757,20 +2012,49 @@ function renderCards() {
   });
 }
 
-function render() {
-  document.body.classList.toggle("compact", state.compact);
-  renderOverview();
-  renderDirectoryChanges();
-  renderCards();
+function renderScanCompleteness() {
+  const {expected,unexpected} = classifyScanEvidence(DIRECTORY);
+  const list = (rows,empty) => rows.length ? `<ul>${rows.map((row) => `<li title="${escapeHtml(row.path)}">${escapeHtml(row.drive)} · ${escapeHtml(row.path)} · ${escapeHtml(row.reason)}</li>`).join("")}</ul>` : `<p>${empty}</p>`;
+  $("scan-detail-body").innerHTML = `<div class="scan-completeness-grid"><div class="detail-group"><h3>预期排除</h3><p>重解析点、联接、符号链接、$RECYCLE.BIN 和 System Volume Information 属于正常排除。</p>${list(expected,"没有记录到预期排除项。")}</div><div class="detail-group"><h3>意外不可用</h3><p>访问被拒绝、扫描中消失、枚举失败或暂时不可用会列在这里。</p>${list(unexpected,"没有意外不可用项目。")}</div></div>`;
 }
 
-["change-drive-filter","change-level-filter","change-direction-filter"].forEach((id) => $(id).addEventListener("change", renderDirectoryChanges));
-$("directory-overview").addEventListener("click", async (event) => {
+function renderScanMetadata() {
+  const start = SCAN_META.startedAt ? new Date(SCAN_META.startedAt) : null;
+  const end = SCAN_META.completedAt ? new Date(SCAN_META.completedAt) : null;
+  const duration = start && end ? `${Math.max(0,Math.round((end-start)/1000))} 秒` : "-";
+  const fields = [["扫描开始",formatLocalDate(SCAN_META.startedAt),SCAN_META.startedAt||"-"],["扫描完成",formatLocalDate(SCAN_META.completedAt),SCAN_META.completedAt||"-"],["总耗时",duration,duration],["扫描磁盘",`${Number(SCAN_META.driveCount||0)} 个`,`${Number(SCAN_META.driveCount||0)} 个`]];
+  const metadata = fields.map(([label,value,title]) => `<div class="metadata-item"><span>${label}</span><b title="${escapeHtml(title)}">${escapeHtml(value)}</b></div>`).join("");
+  const scanId = String(SCAN_META.scanId||"-");
+  $("scan-metadata").innerHTML = `${metadata}<div class="metadata-item"><span>快照 ID</span><div class="snapshot-value"><b title="${escapeHtml(scanId)}">${escapeHtml(shortSnapshotId(scanId))}</b><button class="copy-path snapshot-copy" type="button" data-copy-path="${escapeHtml(scanId)}">复制</button></div></div>`;
+}
+
+function render() {
+  document.body.classList.toggle("compact", state.compact);
+  renderCapacitySummary();
+  renderDirectoryChanges();
+  renderCards();
+  renderScanCompleteness();
+  renderScanMetadata();
+}
+
+["change-drive-filter","change-level-filter","change-direction-filter","change-state-filter"].forEach((id) => $(id).addEventListener("change", renderDirectoryChanges));
+$("change-path-filter").addEventListener("input", renderDirectoryChanges);
+document.addEventListener("click", async (event) => {
   const button = event.target.closest(".copy-path");
-  if (!button) return;
-  const path = window.directoryPaths[Number(button.dataset.pathIndex)];
-  try { await navigator.clipboard.writeText(path); button.textContent = "已复制"; }
-  catch { alert(path); }
+  if (button) {
+    const path = button.dataset.copyPath;
+    try { await navigator.clipboard.writeText(path); const old=button.textContent; button.textContent="已复制"; setTimeout(()=>button.textContent=old,1200); }
+    catch { alert(path); }
+    return;
+  }
+  const path = event.target.closest(".expandable-path");
+  if (path && window.matchMedia("(max-width: 560px)").matches) path.classList.toggle("is-expanded");
+});
+document.addEventListener("change", (event) => {
+  const level = event.target.closest(".drive-level-switch");
+  if (!level) return;
+  state.driveLevels[level.dataset.drive] = level.value;
+  renderCards();
 });
 
 $("search").addEventListener("input", (event) => {
@@ -1835,6 +2119,7 @@ render();
 $html = $html.Replace('INJECT_DATA', $jsonArray)
 $html = $html.Replace('INJECT_HISTORY', $historyJson)
 $html = $html.Replace('INJECT_DIRECTORY', $directoryJson)
+$html = $html.Replace('INJECT_SCAN_META', $scanMetaJson)
 $html = $html.Replace('INJECT_TS', $timestamp)
 
 $utf8NoBom = New-Object System.Text.UTF8Encoding $false
