@@ -4,6 +4,8 @@ $source = Get-Content -Raw -LiteralPath (Join-Path $root 'check.bat') -Encoding 
 
 $stable = @('class="grid"','sparkline','estimateDays','id="search"','id="sort"','id="compact"','id="copy"','data-theme','@media')
 $hierarchy = @(
+    'class="product-header"', 'class="header-brand"', 'class="brand-mark"',
+    'hero-grid', 'hero-card-primary latest-change',
     'id="summary-grid"', 'id="capacity-summary"', 'id="latest-change"',
     'id="comparison-confidence"', 'id="attention-center"', 'id="attention-list"', 'id="change-details"',
     'id="growth-list"', 'id="release-list"', 'id="change-drive-filter"',
@@ -15,7 +17,10 @@ $hierarchy = @(
     'id="release-empty-note"', 'id="growth-empty-note"', 'class="action-group action-search"',
     'class="action-group action-display"', 'class="action-group action-report"',
     'root.dataset.count', 'only-growth', 'only-release', 'both-empty', 'capacity-current',
-    'attention-item', 'snapshot-copy', '@media (max-width: 1500px)'
+    'attention-strip', 'change-ranking', 'history-summary-strip', 'dashboard-footer',
+    'confidence-illustration', 'trend-summary', 'history-rail', 'disk-card-grid', 'scan-summary-card',
+    'capacity-area', 'attention-item', 'snapshot-copy', '@media (max-width: 1500px)',
+    '.capacity-area {', 'classList.add("capacity-area")'
 )
 foreach ($marker in @($stable + $hierarchy)) {
     if ($source -notmatch [regex]::Escape($marker)) { throw "Missing dashboard marker: $marker" }
@@ -46,7 +51,7 @@ foreach ($id in 'search','sort','compact','themeBtn','copy','print-report','hist
 
 $gitignore = Get-Content -Raw -LiteralPath (Join-Path $root '.gitignore') -Encoding UTF8
 foreach ($exception in '!/PRODUCT.md','!/DESIGN.md') {
-    if ($gitignore -notmatch ('(?m)^' + [regex]::Escape($exception) + '$')) { throw "Missing version-control exception: $exception" }
+    if ($gitignore -notmatch ('(?m)^' + [regex]::Escape($exception) + '\r?$')) { throw "Missing version-control exception: $exception" }
 }
 
 if ($source -notmatch [regex]::Escape('$directoryJson = ConvertTo-JsonArray ([object[]]$directoryResults)')) {
@@ -176,6 +181,20 @@ $readme = Get-Content -Raw -LiteralPath (Join-Path $root 'README.md') -Encoding 
 foreach ($marker in @('@media print','@media (prefers-reduced-motion: reduce)','scroll-margin-top','aria-live="polite"','aria-pressed="true"')) {
     if ($source -notmatch [regex]::Escape($marker)) { throw "Missing print, motion, navigation, or accessibility marker: $marker" }
 }
+if ($source -notmatch [regex]::Escape('.latest-change, [data-theme="dark"] .latest-change { background: #fff;')) { throw 'Print mode must override the dark primary card without !important.' }
+foreach ($responsiveRule in @(
+    'grid-template-areas: "change change" "capacity confidence"',
+    '.latest-change { order: 1; } .capacity-summary { order: 2; } .comparison-confidence { order: 3; }',
+    '.action-search { grid-template-columns: 1fr 1fr; }',
+    '.copy-path, .overview-scan-state { min-height:44px; }'
+)) {
+    if ($source -notmatch [regex]::Escape($responsiveRule)) { throw "Missing required responsive summary order: $responsiveRule" }
+}
+foreach ($marker in @('查看全部磁盘','当前使用','总容量','可用容量','较范围起点','Top 增长','Top 释放')) {
+    if ($source -notmatch [regex]::Escape($marker)) { throw "Missing concept-aligned dashboard copy: $marker" }
+}
+if ([regex]::Matches($source,'(?m)^\s*\.product-header\s*\{').Count -ne 1) { throw 'Product header must have one authoritative component rule.' }
+if ([regex]::Matches($source,'(?m)^\s*:root\s*\{').Count -ne 1) { throw 'Design tokens must have one authoritative root definition.' }
 foreach ($forbidden in @('SMART','性能衰退','健康指标','实时监控')) {
     if ($readme -match [regex]::Escape($forbidden)) { throw "README contains unverified claim: $forbidden" }
 }

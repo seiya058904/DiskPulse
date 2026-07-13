@@ -1017,28 +1017,31 @@ $html = @'
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
   :root {
-    --bg: #f4f6f9;
+    --bg: #f5f7fb;
     --panel: #ffffff;
     --text: #111827;
-    --muted: #6b7280;
-    --line: #e5e7eb;
-    --track: #eef2f7;
-    --blue: #2563eb;
-    --green: #059669;
-    --orange: #d97706;
+    --muted: #667085;
+    --subtle: #98a2b3;
+    --line: #e4e9f1;
+    --track: #f1f4f8;
+    --blue: #3370ff;
+    --green: #079669;
+    --orange: #f07818;
     --red: #dc2626;
     --unknown: #64748b;
+    --shadow: 0 8px 28px rgba(31,51,84,.06);
+    --radius: 16px;
     color-scheme: light;
   }
 
   [data-theme="dark"] {
-    --bg: #0b0f17;
-    --panel: #121826;
+    --bg: #0b1220;
+    --panel: #111a2b;
     --text: #f3f6fa;
     --muted: #94a3b8;
-    --line: #263244;
-    --track: #182033;
-    --blue: #2563eb;
+    --line: #26344a;
+    --track: #18243a;
+    --blue: #6b96ff;
     --green: #059669;
     --orange: #d97706;
     --red: #dc2626;
@@ -1323,21 +1326,28 @@ $html = @'
   .directory-card-extra { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 12px; font-size: 12px; color: var(--muted); }
   .directory-card-extra ul { margin: 7px 0 0 18px; }
 
-  /* System utility: quiet layers, explicit states, no decorative chrome. */
-  body { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif; padding: 42px 24px 64px; letter-spacing: -.005em; }
-  .shell { width: min(1180px, 100%); }
-  header { align-items: center; margin-bottom: 34px; }
-  h1 { font-size: 34px; letter-spacing: -.025em; font-weight: 720; }
+  /* Product dashboard: one authoritative component layer. */
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif; padding: 22px 24px 48px; letter-spacing: -.005em; }
+  .shell { width: min(1540px, calc(100% - 20px)); }
+  .dashboard-shell { background:var(--panel); border:1px solid var(--line); border-radius:16px; box-shadow:0 10px 34px rgba(31,51,84,.07); overflow:hidden; }
+  body { padding:6px 10px 28px; }
+  .product-header { display:flex; align-items:center; justify-content:space-between; gap:24px; margin:0; padding:18px 22px 14px; }
+  .header-brand { display:flex; align-items:center; gap:13px; min-width:260px; }
+  .brand-mark { width:48px; height:48px; flex:0 0 auto; filter:drop-shadow(0 6px 10px rgba(51,112,255,.2)); }
+  h1 { font-size: 27px; line-height:1.12; letter-spacing: -.025em; font-weight: 780; }
+  .product-subtitle { color:var(--muted); font-size:14px; margin-top:4px; }
   .eyebrow { color: var(--muted); letter-spacing: .04em; text-transform: none; font-size: 12px; margin-bottom: 5px; }
   .timestamp { margin-top: 7px; }
-  .actions { gap: 8px; }
-  .search, .select, .button, .toggle { height: 40px; border-color: transparent; background: var(--panel); border-radius: 10px; transition: background-color 180ms cubic-bezier(.22,1,.36,1), box-shadow 180ms cubic-bezier(.22,1,.36,1); }
+  .actions { gap: 14px; }
+  .action-group { gap:7px; }
+  .search, .select, .button, .toggle { height: 42px; border-color: var(--line); background: var(--panel); border-radius: 10px; font-size:13px; transition: background-color 170ms ease, border-color 170ms ease, box-shadow 170ms ease; }
+  .action-search .search { width:220px; } .action-search .select { min-width:142px; }
   .search:hover, .select:hover, .button:hover, .toggle:hover { background: color-mix(in srgb, var(--panel) 86%, var(--blue)); }
   .search:focus-visible, .select:focus-visible, .button:focus-visible, .toggle:focus-within, .copy-path:focus-visible, summary:focus-visible { outline: 3px solid color-mix(in srgb, var(--blue) 35%, transparent); outline-offset: 2px; }
-  .section-intro { display: flex; justify-content: space-between; align-items: end; gap: 16px; margin: 30px 2px 12px; }
-  .section-intro h2 { font-size: 20px; letter-spacing: -.015em; }
+  .section-intro { display: flex; justify-content: space-between; align-items: end; gap: 16px; margin: 22px 20px 10px; }
+  .section-intro h2 { font-size: 18px; letter-spacing: -.015em; }
   .section-intro p { color: var(--muted); font-size: 13px; }
-  .change-list { border: 0; border-radius: 16px; box-shadow: none; }
+  .change-list { border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
   .directory-overview { margin-top: 0; }
   .change-metrics { gap: 1px; overflow: hidden; border-radius: 12px; background: var(--line); }
   .change-metric { border-radius: 0; background: var(--track); padding: 14px 16px; }
@@ -1353,7 +1363,7 @@ $html = @'
   .release-value { color: var(--green); }
   .copy-path { color: var(--blue); font-weight: 600; border-radius: 7px; }
   .copy-path:hover { background: color-mix(in srgb, var(--blue) 10%, transparent); }
-  .scan-details { background: var(--panel); border-radius: 14px; padding: 14px 16px; }
+  .scan-details { background: var(--panel); border-radius: var(--radius); padding: 16px 18px; }
   .scan-details[open] summary { margin-bottom: 10px; }
   .completeness-warning { display: inline-flex; align-items: center; background: color-mix(in srgb, var(--orange) 12%, transparent); border-radius: 999px; padding: 7px 10px; }
   .grid { gap: 10px; }
@@ -1371,38 +1381,41 @@ $html = @'
   }
 
   /* Dashboard hierarchy: semantic color, quiet surfaces, no decorative motion. */
-  .summary-grid { display: grid; grid-template-columns: 1.05fr 1.65fr .9fr; grid-template-areas: "capacity change confidence"; gap: 12px; margin: 8px 0 14px; }
-  .summary-card, .scan-metadata { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 22px; min-width: 0; }
+  .summary-grid { display: grid; grid-template-columns: 31fr 37fr 32fr; grid-template-areas: "capacity change confidence"; gap: 16px; margin: 6px 20px 14px; }
+  .summary-card, .scan-metadata { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 22px; min-width: 0; box-shadow:var(--shadow); }
   .summary-card { transition: transform 160ms ease, border-color 160ms ease; }
   .summary-card:hover { transform: translateY(-2px); }
   .capacity-summary { grid-area: capacity; }
-  .latest-change { grid-area: change; color: #f3f6fa; background: linear-gradient(145deg,#111827,#1e293b); border-color: transparent; }
-  [data-theme="dark"] .latest-change { background: linear-gradient(145deg,#172033,#1e293b); }
+  .latest-change { grid-area: change; background:linear-gradient(135deg,#fff 0%,#f2f6ff 100%); border-color:#8db0ff; box-shadow:0 12px 32px rgba(51,112,255,.12); }
+  [data-theme="dark"] .latest-change { background: linear-gradient(145deg,#16213a,#111a2b); border-color:#385b9b; }
   .comparison-confidence { grid-area: confidence; }
   .summary-label { color: var(--muted); font-size: 12px; font-weight: 700; margin-bottom: 14px; }
-  .latest-change .summary-label, .latest-change .summary-note { color: #aeb9c9; }
+  .latest-change .summary-label, .latest-change .summary-note { color: var(--muted); }
   .summary-title { font-size: 20px; letter-spacing: -.02em; margin-bottom: 8px; }
   .summary-note { color: var(--muted); font-size: 12px; line-height: 1.55; }
-  .capacity-layout { display: grid; grid-template-columns: 92px 1fr; gap: 16px; align-items: center; }
-  .capacity-layout .ring { width: 92px; }
-  .capacity-layout .ring span { font-size: 20px; }
+  .capacity-layout { display: grid; grid-template-columns: 132px 1fr; gap: 18px; align-items: center; }
+  .capacity-layout .ring { width: 132px; } .capacity-layout .ring::after { inset:14px; }
+  .capacity-layout .ring span { font-size: 28px; }
   .capacity-layout .summary-title { font-size: 18px; }
-  .summary-facts { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; margin-top: 16px; }
+  .summary-facts { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; margin-top: 18px; }
   .summary-fact { min-width: 0; }
   .summary-fact span { color: var(--muted); display: block; font-size: 11px; margin-bottom: 3px; }
-  .summary-fact b { font-size: 15px; }
+  .summary-fact b { font-size: 17px; }
   .change-hero { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin: 3px 0 12px; }
-  .change-hero b { font-size: clamp(25px,3vw,36px); letter-spacing: -.04em; }
-  .latest-change .change-metrics { background: rgba(255,255,255,.12); }
-  .latest-change .change-metric { background: rgba(255,255,255,.06); }
-  .latest-change .change-metric span { color: #aeb9c9; }
+  .change-hero { margin:12px 0 18px; justify-content:space-between; }
+  .change-hero b { font-size: clamp(42px,3.8vw,56px); color:var(--blue); letter-spacing: -.045em; white-space:nowrap; }
+  .latest-change .change-metrics { background: var(--line); }
+  .latest-change .change-metric { background: color-mix(in srgb,var(--panel) 82%,var(--blue)); }
+  .latest-change .change-metric span { color: var(--muted); }
   .reliability-badge, .status-badge { display: inline-flex; align-items: center; width: fit-content; border-radius: 999px; padding: 6px 9px; font-size: 11px; font-weight: 700; }
-  .reliability-badge { color: #dff8ed; background: rgba(5,150,105,.25); }
+  .reliability-badge { color: var(--green); background: transparent; padding:10px 0 0; }
   .confidence-count { font-size: 34px; font-weight: 800; letter-spacing: -.04em; margin: 4px 0; }
-  .confidence-list { display: grid; gap: 8px; margin-top: 14px; font-size: 12px; color: var(--muted); }
+  .summary-card-link { display:flex; justify-content:space-between; align-items:center; } .summary-link { color:var(--blue); font-size:12px; font-weight:700; text-decoration:none; }
+  .confidence-body { display:grid; grid-template-columns:1fr 118px; align-items:center; min-height:190px; } .confidence-list { display:grid; gap:9px; margin-top:14px; font-size:12px; color:var(--muted); } .confidence-illustration { width:108px; height:108px; border-radius:50%; background:#f5f8ff; border:1px solid #e3eafe; display:grid; place-items:center; position:relative; color:var(--blue); } .confidence-stack { font-size:50px; transform:rotate(90deg); } .confidence-check { position:absolute; right:9px; bottom:13px; width:26px; height:26px; display:grid; place-items:center; border-radius:50%; color:#fff; background:var(--green); font-size:16px; }
   .confidence-state.complete { color: var(--green); } .confidence-state.waiting { color: var(--unknown); }
   .confidence-state.partial { color: var(--orange); } .confidence-state.failed { color: var(--red); }
-  .change-controls { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); padding: 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; }
+  .directory-overview { margin:0 20px; }
+  .change-controls { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); padding:8px 12px; background:var(--track); border:1px solid var(--line); border-radius:12px; margin:8px 0 10px; }
   .change-controls .select, .change-controls .search { width: 100%; min-width: 0; background: var(--track); }
   .change-item { grid-template-columns: minmax(0,1fr) auto; gap: 8px 12px; }
   .change-main { min-width: 0; }
@@ -1414,13 +1427,18 @@ $html = @'
   .intensity-track { grid-column: 1/-1; height: 3px; border-radius: 99px; background: var(--track); overflow: hidden; }
   .intensity-fill { display: block; height: 100%; width: var(--intensity); background: currentColor; transition: width 160ms ease; }
   .contribution { color: var(--muted); font-size: 11px; white-space: nowrap; }
+  .disk-scan-layout { margin:22px 20px 0; display:grid; grid-template-columns:minmax(0,7fr) minmax(280px,3fr); gap:16px; align-items:start; }
+  .disk-detail-panel, .scan-summary-panel { min-width:0; border:1px solid var(--line); border-radius:var(--radius); background:var(--panel); box-shadow:var(--shadow); }
+  .disk-detail-panel .section-intro, .scan-summary-panel .section-intro { margin:16px 18px 12px; }
   .grid { grid-template-columns: repeat(3,minmax(0,1fr)); }
-  .card { min-width: 0; }
+  .disk-card-grid { padding:0 14px 14px; gap:10px; }
+  .card { min-width:0; padding:16px; border:1px solid var(--line); box-shadow:none; }
   .card-top-actions { display: flex; gap: 8px; align-items: center; }
   .status-badge.complete { color: var(--green); background: color-mix(in srgb,var(--green) 11%,transparent); }
   .status-badge.waiting { color: var(--unknown); background: color-mix(in srgb,var(--unknown) 13%,transparent); }
   .status-badge.partial { color: var(--orange); background: color-mix(in srgb,var(--orange) 11%,transparent); }
   .status-badge.failed { color: var(--red); background: color-mix(in srgb,var(--red) 11%,transparent); }
+  .directory-card-extra .top-paths { display:none; }
   .top-paths { display: grid; gap: 8px; margin-top: 10px; }
   .top-path-row { display: grid; grid-template-columns: minmax(0,1fr) auto auto; gap: 8px; align-items: center; min-width: 0; }
   .top-path-name { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; min-width: 0; }
@@ -1430,7 +1448,9 @@ $html = @'
   .detail-groups { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   .detail-group { background: var(--track); border-radius: 10px; padding: 12px; min-width: 0; }
   .detail-group ul { margin: 7px 0 0 17px; }
-  .scan-details { margin-top: 28px; border: 1px solid var(--line); }
+  .scan-summary-card { display:grid; grid-template-columns:1fr; gap:0; margin:0; border:0; box-shadow:none; padding:0 18px 12px; }
+  .scan-summary-card .metadata-item { display:flex; align-items:center; justify-content:space-between; padding:10px 0; border-top:1px solid var(--line); } .scan-summary-card .metadata-item span { margin:0; } .scan-summary-card .metadata-item b { font-size:12px; text-align:right; }
+  .scan-details { margin:0; border:0; border-top:1px solid var(--line); border-radius:0; padding:12px 18px 16px; }
   .scan-completeness-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   .scan-metadata { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 12px; margin-top: 12px; }
   .metadata-item span { display: block; color: var(--muted); font-size: 11px; margin-bottom: 4px; }
@@ -1456,14 +1476,22 @@ $html = @'
     border-radius: 8px;
   }
 
-  .history-center { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px; margin-bottom: 22px; }
+  .history-intro { display:none; }
+  .history-details { margin:0 20px 22px; border:1px solid var(--line); border-radius:var(--radius); background:var(--panel); box-shadow:var(--shadow); }
+  .history-summary-overview { margin:22px 20px 12px; padding:8px 14px; border:1px solid var(--line); border-radius:var(--radius); background:var(--panel); box-shadow:var(--shadow); }
+  .history-summary-overview .history-summary { margin:8px 0; }
+  .history-details > summary { min-height:54px; display:flex; align-items:center; padding:0 20px; cursor:pointer; color:var(--blue); font-size:13px; font-weight:700; }
+  .history-details[open] > summary { border-bottom:1px solid var(--line); }
+  .history-center { padding: 18px; }
   .history-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
   .history-head p, .history-range-note, .history-empty { color: var(--muted); font-size: 13px; line-height: 1.6; }
   .history-controls { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
   .history-controls label { color: var(--muted); display: grid; font-size: 12px; gap: 5px; }
   .history-custom { display: flex; gap: 8px; flex-wrap: wrap; }
   .history-summary { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 10px; margin: 14px 0; }
+  .history-rail { grid-template-columns:repeat(6,minmax(0,1fr)); gap:0; margin:0; align-items:center; }
   .history-metric { background: var(--bg); border: 1px solid var(--line); border-radius: 9px; padding: 11px; min-width: 0; }
+  .history-rail .history-metric { background:transparent; border:0; border-left:1px solid var(--line); border-radius:0; padding:4px 16px; min-height:44px; } .history-rail .history-metric:first-child { border-left:0; padding-left:10px; }
   .history-metric span { color: var(--muted); display: block; font-size: 11px; margin-bottom: 5px; }
   .history-metric b { display: block; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .history-tabs { border-bottom: 1px solid var(--line); display: flex; gap: 4px; margin-top: 4px; }
@@ -1489,20 +1517,24 @@ $html = @'
   .directory-trends > b { display: block; margin-bottom: 6px; }
 
   #overview-section, #attention-center, #change-details, #capacity-visuals, #history-center, #drive-details-section, #scan-completeness { scroll-margin-top: 76px; }
-  .section-nav { position: sticky; top: 10px; z-index: 20; display: flex; gap: 4px; overflow-x: auto; margin: -16px 0 24px; padding: 6px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); scrollbar-width: none; }
+  .section-nav { position: sticky; top: 0; z-index: 20; display: flex; gap: 6px; overflow-x: auto; margin: 0 0 22px; padding: 0 4px; min-height:48px; border-top: 1px solid var(--line); border-bottom:1px solid var(--line); background: color-mix(in srgb,var(--bg) 92%,transparent); backdrop-filter:blur(14px); scrollbar-width: none; }
   .section-nav::-webkit-scrollbar { display: none; }
-  .section-nav a { flex: 0 0 auto; min-height: 40px; display: inline-flex; align-items: center; padding: 0 12px; border-radius: 8px; color: var(--muted); font-size: 12px; font-weight: 700; text-decoration: none; }
-  .section-nav a:hover { color: var(--text); background: var(--panel); }
+  .section-nav a { flex: 0 0 auto; min-height: 47px; display: inline-flex; align-items: center; padding: 0 16px; border-bottom:2px solid transparent; color: var(--muted); font-size: 13px; font-weight: 650; text-decoration: none; }
+  .section-nav a:first-child { color:var(--blue); border-bottom-color:var(--blue); }
+  .section-nav a:hover { color: var(--blue); }
   .section-nav a:focus-visible, .capacity-drive-row:focus-visible, .range-buttons button:focus-visible, .attention-item:focus-visible { outline: 3px solid color-mix(in srgb,var(--blue) 38%,transparent); outline-offset: 2px; }
   .overview-scan-state { display: inline-flex; align-items: center; width: fit-content; margin-top: 12px; padding: 6px 9px; border-radius: 999px; color: var(--text); background: var(--track); font-size: 11px; font-weight: 700; text-decoration: none; }
   .overview-scan-state.complete { color: var(--green); }
   .overview-scan-state.partial { color: var(--orange); }
   .overview-scan-state.failed { color: var(--red); }
   .overview-scan-state.waiting, .overview-scan-state.unknown { color: var(--unknown); }
+  .attention-strip { margin:0 20px; padding:0; border:1px solid color-mix(in srgb,var(--orange) 42%,var(--line)); border-radius:var(--radius); background:color-mix(in srgb,var(--orange) 5%,var(--panel)); }
+  .attention-strip .section-intro { display:none; }
   .attention-list { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; }
   .attention-list[data-count="1"] { grid-template-columns: minmax(0,1fr); }
   .attention-list[data-count="2"] { grid-template-columns: repeat(2,minmax(0,1fr)); }
-  .attention-item { display: grid; grid-template-columns: auto minmax(0,1fr) auto; gap: 12px; align-items: center; min-height: 82px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); color: var(--text); text-decoration: none; transition: transform 160ms cubic-bezier(.22,1,.36,1),border-color 160ms ease; }
+  .attention-item { display:grid; grid-template-columns:auto auto auto minmax(0,1fr) auto; gap:14px; align-items:center; min-height:68px; padding:12px 18px; border:0; border-radius:var(--radius); background:transparent; color:var(--text); text-decoration:none; transition:background 160ms ease; }
+  .attention-heading { font-weight:750; padding-right:14px; border-right:1px solid color-mix(in srgb,var(--orange) 36%,var(--line)); } .attention-severity { color:var(--orange); background:color-mix(in srgb,var(--orange) 10%,transparent); border:1px solid color-mix(in srgb,var(--orange) 23%,transparent); border-radius:999px; padding:4px 9px; font-size:11px; font-weight:700; }
   .attention-item:hover { transform: translateY(-1px); border-color: color-mix(in srgb,var(--text) 22%,var(--line)); }
   .attention-marker { display: inline-flex; align-items: center; justify-content: center; min-width: 42px; height: 28px; padding: 0 8px; border-radius: 999px; background: var(--track); font-size: 11px; font-weight: 800; }
   .attention-item.critical .attention-marker { color: var(--red); background: color-mix(in srgb,var(--red) 11%,transparent); }
@@ -1514,14 +1546,15 @@ $html = @'
   .attention-copy b { font-size: 14px; }
   .attention-copy small { margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
   .attention-arrow { color: var(--blue); font-size: 12px; font-weight: 700; }
-  .capacity-visual-grid { display: grid; grid-template-columns: minmax(300px,.85fr) minmax(0,1.4fr); gap: 12px; }
-  .capacity-panel { min-width: 0; padding: 18px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); }
+  .capacity-visuals { margin:0 20px; } .capacity-visuals .section-intro { margin-left:0; margin-right:0; }
+  .capacity-visual-grid { display: grid; grid-template-columns: minmax(280px,25fr) minmax(0,75fr); gap: 16px; }
+  .capacity-panel { min-width: 0; padding: 20px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); box-shadow:var(--shadow); }
   .panel-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
   .panel-heading h3 { font-size: 16px; }
   .panel-heading p { margin-top: 4px; color: var(--muted); font-size: 12px; }
   .trend-heading { align-items: flex-end; }
   .capacity-drive-list { display: grid; gap: 8px; }
-  .capacity-drive-row { width: 100%; min-height: 88px; display: grid; gap: 8px; padding: 12px; border: 1px solid transparent; border-radius: 10px; background: var(--track); color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+  .capacity-drive-row { width: 100%; min-height: 92px; display: grid; gap: 8px; padding: 13px; border: 1px solid transparent; border-radius: 11px; background: var(--track); color: var(--text); font: inherit; text-align: left; cursor: pointer; }
   .capacity-drive-row:hover { border-color: color-mix(in srgb,var(--blue) 45%,var(--line)); background: color-mix(in srgb,var(--blue) 7%,var(--panel)); }
   .capacity-drive-row.is-selected { border-color: var(--blue); background: color-mix(in srgb,var(--blue) 12%,var(--panel)); }
   .capacity-drive-head { display: grid; grid-template-columns: auto auto auto 1fr; align-items: center; gap: 8px; }
@@ -1540,16 +1573,18 @@ $html = @'
   .range-buttons { display: inline-flex; gap: 3px; padding: 3px; border-radius: 9px; background: var(--track); }
   .range-buttons button { min-height: 36px; padding: 0 10px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; }
   .range-buttons button[aria-pressed="true"] { background: var(--panel); color: var(--text); box-shadow: 0 1px 4px rgba(15,23,42,.08); }
-  .capacity-trend-stats { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 6px; margin-bottom: 12px; }
-  .capacity-stat { min-width: 0; padding: 9px 10px; border-radius: 9px; background: var(--track); }
+  .capacity-trend-stats { float:right; width:174px; display:grid; grid-template-columns:1fr; gap:0; margin:4px 0 0 20px; border:1px solid var(--line); border-radius:12px; overflow:hidden; }
+  .capacity-stat { min-width: 0; padding: 10px 14px; border-top:1px solid var(--line); background: var(--panel); }
+  .capacity-stat:first-child { border-top:0; }
   .capacity-stat span, .capacity-stat b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .capacity-stat span { color: var(--muted); font-size: 10px; }
-  .capacity-stat b { margin-top: 4px; font-size: 13px; }
-  .capacity-trend-chart { min-height: 270px; display: grid; place-items: center; }
+  .capacity-stat b { margin-top: 4px; font-size: 18px; }
+  .capacity-trend-chart { min-height: 350px; display: grid; place-items: center; }
   .capacity-svg { width: 100%; height: auto; min-height: 250px; overflow: visible; }
   .capacity-grid-line { stroke: var(--line); stroke-width: 1; }
   .capacity-axis-label { fill: var(--muted); font-size: 10px; }
-  .capacity-line { fill: none; stroke: var(--blue); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+  .capacity-area { fill:url(#capacity-area-gradient); }
+  .capacity-line { fill: none; stroke: var(--blue); stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
   .capacity-point { fill: var(--panel); stroke: var(--blue); stroke-width: 1.7; vector-effect: non-scaling-stroke; }
   .capacity-empty { color: var(--muted); font-size: 13px; line-height: 1.5; text-align: center; }
   .print-meta { display: none; }
@@ -1559,11 +1594,14 @@ $html = @'
   body.compact .meta { grid-template-columns: repeat(4, 1fr); }
   body.compact .spark-row { display: none; }
 
-  footer {
+  .disk-scan-layout { display:grid; grid-template-columns:minmax(0,2.1fr) minmax(260px,.9fr); gap:16px; align-items:start; }
+  .dashboard-footer {
     color: var(--muted);
     font-size: 12px;
     margin-top: 24px;
-    text-align: center;
+    padding:16px 4px 0;
+    border-top:1px solid var(--line);
+    text-align: left;
   }
 
   @media (max-width: 1100px) {
@@ -1576,18 +1614,24 @@ $html = @'
     header { align-items: stretch; flex-direction: column; }
     .actions { justify-content: flex-start; }
     .overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .summary-grid { grid-template-columns:1fr 1fr; grid-template-areas: "change change" "capacity confidence"; }
     .change-metrics, .change-lists { grid-template-columns: 1fr 1fr; }
     .grid { grid-template-columns: 1fr; }
     .history-summary { grid-template-columns: repeat(2,minmax(0,1fr)); }
-    .attention-list, .capacity-visual-grid { grid-template-columns: 1fr; }
+    .attention-list, .capacity-visual-grid, .disk-scan-layout { grid-template-columns: 1fr; }
     .attention-list[data-count] { grid-template-columns: 1fr; }
   }
 
   @media (max-width: 560px) {
     body { padding: 24px 14px 40px; }
     .overview { grid-template-columns: 1fr; }
-    .actions > * { width: 100%; justify-content: flex-start; }
-    .action-group > * { width: 100%; justify-content: center; }
+    .actions { display:grid; grid-template-columns:1fr; }
+    .actions > * { width: 100%; }
+    .action-group { display:grid; }
+    .action-search { grid-template-columns: 1fr 1fr; }
+    .action-display { grid-template-columns: 1fr 1fr; }
+    .action-report { grid-template-columns: repeat(3,1fr); }
+    .action-group > * { width: 100%; min-width:0; justify-content: center; }
     .meta { grid-template-columns: 1fr; }
     .change-metrics, .change-lists { grid-template-columns: 1fr; }
     body.compact .meta { grid-template-columns: 1fr 1fr; }
@@ -1615,6 +1659,8 @@ $html = @'
     .range-buttons { width: 100%; }
     .range-buttons button { flex: 1; min-height: 44px; }
     .capacity-trend-stats { grid-template-columns: 1fr 1fr; }
+    .capacity-trend-stats { float:none; width:100%; margin:0 0 12px; }
+    .copy-path, .overview-scan-state { min-height:44px; }
   }
 
   @media print {
@@ -1626,7 +1672,7 @@ $html = @'
     .summary-card, .attention-item, .change-list, .capacity-panel, .card, .scan-metadata, .capacity-svg { break-inside: avoid; box-shadow: none !important; }
     .summary-card:hover, .attention-item:hover { transform: none; }
     .summary-grid, .attention-list, .capacity-visual-grid, .grid { grid-template-columns: 1fr 1fr; }
-    .latest-change { background: #fff; color: #111827; border-color: #d1d5db; }
+    .latest-change, [data-theme="dark"] .latest-change { background: #fff; color: #111827; border-color: #d1d5db; }
     .latest-change .summary-label, .latest-change .summary-note, .latest-change .change-metric span { color: #4b5563; }
     .latest-change .change-metrics, .latest-change .change-metric { background: #f3f4f6; }
     .print-meta { display: block; margin: 18px 0 0; color: #4b5563; font-size: 11px; }
@@ -1635,12 +1681,11 @@ $html = @'
 </style>
 </head>
 <body>
-<main class="shell">
-  <header>
-    <div>
-      <div class="eyebrow">System Storage</div>
-      <h1>磁盘容量看板</h1>
-      <div class="timestamp" id="ts"></div>
+<main class="shell dashboard-shell">
+  <header class="product-header">
+    <div class="header-brand">
+      <svg class="brand-mark" viewBox="0 0 48 48" role="img" aria-labelledby="brand-title brand-desc"><title id="brand-title">DiskPulse</title><desc id="brand-desc">蓝色磁盘堆叠图标</desc><defs><linearGradient id="brand-gradient" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#73a7ff"/><stop offset="1" stop-color="#3370ff"/></linearGradient></defs><ellipse cx="21" cy="12" rx="12" ry="5.5" fill="url(#brand-gradient)"/><path d="M9 12v8c0 3 5.4 5.5 12 5.5S33 23 33 20v-8c0 3-5.4 5.5-12 5.5S9 15 9 12Z" fill="#4b83f5"/><path d="M9 20v8c0 3 5.4 5.5 12 5.5S33 31 33 28v-8c0 3-5.4 5.5-12 5.5S9 23 9 20Z" fill="#3b73ef"/><path d="M9 28v8c0 3 5.4 5.5 12 5.5S33 39 33 36v-8c0 3-5.4 5.5-12 5.5S9 31 9 28Z" fill="#2f66db"/><circle cx="36" cy="34" r="8" fill="#fff"/><path d="m32.5 34 2.2 2.2 4.6-5" fill="none" stroke="#20b982" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <div><h1>磁盘容量看板</h1><p class="product-subtitle">系统存储监控与分析报告</p><div class="timestamp" id="ts"></div></div>
     </div>
     <div class="actions">
       <div class="action-group action-search" aria-label="搜索与排序">
@@ -1654,8 +1699,8 @@ $html = @'
         </select>
       </div>
       <div class="action-group action-display" aria-label="显示设置">
-        <label class="toggle"><input id="compact" type="checkbox">紧凑</label>
-        <button class="button" id="themeBtn" type="button">主题</button>
+        <label class="toggle"><input id="compact" type="checkbox">紧凑模式</label>
+        <button class="button" id="themeBtn" type="button" aria-label="切换主题">主题</button>
       </div>
       <div class="action-group action-report" aria-label="报告操作">
         <button class="button" id="copy" type="button">复制摘要</button>
@@ -1676,43 +1721,27 @@ $html = @'
   </nav>
 
   <section class="overview" id="overview-section" aria-label="磁盘摘要">
-    <div class="summary-grid" id="summary-grid">
-      <article class="summary-card capacity-summary" id="capacity-summary"></article>
-      <article class="summary-card latest-change" id="latest-change"></article>
-      <article class="summary-card comparison-confidence" id="comparison-confidence"></article>
+    <div class="summary-grid hero-grid" id="summary-grid">
+      <article class="summary-card hero-card capacity-summary" id="capacity-summary"></article>
+      <article class="summary-card hero-card hero-card-primary latest-change" id="latest-change"></article>
+      <article class="summary-card hero-card comparison-confidence" id="comparison-confidence"></article>
     </div>
   </section>
-  <section class="attention-section" id="attention-center" aria-labelledby="attention-title">
-    <div class="section-intro"><div><h2 id="attention-title">关注中心</h2><p>优先显示容量压力与数据完整性问题</p></div></div>
+  <section class="attention-section attention-strip" id="attention-center" aria-labelledby="attention-title">
+    <div class="section-intro"><div><h2 id="attention-title">关注中心</h2><p>容量压力、可靠变化与扫描完整性</p></div></div>
     <div class="attention-list" id="attention-list"></div>
   </section>
 
-  <div class="section-intro"><div><h2>变化详情</h2><p>摘要和排行会随筛选同步更新，整体容量保持不变</p></div></div>
-  <section class="directory-overview" id="change-details">
-    <div class="change-controls">
-      <label>磁盘<select class="select" id="change-drive-filter" aria-label="筛选磁盘"></select></label>
-      <label>目录层级<select class="select" id="change-level-filter" aria-label="筛选目录层级"><option value="1">一级目录</option><option value="2">二级目录</option><option value="all">全部层级</option></select></label>
-      <label>变化方向<select class="select" id="change-direction-filter" aria-label="筛选变化方向"><option value="all">全部变化</option><option value="growth">仅增长</option><option value="release">仅释放</option></select></label>
-      <label>数据状态<select class="select" id="change-state-filter" aria-label="筛选数据状态"><option value="reliable">可靠变化</option><option value="unknown">未知</option><option value="unavailable">不可用</option></select></label>
-      <label>路径搜索<input class="search" id="change-path-filter" type="search" placeholder="筛选目录路径" aria-label="筛选目录路径"></label>
-    </div>
-    <div class="change-lists">
-      <div class="change-list growth-panel"><div class="change-list-heading"><h3>Top 增长</h3><span class="list-empty-note" id="release-empty-note" hidden>本次没有明显释放</span></div><div id="growth-list"></div></div>
-      <div class="change-list release-panel"><div class="change-list-heading"><h3>Top 释放</h3><span class="list-empty-note" id="growth-empty-note" hidden>本次没有明显增长</span></div><div id="release-list"></div></div>
-    </div>
-    <div class="change-list state-change-list" id="state-change-list" hidden><h3 id="state-change-title">数据状态</h3><div id="state-change-body"></div></div>
-  </section>
-
   <section class="capacity-visuals" id="capacity-visuals" aria-labelledby="capacity-visuals-title">
-    <div class="section-intro"><div><h2 id="capacity-visuals-title">磁盘容量与使用率</h2><p>比较当前压力，并查看所选磁盘的历史变化</p></div></div>
+    <div class="section-intro"><div><h2 id="capacity-visuals-title">容量趋势</h2><p>选择磁盘并查看真实历史样本</p></div></div>
     <div class="capacity-visual-grid">
       <article class="capacity-panel" aria-labelledby="capacity-drive-list-title">
-        <div class="panel-heading"><div><h3 id="capacity-drive-list-title">当前容量</h3><p>每条按单磁盘 100% 比例显示</p></div></div>
+        <div class="panel-heading"><div><h3 id="capacity-drive-list-title">磁盘选择与使用率</h3><p>按容量状态与使用率排列</p></div></div>
         <div class="capacity-drive-list" id="capacity-drive-select"></div>
       </article>
       <article class="capacity-panel trend-panel" aria-labelledby="capacity-trend-title">
         <div class="panel-heading trend-heading">
-          <div><h3 id="capacity-trend-title">容量历史趋势</h3><p id="capacity-trend-caption">选择磁盘查看趋势</p></div>
+          <div><h3 id="capacity-trend-title">容量趋势</h3><p id="capacity-trend-caption">选择磁盘查看趋势</p></div>
           <div class="range-buttons" id="capacity-range" role="group" aria-label="容量趋势时间范围">
             <button type="button" data-capacity-range="7" aria-pressed="false">7 天</button>
             <button type="button" data-capacity-range="30" aria-pressed="true">30 天</button>
@@ -1726,13 +1755,33 @@ $html = @'
     </div>
   </section>
 
-  <div class="section-intro history-intro"><div><h2>历史对比中心</h2><p>从既有完整快照比较累计变化与重复方向</p></div></div>
-  <section class="history-center" id="history-center" aria-label="历史对比中心">
+  <div class="section-intro"><div><h2>本次变化</h2><p>按可靠变化大小排序</p></div></div>
+  <section class="directory-overview" id="change-details">
+    <div class="change-controls">
+      <label>磁盘<select class="select" id="change-drive-filter" aria-label="筛选磁盘"></select></label>
+      <label>目录层级<select class="select" id="change-level-filter" aria-label="筛选目录层级"><option value="1">一级目录</option><option value="2">二级目录</option><option value="all">全部层级</option></select></label>
+      <label>变化方向<select class="select" id="change-direction-filter" aria-label="筛选变化方向"><option value="all">全部变化</option><option value="growth">仅增长</option><option value="release">仅释放</option></select></label>
+      <label>数据状态<select class="select" id="change-state-filter" aria-label="筛选数据状态"><option value="reliable">可靠变化</option><option value="unknown">未知</option><option value="unavailable">不可用</option></select></label>
+      <label>路径搜索<input class="search" id="change-path-filter" type="search" placeholder="筛选目录路径" aria-label="筛选目录路径"></label>
+    </div>
+    <div class="change-lists">
+      <div class="change-list change-ranking growth-panel"><div class="change-list-heading"><h3>Top 增长</h3><span class="list-empty-note" id="release-empty-note" hidden>本次没有明显释放</span></div><div id="growth-list"></div></div>
+      <div class="change-list change-ranking release-panel"><div class="change-list-heading"><h3>Top 释放</h3><span class="list-empty-note" id="growth-empty-note" hidden>本次没有明显增长</span></div><div id="release-list"></div></div>
+    </div>
+    <div class="change-list state-change-list" id="state-change-list" hidden><h3 id="state-change-title">数据状态</h3><div id="state-change-body"></div></div>
+  </section>
+
+  <div class="section-intro history-intro"><div><h2>历史对比</h2><p>从既有完整快照比较累计变化</p></div></div>
+  <section class="history-summary-overview history-summary-strip" id="history-summary-overview" aria-label="历史对比摘要">
+    <div class="history-summary" id="history-summary"></div>
+  </section>
+  <details class="history-details" id="history-details">
+    <summary>查看完整历史对比</summary>
+  <section class="history-center history-summary-strip" id="history-center" aria-label="历史对比中心">
     <div class="history-head">
       <div><h3>比较范围</h3><p class="history-range-note" id="history-range-note"></p></div>
       <div class="history-controls"><label>时间范围<select class="select" id="history-range"><option value="previous">上一次完整扫描</option><option value="day">约 24 小时前</option><option value="week">约 7 天前</option><option value="earliest">最早可用快照</option><option value="custom">自选历史快照</option></select></label><div class="history-custom" id="history-custom"></div></div>
     </div>
-    <div class="history-summary" id="history-summary"></div>
     <div class="history-tabs" id="history-tabs" role="tablist" aria-label="历史榜单">
       <button class="history-tab is-active" id="history-growth-tab" type="button" role="tab" aria-selected="true" aria-controls="history-growth-panel" data-history-tab="growth">持续增长</button>
       <button class="history-tab" id="history-release-tab" type="button" role="tab" aria-selected="false" aria-controls="history-release-panel" data-history-tab="release">持续释放</button>
@@ -1744,15 +1793,15 @@ $html = @'
       <div class="history-column" id="history-trend-panel" role="tabpanel" aria-labelledby="history-trend-tab" hidden><h3>历史变化趋势</h3><div id="history-trend-list"></div><button class="history-expand" type="button" data-history-list="trend">展开全部</button></div>
     </div>
   </section>
+  </details>
 
-  <div class="section-intro" id="drive-details-section"><div><h2>磁盘详情</h2><p>容量趋势、比较可信度与目录来源</p></div></div>
-  <section class="grid" id="grid"></section>
-  <div class="empty" id="empty">没有匹配的磁盘</div>
-  <details class="scan-details" id="scan-completeness"><summary>扫描完整性与详细原因</summary><div id="scan-detail-body"></div></details>
-  <section class="scan-metadata" id="scan-metadata" aria-label="扫描元数据"></section>
+  <div class="disk-scan-layout" id="drive-details-section">
+    <section class="disk-detail-panel"><div class="section-intro"><div><h2>磁盘详情</h2><p>容量摘要与近期变化</p></div><a class="summary-link" href="#grid">查看全部磁盘</a></div><section class="disk-card-grid"><section class="grid" id="grid"></section></section><div class="empty" id="empty">没有匹配的磁盘</div></section>
+    <section class="scan-summary-panel" aria-label="扫描信息"><div class="section-intro"><div><h2>扫描信息</h2><p>本次扫描状态与范围</p></div></div><section class="scan-metadata" id="scan-metadata" aria-label="扫描元数据"></section><details class="scan-details" id="scan-completeness"><summary>查看扫描详情</summary><div id="scan-detail-body"></div></details></section>
+  </div>
   <div class="print-meta" id="print-meta" aria-hidden="true"></div>
   <div class="sr-only" id="live-status" aria-live="polite"></div>
-  <footer id="footer"></footer>
+  <footer class="dashboard-footer" id="footer"></footer>
 </main>
 
 <script>
@@ -2175,11 +2224,11 @@ function renderHistoryCenter() {
   const mainRelease = rankings.release[0]?.displayPath || "无可靠释放";
   $("history-range-note").textContent = `${labels[state.historyRange]} · ${summary.comparable.length} / ${items.length} 个磁盘可可靠比较${selections.filter(x=>x.comparison).length ? " · " + selections.filter(x=>x.comparison).map(x=>`${x.disk.drive} ${formatLocalDate(x.comparison.completedAt)}`).join("；") : " · 当前没有合格历史基线"}`;
   const historySummary = $("history-summary"); historySummary.replaceChildren();
+  historySummary.className="history-summary history-rail";
   [
-    ["可靠增长总量","+"+fmtBytes(summary.added)],["可靠释放总量",summary.released?"-"+fmtBytes(summary.released):fmtBytes(0)],
-    ["可靠净变化",fmtBytes(summary.located)],["实际磁盘净变化",fmtBytes(summary.actual)],
-    ["未解释变化",fmtBytes(unexplained)],["解释摘要",activity],
-    ["主要增长来源",mainGrowth],["主要释放来源",mainRelease]
+    ["较上次增长","+"+fmtBytes(summary.added)],["较上次释放",summary.released?"-"+fmtBytes(summary.released):fmtBytes(0)],
+    ["净变化",fmtBytes(summary.located)],["本次扫描时长",SCAN_META.startedAt && SCAN_META.completedAt ? `${Math.max(0,Math.round((new Date(SCAN_META.completedAt)-new Date(SCAN_META.startedAt))/60000))} 分钟` : "-"],
+    ["扫描时间",formatLocalDate(SCAN_META.completedAt)],["上次扫描",selections.find(x=>x.comparison)?.comparison?.completedAt ? formatLocalDate(selections.find(x=>x.comparison).comparison.completedAt) : "暂无历史"]
   ].forEach(([label,value]) => { const metric=element("div","history-metric"); const strong=element("b","",value); strong.title=String(value); metric.append(element("span","",label),strong); historySummary.append(metric); });
 
   const historyCustom = $("history-custom"); historyCustom.replaceChildren();
@@ -2292,12 +2341,11 @@ function renderCapacitySummary() {
 function renderConfidence(items) {
   const c = confidenceFor(items);
   const root = $("comparison-confidence"); root.replaceChildren();
-  root.append(element("div","summary-label","比较可信度"));
-  root.append(element("div",`confidence-count confidence-state ${c.state}`,`${c.comparable.length} / ${items.length}`));
-  root.append(element("h2","summary-title","个磁盘可可靠比较"));
+  const top=element("div","summary-card-link"); top.append(element("div","summary-label","可比磁盘概览"),element("a","summary-link","查看全部")); top.querySelector("a").href="#drive-details-section"; root.append(top);
+  const body=element("div","confidence-body"); const copy=element("div"); copy.append(element("div",`confidence-count confidence-state ${c.state}`,`${c.comparable.length} / ${items.length}`),element("h2","summary-title","个磁盘可可靠比较"));
   const list = element("div","confidence-list");
-  [`${c.waiting.length} 个等待完整基线`,`${c.incomplete.length + c.failed.length} 个扫描不完整`,`优先查看：${c.inspect ? normalizeDriveId(c.inspect.drive) : "无需检查"}`].forEach((text) => list.append(element("span","",text)));
-  root.append(list);
+  [`● ${c.comparable.length} 个磁盘相似`, `● ${c.waiting.length + c.incomplete.length + c.failed.length} 个磁盘不可比`, `优先建议：${c.inspect ? normalizeDriveId(c.inspect.drive) : "无需检查"}`].forEach((text) => list.append(element("span","",text))); copy.append(list);
+  const art=element("div","confidence-illustration"); art.setAttribute("aria-hidden","true"); art.append(element("span","confidence-stack","▤"),element("span","confidence-check","✓")); body.append(copy,art); root.append(body);
 }
 
 function renderChangeSummary(items, summary, rankings) {
@@ -2327,9 +2375,10 @@ function renderAttention(rankings) {
   items.forEach((item) => {
     const link = element("a",`attention-item ${item.tone}`);
     link.href = item.href;
-    const marker = element("span","attention-marker",item.tone === "critical" ? "严重" : item.tone === "warning" ? "注意" : item.tone === "good" ? "正常" : "变化");
+    const marker = element("span","attention-marker","⚠");
+    const label = element("span","attention-severity",item.tone === "critical" ? "高关注" : item.tone === "warning" ? "提醒" : "关注");
     const copy = element("span","attention-copy"); copy.append(element("b","",item.title),element("small","",item.detail));
-    link.append(marker,copy,element("span","attention-arrow","查看"));
+    link.append(marker,element("span","attention-heading","关注中心"),label,copy,element("span","attention-arrow","查看详情"));
     root.append(link);
   });
 }
@@ -2344,7 +2393,7 @@ function renderDirectoryChanges() {
   const items = selectedItems(filters);
   const rows = filterChangeRows(DIRECTORY, filters);
   const rankings = rankChanges(rows);
-  const growth = rankings.growth.slice(0,10), release = rankings.release.slice(0,10);
+  const growth = rankings.growth.slice(0,5), release = rankings.release.slice(0,5);
   const maxMagnitude = Math.max(0,...growth.concat(release).map((row) => Math.abs(Number(row.deltaBytes))));
   const gross = rows.filter(isReliableChange).reduce((sum,row) => sum + Math.abs(Number(row.deltaBytes)),0);
   const waiting = items.length > 0 && items.every((item) => !item.baselineScanId);
@@ -2430,12 +2479,21 @@ function renderCapacityChart(samples, drive) {
   const title = document.createElementNS(svgNs,"title"); title.id=titleId; title.textContent=`${drive.id} 已用容量历史趋势`;
   const desc = document.createElementNS(svgNs,"desc"); desc.id=descId; desc.textContent=`${capacityRangeLabel(state.capacityRange)}，${formatLocalDate(stats.first.timestamp)} 至 ${formatLocalDate(stats.last.timestamp)}，共 ${stats.count} 个有效样本。`;
   svg.append(title,desc);
+  const defs = document.createElementNS(svgNs,"defs");
+  const gradient = document.createElementNS(svgNs,"linearGradient");
+  gradient.id="capacity-area-gradient"; gradient.setAttribute("x1","0"); gradient.setAttribute("y1","0"); gradient.setAttribute("x2","0"); gradient.setAttribute("y2","1");
+  [["0%",".24"],["100%",".02"]].forEach(([offset,opacity]) => { const stop=document.createElementNS(svgNs,"stop"); stop.setAttribute("offset",offset); stop.setAttribute("stop-color","var(--blue)"); stop.setAttribute("stop-opacity",opacity); gradient.append(stop); });
+  defs.append(gradient); svg.append(defs);
   [0,.5,1].forEach((ratio) => {
     const line = document.createElementNS(svgNs,"line");
     const lineY = top+plotHeight*ratio;
     line.setAttribute("x1",String(left)); line.setAttribute("x2",String(width-right)); line.setAttribute("y1",String(lineY)); line.setAttribute("y2",String(lineY)); line.classList.add("capacity-grid-line"); svg.append(line);
     const label = document.createElementNS(svgNs,"text"); label.setAttribute("x",String(left-8)); label.setAttribute("y",String(lineY+4)); label.setAttribute("text-anchor","end"); label.classList.add("capacity-axis-label"); label.textContent=fmt(maxUsed-(maxUsed-minUsed)*ratio); svg.append(label);
   });
+  const area = document.createElementNS(svgNs,"path");
+  area.classList.add("capacity-area");
+  area.setAttribute("d",`${samples.map((sample,index) => `${index ? "L" : "M"}${x(sample).toFixed(2)},${y(sample).toFixed(2)}`).join(" ")} L${x(samples[samples.length-1]).toFixed(2)},${top+plotHeight} L${x(samples[0]).toFixed(2)},${top+plotHeight} Z`);
+  svg.append(area);
   const path = document.createElementNS(svgNs,"path");
   path.classList.add("capacity-line");
   path.setAttribute("d",samples.map((sample,index) => `${index ? "L" : "M"}${x(sample).toFixed(2)},${y(sample).toFixed(2)}`).join(" "));
@@ -2468,7 +2526,8 @@ function renderCapacityVisuals() {
   const samples = filterCapacitySamples(allSamples,state.capacityRange,TS);
   const stats = capacityTrendStats(samples);
   $("capacity-trend-caption").textContent = `${state.capacityDrive} · ${capacityRangeLabel(state.capacityRange)}`;
-  const statValues = stats ? [["当前已用",fmt(stats.last.used)],["当前使用率",pct(stats.last.percent)],["区间最高",fmt(stats.max)],["区间最低",fmt(stats.min)],["净变化",stats.change === null ? "样本不足" : `${stats.change >= 0 ? "+" : ""}${fmt(stats.change)}`]] : [["当前已用","—"],["当前使用率","—"],["区间最高","—"],["区间最低","—"],["净变化","—"]];
+  statsRoot.className="capacity-trend-stats trend-summary";
+  const statValues = stats ? [["当前使用",fmt(drive.used)],["总容量",fmt(drive.total)],["可用容量",fmt(drive.free)],["较范围起点",stats.change === null ? "样本不足" : `${stats.change >= 0 ? "+" : ""}${fmt(stats.change)}`]] : [["当前使用","—"],["总容量","—"],["可用容量","—"],["较范围起点","—"]];
   statValues.forEach(([label,value]) => { const card=element("div","capacity-stat"); card.append(element("span","",label),element("b","",value)); statsRoot.append(card); });
   renderCapacityChart(samples,drive);
   const rangeText = stats ? `${formatLocalDate(stats.first.timestamp)} 至 ${formatLocalDate(stats.last.timestamp)} · ${stats.count} 个有效样本` : "当前范围没有有效样本";
@@ -2549,7 +2608,7 @@ function renderScanMetadata() {
   const duration = start && end ? `${Math.max(0,Math.round((end-start)/1000))} 秒` : "-";
   const fields = [["扫描开始",formatLocalDate(SCAN_META.startedAt),SCAN_META.startedAt||"-"],["扫描完成",formatLocalDate(SCAN_META.completedAt),SCAN_META.completedAt||"-"],["总耗时",duration,duration],["扫描磁盘",`${Number(SCAN_META.driveCount||0)} 个`,`${Number(SCAN_META.driveCount||0)} 个`]];
   const scanId = String(SCAN_META.scanId||"-");
-  const root = $("scan-metadata"); root.replaceChildren();
+  const root = $("scan-metadata"); root.className="scan-metadata scan-summary-card"; root.replaceChildren();
   fields.forEach(([label,value,title]) => { const item=element("div","metadata-item"); const strong=element("b","",value); strong.title=String(title); item.append(element("span","",label),strong); root.append(item); });
   const item = element("div","metadata-item"); item.append(element("span","","快照 ID"));
   const value = element("div","snapshot-value"); const strong=element("b","",shortSnapshotId(scanId)); strong.title=scanId;
@@ -2566,6 +2625,12 @@ function render() {
   renderCards();
   renderScanCompleteness();
   renderScanMetadata();
+}
+
+function openHistoryFromHash() {
+  if (location.hash !== "#history-center" && location.hash !== "#history-details") return;
+  const details = $("history-details");
+  if (details) details.open = true;
 }
 
 ["change-drive-filter","change-level-filter","change-direction-filter","change-state-filter"].forEach((id) => $(id).addEventListener("change", renderDirectoryChanges));
@@ -2654,6 +2719,9 @@ $("themeBtn").addEventListener("click", () => {
 })();
 
 $("print-report").addEventListener("click", () => window.print());
+
+window.addEventListener("hashchange",openHistoryFromHash);
+openHistoryFromHash();
 
 $("copy").addEventListener("click", async () => {
   const t = totals();

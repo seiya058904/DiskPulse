@@ -82,7 +82,7 @@ $tHistory = $history | Where-Object drive -eq 'T:'
 if ($tHistory.selections.day -ne 'day' -or $tHistory.selections.week -ne 'week') { throw 'Range selections were not serialized.' }
 if (-not @($tHistory.trends | Where-Object level -eq 1).Count) { throw 'Level-one trend series are required.' }
 
-$markers = @('INJECT_HISTORY_CENTER','id="history-range"','id="history-range-note"','id="history-tabs"','role="tablist"','data-history-tab="growth"','data-history-tab="release"','data-history-tab="trend"','id="sustained-growth-list"','id="sustained-release-list"','id="history-trend-list"','class="history-expand"','history-custom-baseline')
+$markers = @('INJECT_HISTORY_CENTER','id="history-range"','id="history-range-note"','id="history-tabs"','role="tablist"','data-history-tab="growth"','data-history-tab="release"','data-history-tab="trend"','id="sustained-growth-list"','id="sustained-release-list"','id="history-trend-list"','class="history-expand"','history-custom-baseline','id="history-summary-overview"','id="history-details"','openHistoryFromHash','addEventListener("hashchange",openHistoryFromHash)')
 foreach ($marker in $markers) { if ($source -notmatch [regex]::Escape($marker)) { throw "Missing history center marker: $marker" } }
 
 $helperMatch = [regex]::Match($source, '(?s)// TESTABLE_HISTORY_HELPERS_START(?<code>.*?)// TESTABLE_HISTORY_HELPERS_END')
