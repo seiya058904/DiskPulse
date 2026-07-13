@@ -85,7 +85,7 @@ try {
 
     $scriptMatch = [regex]::Match($source, '(?s)<script>(?<script>.*?)</script>')
     if (-not $scriptMatch.Success) { throw 'Embedded JavaScript was not found.' }
-    $script = $scriptMatch.Groups['script'].Value.Replace('INJECT_DATA','[]').Replace('INJECT_HISTORY','[]').Replace('INJECT_DIRECTORY','[]').Replace('INJECT_SCAN_META','{}').Replace('INJECT_TS','test')
+    $script = $scriptMatch.Groups['script'].Value.Replace('INJECT_HISTORY_CENTER','[]').Replace('INJECT_DATA','[]').Replace('INJECT_HISTORY','[]').Replace('INJECT_DIRECTORY','[]').Replace('INJECT_SCAN_META','{}').Replace('INJECT_TS','test')
     if ($script -match 'INJECT_[A-Z_]+') { throw "Unresolved dashboard placeholder: $($Matches[0])" }
     $scriptFile = Join-Path $temp 'dashboard.js'
     [IO.File]::WriteAllText($scriptFile, $script, [Text.UTF8Encoding]::new($false))
