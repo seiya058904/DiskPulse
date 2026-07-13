@@ -10,6 +10,16 @@ exit /b %ERRORLEVEL%
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+$silent = $env:DISKPULSE_SILENT -eq "1"
+$profileMode = $env:DISKPULSE_PROFILE -eq "1"
+if ($profileMode) {
+    $script:profileMarks = [System.Collections.Generic.List[PSObject]]::new()
+    $script:profileStopwatch = [Diagnostics.Stopwatch]::StartNew()
+}
+function Profile-Mark([string]$Key) {
+    if (-not $profileMode) { return }
+    $script:profileMarks.Add([PSCustomObject]@{ key = $Key; ms = $script:profileStopwatch.ElapsedMilliseconds })
+}
 
 function Get-DiskPulsePaths {
     $root = [IO.Path]::GetFullPath([string]$env:DISKPULSE_ROOT)
@@ -292,6 +302,7 @@ public static class DiskPulseFastScanner {
     }
 }
 '@
+Profile-Mark "addType"
 }
 
 function Invoke-DirectoryScan {
@@ -648,9 +659,11 @@ function Get-DirectoryTrendClassification {
 
 function New-HistoryComparisonCenter {
     param([array]$Snapshots,$Current)
+    if ($profileMode) { Profile-Mark "history:indexSnapshots" }
     $result = New-Object 'Collections.Generic.List[object]'
     foreach ($currentDrive in @($Current.drives)) {
         $candidates = @(Get-DriveHistoryCandidates -Snapshots $Snapshots -Drive $currentDrive.drive -Current $Current)
+        if ($profileMode) { Profile-Mark "history:selectCandidates:$($currentDrive.drive)" }
         $comparisons = New-Object 'Collections.Generic.List[object]'
         foreach ($candidate in $candidates) {
             $baselineDrive = @($candidate.drives | Where-Object { $_.drive -eq $currentDrive.drive }) | Select-Object -First 1
@@ -659,45 +672,64 @@ function New-HistoryComparisonCenter {
 
         $timeline = @($candidates | Sort-Object { [datetime]$_.completedAt })
         if ($currentDrive.status -in @('baseline','complete')) { $timeline += $Current }
-        $pairRows = New-Object 'Collections.Generic.List[object]'
         $trendKeys = @{}
+        if ($profileMode) { Profile-Mark "history:buildRecordIndexes:$($currentDrive.drive)" }
+
+        # Pre-index: snapshot drive records by normalized key, and pairRows by key
+        $snapDriveIndex = New-Object 'Collections.Generic.List[object]'
         foreach ($snapshotItem in $timeline) {
+            $di = @{ snap = $snapshotItem; records = @{} }
             $driveItem = @($snapshotItem.drives | Where-Object { $_.drive -eq $currentDrive.drive }) | Select-Object -First 1
-            foreach ($record in @($driveItem.records | Where-Object { $_.level -eq 1 })) {
-                $trendKeys[[string]$record.key] = [pscustomobject]@{ key=$record.key; displayPath=$record.displayPath; level=[int]$record.level }
+            if ($driveItem) {
+                foreach ($record in @($driveItem.records)) {
+                    $di.records[[string]$record.key] = $record
+                    # Collect level-1 records as trend keys
+                    if ($record.level -eq 1) {
+                        $trendKeys[[string]$record.key] = [pscustomobject]@{ key=$record.key; displayPath=$record.displayPath; level=[int]$record.level }
+                    }
+                }
             }
+            $snapDriveIndex.Add($di)
         }
+        $pairRowsByKey = @{}
         for ($index = 1; $index -lt $timeline.Count; $index++) {
             $olderDrive = @($timeline[$index-1].drives | Where-Object { $_.drive -eq $currentDrive.drive }) | Select-Object -First 1
             $newerDrive = @($timeline[$index].drives | Where-Object { $_.drive -eq $currentDrive.drive }) | Select-Object -First 1
+            $at = [string]$timeline[$index].completedAt
             foreach ($row in @(Compare-DriveRecords $newerDrive $olderDrive)) {
-                $pairRows.Add([pscustomobject]@{ key=$row.key; state=$row.state; deltaBytes=[int64]$row.deltaBytes; at=[string]$timeline[$index].completedAt })
+                $rk = [string]$row.key
+                if (-not $pairRowsByKey.ContainsKey($rk)) { $pairRowsByKey[$rk] = New-Object 'Collections.Generic.List[object]' }
+                $pairRowsByKey[$rk].Add([pscustomobject]@{ key=$row.key; state=$row.state; deltaBytes=[int64]$row.deltaBytes; at=$at })
                 if ($row.level -eq 2 -and $row.state -in @('created','changed','removed') -and [int64]$row.deltaBytes -ne 0) {
-                    $trendKeys[[string]$row.key] = [pscustomobject]@{ key=$row.key; displayPath=$row.displayPath; level=[int]$row.level }
+                    $trendKeys[$rk] = [pscustomobject]@{ key=$row.key; displayPath=$row.displayPath; level=[int]$row.level }
                 }
             }
         }
+        if ($profileMode) { Profile-Mark "history:pairComparisons:$($currentDrive.drive)" }
 
+        # Aggregate trends: single pass per trend key using pre-built indexes
         $trends = New-Object 'Collections.Generic.List[object]'
         foreach ($trendKey in $trendKeys.Values) {
+            $rk = [string]$trendKey.key
             $samples = New-Object 'Collections.Generic.List[object]'
-            foreach ($snapshotItem in $timeline) {
-                $driveItem = @($snapshotItem.drives | Where-Object { $_.drive -eq $currentDrive.drive }) | Select-Object -First 1
-                $record = @($driveItem.records | Where-Object { $_.key -eq $trendKey.key }) | Select-Object -First 1
-                $samples.Add(@([string]$snapshotItem.completedAt,$(if($record){[int64]$record.sizeBytes}else{$null})))
+            foreach ($di in $snapDriveIndex) {
+                $rec = $di.records[$rk]
+                $samples.Add(@([string]$di.snap.completedAt, $(if ($rec) { [int64]$rec.sizeBytes } else { $null })))
             }
-            $directoryComparisons = @($pairRows | Where-Object { $_.key -eq $trendKey.key })
-            $classification = Get-DirectoryTrendClassification $directoryComparisons
-            $seen = @($samples | Where-Object { $null -ne $_[1] })
+            $comps = if ($pairRowsByKey.ContainsKey($rk)) { [array]$pairRowsByKey[$rk] } else { @() }
+            $classification = Get-DirectoryTrendClassification $comps
+            $seenCount = 0; $firstSeen = $null; $lastSeen = $null
+            foreach ($s in $samples) { if ($null -ne $s[1]) { if ($seenCount -eq 0) { $firstSeen = $s[0] }; $lastSeen = $s[0]; $seenCount++ } }
             $trends.Add([pscustomobject]@{
                 key=$trendKey.key; displayPath=$trendKey.displayPath; level=$trendKey.level
                 samples=[object[]]$samples; cumulativeBytes=$classification.cumulativeBytes
                 growthCount=$classification.growthCount; releaseCount=$classification.releaseCount
                 occurrenceCount=$classification.occurrenceCount; comparisonCount=$classification.comparisonCount
                 label=$classification.label
-                firstSeen=if($seen.Count){$seen[0][0]}else{$null}; lastSeen=if($seen.Count){$seen[-1][0]}else{$null}
+                firstSeen=$firstSeen; lastSeen=$lastSeen
             })
         }
+        if ($profileMode) { Profile-Mark "history:aggregateTrends:$($currentDrive.drive)" }
 
         $previous = Select-DriveHistoryBaseline $candidates previous $Current
         $day = Select-DriveHistoryBaseline $candidates day $Current
@@ -709,6 +741,7 @@ function New-HistoryComparisonCenter {
             comparisons=[object[]]$comparisons; trends=[object[]]$trends
         })
     }
+    if ($profileMode) { Profile-Mark "history:buildOutput" }
     [object[]]$result
 }
 
@@ -785,11 +818,13 @@ Remove-StaleTemporaryFiles $paths
 $legacyFile = Copy-LegacyHistory $paths
 $scanId = New-ScanId
 $owner = Acquire-DiskPulseLock $paths $scanId
+Profile-Mark "init"
 $startedAt = (Get-Date).ToUniversalTime().ToString("o")
 $runStopwatch = [Diagnostics.Stopwatch]::StartNew()
 $scanStage = "初始化"
 $consoleProgressState = @{ LastLength = 0; Active = $false; LastRenderedMilliseconds = -1 }
 $clearConsoleProgress = {
+    if ($silent) { return }
     if ($consoleProgressState.Active) {
         Write-Host ("`r" + (' ' * $consoleProgressState.LastLength) + "`r") -NoNewline
         $consoleProgressState.Active = $false
@@ -869,6 +904,7 @@ if ($historySource) {
         Write-Warning "History unreadable, starting fresh."
     }
 }
+Profile-Mark "readHistory"
 
 $previousById = @{}
 foreach ($row in ($historyRows | Sort-Object Timestamp)) {
@@ -894,6 +930,7 @@ catch {
         } |
         Sort-Object DeviceID
 }
+Profile-Mark "diskQuery"
 $currentResults = [System.Collections.Generic.List[PSObject]]::new()
 $notifiedIds = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 
@@ -941,6 +978,7 @@ foreach ($d in $drives) {
 }
 
 $priorSnapshots = Read-Snapshots $paths
+Profile-Mark "readSnapshots"
 $snapshotDrives = New-Object 'Collections.Generic.List[object]'
 $completedDrives = 0
 $totalDrives = @($drives).Count
@@ -949,6 +987,7 @@ foreach ($d in $drives) {
     $capacity = $currentResults | Where-Object { $_.id -eq ($d.DeviceID -replace '\\','') } | Select-Object -First 1
     $consoleProgress = {
         param($progress)
+        if ($silent) { return }
         if (-not (Should-RenderConsoleProgress -Progress $progress -State $consoleProgressState)) { return }
         $line = Format-ScanProgressLine -Progress $progress -CompletedDrives $completedDrives -TotalDrives $totalDrives
         $width = [math]::Max($line.Length, $consoleProgressState.LastLength)
@@ -956,7 +995,9 @@ foreach ($d in $drives) {
         $consoleProgressState.LastLength = $line.Length
         $consoleProgressState.Active = $true
     }
+    Profile-Mark "scan:$($d.DeviceID)"
     $scan = Invoke-DirectoryScan -Drive $d.DeviceID -RootPath ($d.DeviceID + '\') -ProgressCallback $consoleProgress
+    Profile-Mark "scanDone:$($d.DeviceID)"
     $completedDrives++
     $consoleProgressState.LastRenderedMilliseconds = -1
     $priorComplete = $priorSnapshots | Where-Object { @($_.drives | Where-Object { $_.drive -eq $d.DeviceID -and $_.status -in @('baseline','complete') }).Count } | Select-Object -First 1
@@ -979,6 +1020,7 @@ if (@($snapshotDrives | Where-Object { $_.status -ne 'failed' }).Count) {
     Write-AtomicJson $snapshotPath $snapshot | Out-Null
 }
 $reportStopwatch = [Diagnostics.Stopwatch]::StartNew()
+Profile-Mark "reportStart"
 $directoryResults = New-Object 'Collections.Generic.List[object]'
 foreach ($driveSnapshot in $snapshot.drives) {
     $baselineSnapshot = Find-DriveBaseline -Snapshots @($priorSnapshots) -Drive $driveSnapshot.drive -Current $snapshot
@@ -986,23 +1028,33 @@ foreach ($driveSnapshot in $snapshot.drives) {
     $changes = Compare-DriveRecords $driveSnapshot $baselineDrive
     $directoryResults.Add([PSCustomObject]@{ drive=$driveSnapshot.drive; status=$driveSnapshot.status; baselineScanId=if($baselineSnapshot){$baselineSnapshot.scanId}else{$null}; baselineCompletedAt=if($baselineSnapshot){$baselineSnapshot.completedAt}else{$null}; changes=$changes; coverage=Get-ChangeCoverage $driveSnapshot $baselineDrive $changes; errors=$driveSnapshot.errors; unavailable=$driveSnapshot.unavailable; excluded=$driveSnapshot.excluded })
 }
+Profile-Mark "compareRecords"
 $historyCenter = New-HistoryComparisonCenter -Snapshots @($priorSnapshots) -Current $snapshot
+Profile-Mark "historyCenter"
 Invoke-SnapshotRetention $paths (@($priorSnapshots)+@($snapshot)) @($snapshot.drives.drive) $scanId
+Profile-Mark "snapshotRetention"
 
 $historyRows = [System.Collections.Generic.List[PSObject]](($historyRows |
     Sort-Object Timestamp -Descending |
     Select-Object -First $maxHistoryRows |
     Sort-Object Timestamp))
+Profile-Mark "historySort"
 
 $historyRows | Export-Csv $logFile -NoTypeInformation -Force -Encoding UTF8
+Profile-Mark "csvExport"
 
 $jsonArray = ConvertTo-JsonArray $currentResults
+Profile-Mark "json:DATA"
 $historyJson = ConvertTo-JsonArray $historyRows
+Profile-Mark "json:HISTORY"
 $directoryJson = ConvertTo-JsonArray ([object[]]$directoryResults)
+Profile-Mark "json:DIRECTORY"
 $historyCenterJson = ConvertTo-JsonArray ([object[]]$historyCenter)
+Profile-Mark "json:HISTORY_CENTER"
 $scanMetaJson = $snapshot | Select-Object scanId,startedAt,completedAt,status,@{n='driveCount';e={@($_.drives).Count}} | ConvertTo-Json -Compress
 $timestampJson = ConvertTo-Json -InputObject ([string]$timestamp) -Compress
 $systemDriveJson = ConvertTo-Json -InputObject ([string]$env:SystemDrive) -Compress
+Profile-Mark "json:META"
 if ([string]::IsNullOrWhiteSpace($jsonArray)) { $jsonArray = "[]" }
 if ([string]::IsNullOrWhiteSpace($historyJson)) { $historyJson = "[]" }
 
@@ -2756,6 +2808,7 @@ render();
 </body>
 </html>
 '@
+Profile-Mark "htmlTemplate"
 
 $replacementMap = @{
     INJECT_DATA = $jsonArray
@@ -2768,9 +2821,11 @@ $replacementMap = @{
 }
 $placeholderPattern = 'INJECT_(?:HISTORY_CENTER|SYSTEM_DRIVE|SCAN_META|TS_JSON|DIRECTORY|HISTORY|DATA)'
 $html = [regex]::Replace($html, $placeholderPattern, { param($match) [string]$replacementMap[$match.Value] })
+Profile-Mark "htmlReplace"
 
 $utf8NoBom = New-Object System.Text.UTF8Encoding $false
 [System.IO.File]::WriteAllText($htmlFile, $html, $utf8NoBom)
+Profile-Mark "htmlWrite"
 $reportStopwatch.Stop()
 $scanStage = "生成报告"
 
@@ -2782,6 +2837,7 @@ if ($env:DISKPULSE_NO_OPEN -ne "1") {
         Write-Warning "Generated $htmlFile. Open it manually if the browser did not launch."
     }
 }
+Profile-Mark "browserOpen"
 
 Write-ScanEvent $paths ([PSCustomObject]@{
     scanId = $scanId
@@ -2791,26 +2847,77 @@ Write-ScanEvent $paths ([PSCustomObject]@{
 })
 $runStopwatch.Stop()
 & $clearConsoleProgress
-Write-Host ("扫描完成：{0:N1} 秒" -f $runStopwatch.Elapsed.TotalSeconds)
-Write-Host ("报告生成：{0:N3} 秒，{1:N0} 字节" -f $reportStopwatch.Elapsed.TotalSeconds, ([Text.Encoding]::UTF8.GetByteCount($html)))
-Write-Host "报告位置：$htmlFile"
-foreach ($driveResult in $snapshot.drives) {
-    Write-Host ("{0} 无法访问 {1} 个路径，主动排除 {2} 个路径" -f $driveResult.drive, @($driveResult.unavailable).Count, @($driveResult.excluded).Count)
+if (-not $silent) {
+    Write-Host ("扫描完成：{0:N1} 秒" -f $runStopwatch.Elapsed.TotalSeconds)
+    Write-Host ("报告生成：{0:N3} 秒，{1:N0} 字节" -f $reportStopwatch.Elapsed.TotalSeconds, ([Text.Encoding]::UTF8.GetByteCount($html)))
+    Write-Host "报告位置：$htmlFile"
+    foreach ($driveResult in $snapshot.drives) {
+        Write-Host ("{0} 无法访问 {1} 个路径，主动排除 {2} 个路径" -f $driveResult.drive, @($driveResult.unavailable).Count, @($driveResult.excluded).Count)
+    }
+}
+if ($profileMode) {
+    Profile-Mark "total"
+    $profileResult = [ordered]@{ totalMs = $runStopwatch.ElapsedMilliseconds }
+    $prevMs = 0
+    foreach ($mark in $script:profileMarks) {
+        $elapsed = $mark.ms - $prevMs
+        $profileResult[$mark.key] = $elapsed
+        $prevMs = $mark.ms
+    }
+    Ensure-Directory $paths.Runtime
+    $profilePath = Join-Path $paths.Runtime 'last-profile.json'
+    $profileResult | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $profilePath -Encoding UTF8 -Force
 }
 }
 catch {
 $runStopwatch.Stop()
 & $clearConsoleProgress
-Write-Host "扫描失败：$scanStage" -ForegroundColor Red
-Write-Host ("已用时间：{0:N1} 秒" -f $runStopwatch.Elapsed.TotalSeconds)
-Write-Host "错误：$($_.Exception.Message)" -ForegroundColor Red
-    Write-ScanEvent $paths ([PSCustomObject]@{
-        scanId = $scanId
-        status = "failed"
-        startedAt = $startedAt
-        completedAt = (Get-Date).ToUniversalTime().ToString("o")
-        reason = $_.Exception.Message
-    })
+if ($profileMode) {
+    Profile-Mark "failed:$scanStage"
+    try {
+        $logRoot = if ($paths -and $paths.PSObject.Properties.Name -contains 'Runtime') {
+            $paths.Runtime
+        } else {
+            Join-Path ([string]$env:DISKPULSE_ROOT) 'runtime'
+        }
+        [IO.Directory]::CreateDirectory($logRoot) | Out-Null
+        $profilePath = Join-Path $logRoot 'last-profile.json'
+        $profileResult = [ordered]@{ totalMs = $runStopwatch.ElapsedMilliseconds }
+        $prevMs = 0
+        foreach ($mark in $script:profileMarks) {
+            $profileResult[$mark.key] = $mark.ms - $prevMs
+            $prevMs = $mark.ms
+        }
+        $profileResult | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $profilePath -Encoding UTF8 -Force
+    } catch {}
+}
+$errorMessage = "扫描失败：$scanStage`n已用时间：{0:N1} 秒`n错误：{1}" -f $runStopwatch.Elapsed.TotalSeconds, $_.Exception.Message
+if ($silent) {
+    try {
+        $logRoot = if ($paths -and $paths.PSObject.Properties.Name -contains 'Runtime') {
+            $paths.Runtime
+        } else {
+            Join-Path ([string]$env:DISKPULSE_ROOT) 'runtime'
+        }
+        [IO.Directory]::CreateDirectory($logRoot) | Out-Null
+        $logPath = Join-Path $logRoot 'last-run.log'
+        "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') $errorMessage" |
+            Add-Content -LiteralPath $logPath -Encoding UTF8
+    } catch {}
+} else {
+    Write-Host "扫描失败：$scanStage" -ForegroundColor Red
+    Write-Host ("已用时间：{0:N1} 秒" -f $runStopwatch.Elapsed.TotalSeconds)
+    Write-Host "错误：$($_.Exception.Message)" -ForegroundColor Red
+}
+    try {
+        Write-ScanEvent $paths ([PSCustomObject]@{
+            scanId = $scanId
+            status = "failed"
+            startedAt = $startedAt
+            completedAt = (Get-Date).ToUniversalTime().ToString("o")
+            reason = $_.Exception.Message
+        })
+    } catch {}
     throw
 }
 finally {
