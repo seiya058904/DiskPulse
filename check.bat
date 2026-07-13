@@ -1046,12 +1046,14 @@ $html = @'
     --orange: #d97706;
     --red: #dc2626;
     --unknown: #64748b;
+    --shadow: 0 8px 24px rgba(0,0,0,.35);
     color-scheme: dark;
   }
   [data-theme="dark"] .badge { background: color-mix(in srgb, var(--accent) 20%, transparent); }
   [data-theme="dark"] .mini { background: var(--track); }
   [data-theme="dark"] .ring { background: conic-gradient(var(--blue) calc(var(--pct) * 1%), var(--track) 0); }
   [data-theme="dark"] .ring::after { background: var(--panel); }
+  [data-theme="dark"] .confidence-illustration { background:#16213a; border-color:#26344a; }
 
   body {
     font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
