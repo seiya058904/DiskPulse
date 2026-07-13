@@ -1001,6 +1001,8 @@ $historyJson = ConvertTo-JsonArray $historyRows
 $directoryJson = ConvertTo-JsonArray ([object[]]$directoryResults)
 $historyCenterJson = ConvertTo-JsonArray ([object[]]$historyCenter)
 $scanMetaJson = $snapshot | Select-Object scanId,startedAt,completedAt,status,@{n='driveCount';e={@($_.drives).Count}} | ConvertTo-Json -Compress
+$timestampJson = ConvertTo-Json -InputObject ([string]$timestamp) -Compress
+$systemDriveJson = ConvertTo-Json -InputObject ([string]$env:SystemDrive) -Compress
 if ([string]::IsNullOrWhiteSpace($jsonArray)) { $jsonArray = "[]" }
 if ([string]::IsNullOrWhiteSpace($historyJson)) { $historyJson = "[]" }
 
@@ -1015,35 +1017,37 @@ $html = @'
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
   :root {
-    --bg: #f4f6f8;
+    --bg: #f4f6f9;
     --panel: #ffffff;
-    --text: #202124;
-    --muted: #70757a;
-    --line: #dfe3e7;
-    --track: #eef1f4;
+    --text: #111827;
+    --muted: #6b7280;
+    --line: #e5e7eb;
+    --track: #eef2f7;
     --blue: #2563eb;
-    --green: #12805c;
-    --orange: #b45309;
-    --red: #c5221f;
+    --green: #059669;
+    --orange: #d97706;
+    --red: #dc2626;
+    --unknown: #64748b;
+    color-scheme: light;
   }
 
   [data-theme="dark"] {
-    --bg: #1a1a2e;
-    --panel: #16213e;
-    --text: #e4e6eb;
-    --muted: #8a8d91;
-    --line: #3a3b3c;
-    --track: #2d2d3d;
-    --blue: #5b9cf5;
-    --green: #4ade80;
-    --orange: #f59e0b;
-    --red: #ef4444;
+    --bg: #0b0f17;
+    --panel: #121826;
+    --text: #f3f6fa;
+    --muted: #94a3b8;
+    --line: #263244;
+    --track: #182033;
+    --blue: #2563eb;
+    --green: #059669;
+    --orange: #d97706;
+    --red: #dc2626;
+    --unknown: #64748b;
     color-scheme: dark;
   }
   [data-theme="dark"] .badge { background: color-mix(in srgb, var(--accent) 20%, transparent); }
-  [data-theme="dark"] .insight { background: var(--panel); }
-  [data-theme="dark"] .mini { background: #1e2a3a; }
-  [data-theme="dark"] .ring { background: conic-gradient(var(--blue) calc(var(--pct) * 1%), #2d2d3d 0); }
+  [data-theme="dark"] .mini { background: var(--track); }
+  [data-theme="dark"] .ring { background: conic-gradient(var(--blue) calc(var(--pct) * 1%), var(--track) 0); }
   [data-theme="dark"] .ring::after { background: var(--panel); }
 
   body {
@@ -1098,6 +1102,9 @@ $html = @'
     flex-wrap: wrap;
   }
 
+  .action-group { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .action-group + .action-group { padding-left: 8px; }
+
   .search,
   .select,
   .button,
@@ -1135,27 +1142,15 @@ $html = @'
   }
 
   .overview {
-    display: grid;
-    grid-template-columns: minmax(240px, 1.05fr) repeat(4, minmax(132px, .7fr));
-    gap: 12px;
-    margin-bottom: 16px;
+    display: block;
+    margin: 0;
   }
 
-  .panel,
-  .metric,
   .card {
     background: var(--panel);
-    border: 1px solid rgba(32, 33, 36, .07);
-    border-radius: 8px;
-    box-shadow: 0 1px 2px rgba(32, 33, 36, .05);
-  }
-
-  .panel {
-    padding: 18px;
-    display: grid;
-    grid-template-columns: 112px 1fr;
-    gap: 18px;
-    align-items: center;
+    border: 0;
+    border-radius: 16px;
+    box-shadow: none;
   }
 
   .ring {
@@ -1181,83 +1176,6 @@ $html = @'
     z-index: 1;
     font-size: 24px;
     font-weight: 800;
-  }
-
-  .overall-title {
-    font-size: 17px;
-    font-weight: 800;
-    margin-bottom: 8px;
-  }
-
-  .overall-copy {
-    color: var(--muted);
-    font-size: 13px;
-    line-height: 1.55;
-  }
-
-  .metric {
-    padding: 16px;
-    min-height: 116px;
-  }
-
-  .metric-label {
-    color: var(--muted);
-    font-size: 11px;
-    font-weight: 800;
-    letter-spacing: 1px;
-    text-transform: uppercase;
-  }
-
-  .metric-value {
-    font-size: 23px;
-    font-weight: 800;
-    margin: 11px 0 5px;
-    line-height: 1.1;
-  }
-
-  .metric-note {
-    color: var(--muted);
-    font-size: 12px;
-    line-height: 1.35;
-  }
-
-  .metric-prev {
-    color: var(--orange);
-    font-size: 13px;
-    font-weight: 700;
-    margin: 6px 0 4px;
-  }
-
-  .insights {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 12px;
-    margin-bottom: 16px;
-  }
-
-  .insight {
-    background: var(--panel);
-    border-left: 4px solid var(--blue);
-    border-radius: 8px;
-    padding: 13px 14px;
-    min-height: 76px;
-  }
-
-  .insight.warn { border-left-color: var(--orange); }
-  .insight.critical { border-left-color: var(--red); }
-  .insight.good { border-left-color: var(--green); }
-  .insight-title {
-    font-size: 12px;
-    color: var(--muted);
-    font-weight: 800;
-    letter-spacing: .7px;
-    text-transform: uppercase;
-    margin-bottom: 7px;
-  }
-  .insight-body {
-    font-size: 14px;
-    line-height: 1.4;
-    font-weight: 600;
   }
 
   .grid {
@@ -1405,31 +1323,7 @@ $html = @'
   .directory-card-extra { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 12px; font-size: 12px; color: var(--muted); }
   .directory-card-extra ul { margin: 7px 0 0 18px; }
 
-  /* Apple-inspired system utility: quiet layers, explicit states, no decorative chrome. */
-  :root {
-    --bg: #f2f2f7;
-    --panel: #ffffff;
-    --text: #1c1c1e;
-    --muted: #636366;
-    --line: #d1d1d6;
-    --track: #f2f2f7;
-    --blue: #0a84ff;
-    --green: #198754;
-    --orange: #c65d07;
-    --red: #c9362b;
-  }
-  [data-theme="dark"] {
-    --bg: #000000;
-    --panel: #1c1c1e;
-    --text: #f5f5f7;
-    --muted: #aeaeb2;
-    --line: #38383a;
-    --track: #2c2c2e;
-    --blue: #409cff;
-    --green: #48a868;
-    --orange: #ff9f0a;
-    --red: #ff6961;
-  }
+  /* System utility: quiet layers, explicit states, no decorative chrome. */
   body { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif; padding: 42px 24px 64px; letter-spacing: -.005em; }
   .shell { width: min(1180px, 100%); }
   header { align-items: center; margin-bottom: 34px; }
@@ -1443,24 +1337,16 @@ $html = @'
   .section-intro { display: flex; justify-content: space-between; align-items: end; gap: 16px; margin: 30px 2px 12px; }
   .section-intro h2 { font-size: 20px; letter-spacing: -.015em; }
   .section-intro p { color: var(--muted); font-size: 13px; }
-  .panel, .metric, .card, .change-list { border: 0; border-radius: 16px; box-shadow: none; }
-  .overview { gap: 10px; }
-  .panel { padding: 22px; }
-  .metric { padding: 20px; min-height: 124px; }
-  .metric-label { text-transform: none; letter-spacing: 0; font-weight: 600; }
-  .metric-value { letter-spacing: -.02em; }
-  .insights { gap: 1px; overflow: hidden; border-radius: 16px; background: var(--line); }
-  .insight, .insight.warn, .insight.critical, .insight.good { border-left: 0; border-radius: 0; min-height: 82px; padding: 16px 18px; }
-  .insight-title { text-transform: none; letter-spacing: 0; font-weight: 600; }
+  .change-list { border: 0; border-radius: 16px; box-shadow: none; }
   .directory-overview { margin-top: 0; }
   .change-metrics { gap: 1px; overflow: hidden; border-radius: 12px; background: var(--line); }
   .change-metric { border-radius: 0; background: var(--track); padding: 14px 16px; }
   .change-controls { margin: 14px 0 10px; }
   .change-controls label { font-weight: 600; }
   .change-lists { gap: 10px; align-items: start; }
-  .change-lists.single-sided { grid-template-columns: minmax(0, 1fr); }
-  .change-lists.single-sided .change-list:has(> div > .baseline-guide) { display: none; }
   .change-list { padding: 18px 18px 8px; min-height: 0; }
+  .change-list-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .list-empty-note { color: var(--muted); font-size: 12px; font-weight: 600; }
   .state-change-list { margin-top: 10px; }
   .change-item { min-height: 48px; }
   .growth-value { color: var(--orange); }
@@ -1478,22 +1364,15 @@ $html = @'
   .directory-card-extra > span { display: block; }
   .directory-card-extra p { margin: 0; }
   footer { margin-top: 34px; }
-  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; } }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; }
+    .summary-card:hover, .attention-item:hover { transform: none !important; }
+    .bar-fill, .intensity-fill, .capacity-ratio-fill { transition: none !important; }
+  }
 
-  /* Frozen dashboard hierarchy: semantic color, quiet surfaces, no decorative motion. */
-  :root {
-    --bg: #f4f6f9; --panel: #ffffff; --track: #eef2f7; --line: #e5e7eb;
-    --text: #111827; --muted: #6b7280; --blue: #2563eb; --green: #059669;
-    --orange: #d97706; --red: #dc2626; --unknown: #64748b;
-  }
-  [data-theme="dark"] {
-    --bg: #0b0f17; --panel: #121826; --track: #182033; --line: #263244;
-    --text: #f3f6fa; --muted: #94a3b8; --blue: #2563eb; --green: #059669;
-    --orange: #d97706; --red: #dc2626; --unknown: #64748b;
-  }
-  .overview, .insights { display: block; margin: 0; background: transparent; border-radius: 0; overflow: visible; }
+  /* Dashboard hierarchy: semantic color, quiet surfaces, no decorative motion. */
   .summary-grid { display: grid; grid-template-columns: 1.05fr 1.65fr .9fr; grid-template-areas: "capacity change confidence"; gap: 12px; margin: 8px 0 14px; }
-  .summary-card, .system-conclusion, .scan-metadata { background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 22px; min-width: 0; }
+  .summary-card, .scan-metadata { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 22px; min-width: 0; }
   .summary-card { transition: transform 160ms ease, border-color 160ms ease; }
   .summary-card:hover { transform: translateY(-2px); }
   .capacity-summary { grid-area: capacity; }
@@ -1523,11 +1402,6 @@ $html = @'
   .confidence-list { display: grid; gap: 8px; margin-top: 14px; font-size: 12px; color: var(--muted); }
   .confidence-state.complete { color: var(--green); } .confidence-state.waiting { color: var(--unknown); }
   .confidence-state.partial { color: var(--orange); } .confidence-state.failed { color: var(--red); }
-  .system-conclusion { padding: 15px 20px; }
-  .conclusion-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; }
-  .conclusion-item { display: grid; grid-template-columns: auto minmax(0,1fr); gap: 8px; align-items: center; min-width: 0; border-radius: 10px; background: var(--track); padding: 10px 12px; }
-  .conclusion-item span { color: var(--blue); font-size: 11px; font-weight: 800; }
-  .conclusion-item b { color: var(--text); font-size: 13px; font-weight: 650; line-height: 1.35; }
   .change-controls { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); padding: 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; }
   .change-controls .select, .change-controls .search { width: 100%; min-width: 0; background: var(--track); }
   .change-item { grid-template-columns: minmax(0,1fr) auto; gap: 8px 12px; }
@@ -1535,9 +1409,8 @@ $html = @'
   .change-path { display: block; font-weight: 650; }
   .change-context { color: var(--muted); font-size: 11px; margin-top: 4px; }
   .change-side { display: flex; gap: 9px; align-items: center; }
-  .change-lists.release-empty { grid-template-columns: 2fr 1fr; }
-  .change-lists.growth-empty { grid-template-columns: 1fr 2fr; }
-  .change-lists.release-empty .change-list:last-child, .change-lists.growth-empty .change-list:first-child { padding-bottom: 12px; }
+  .change-lists.only-growth, .change-lists.only-release, .change-lists.both-empty { grid-template-columns: minmax(0,1fr); }
+  .change-lists.only-growth .release-panel, .change-lists.only-release .growth-panel, .change-lists.both-empty .release-panel { display: none; }
   .intensity-track { grid-column: 1/-1; height: 3px; border-radius: 99px; background: var(--track); overflow: hidden; }
   .intensity-fill { display: block; height: 100%; width: var(--intensity); background: currentColor; transition: width 160ms ease; }
   .contribution { color: var(--muted); font-size: 11px; white-space: nowrap; }
@@ -1571,7 +1444,6 @@ $html = @'
   @media (max-width: 980px) {
     .summary-grid { grid-template-columns: 1.05fr .9fr; grid-template-areas: "capacity confidence" "change change"; }
     .change-controls { grid-template-columns: repeat(3,minmax(0,1fr)); }
-    .conclusion-grid { grid-template-columns: 1fr; gap: 6px; }
   }
 
   .empty {
@@ -1616,6 +1488,73 @@ $html = @'
   .directory-trends { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 10px; }
   .directory-trends > b { display: block; margin-bottom: 6px; }
 
+  #overview-section, #attention-center, #change-details, #capacity-visuals, #history-center, #drive-details-section, #scan-completeness { scroll-margin-top: 76px; }
+  .section-nav { position: sticky; top: 10px; z-index: 20; display: flex; gap: 4px; overflow-x: auto; margin: -16px 0 24px; padding: 6px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); scrollbar-width: none; }
+  .section-nav::-webkit-scrollbar { display: none; }
+  .section-nav a { flex: 0 0 auto; min-height: 40px; display: inline-flex; align-items: center; padding: 0 12px; border-radius: 8px; color: var(--muted); font-size: 12px; font-weight: 700; text-decoration: none; }
+  .section-nav a:hover { color: var(--text); background: var(--panel); }
+  .section-nav a:focus-visible, .capacity-drive-row:focus-visible, .range-buttons button:focus-visible, .attention-item:focus-visible { outline: 3px solid color-mix(in srgb,var(--blue) 38%,transparent); outline-offset: 2px; }
+  .overview-scan-state { display: inline-flex; align-items: center; width: fit-content; margin-top: 12px; padding: 6px 9px; border-radius: 999px; color: var(--text); background: var(--track); font-size: 11px; font-weight: 700; text-decoration: none; }
+  .overview-scan-state.complete { color: var(--green); }
+  .overview-scan-state.partial { color: var(--orange); }
+  .overview-scan-state.failed { color: var(--red); }
+  .overview-scan-state.waiting, .overview-scan-state.unknown { color: var(--unknown); }
+  .attention-list { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; }
+  .attention-list[data-count="1"] { grid-template-columns: minmax(0,1fr); }
+  .attention-list[data-count="2"] { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .attention-item { display: grid; grid-template-columns: auto minmax(0,1fr) auto; gap: 12px; align-items: center; min-height: 82px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); color: var(--text); text-decoration: none; transition: transform 160ms cubic-bezier(.22,1,.36,1),border-color 160ms ease; }
+  .attention-item:hover { transform: translateY(-1px); border-color: color-mix(in srgb,var(--text) 22%,var(--line)); }
+  .attention-marker { display: inline-flex; align-items: center; justify-content: center; min-width: 42px; height: 28px; padding: 0 8px; border-radius: 999px; background: var(--track); font-size: 11px; font-weight: 800; }
+  .attention-item.critical .attention-marker { color: var(--red); background: color-mix(in srgb,var(--red) 11%,transparent); }
+  .attention-item.warning .attention-marker { color: var(--orange); background: color-mix(in srgb,var(--orange) 11%,transparent); }
+  .attention-item.info .attention-marker { color: var(--blue); background: color-mix(in srgb,var(--blue) 11%,transparent); }
+  .attention-item.good .attention-marker { color: var(--green); background: color-mix(in srgb,var(--green) 11%,transparent); }
+  .attention-copy { min-width: 0; }
+  .attention-copy b, .attention-copy small { display: block; }
+  .attention-copy b { font-size: 14px; }
+  .attention-copy small { margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+  .attention-arrow { color: var(--blue); font-size: 12px; font-weight: 700; }
+  .capacity-visual-grid { display: grid; grid-template-columns: minmax(300px,.85fr) minmax(0,1.4fr); gap: 12px; }
+  .capacity-panel { min-width: 0; padding: 18px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); }
+  .panel-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+  .panel-heading h3 { font-size: 16px; }
+  .panel-heading p { margin-top: 4px; color: var(--muted); font-size: 12px; }
+  .trend-heading { align-items: flex-end; }
+  .capacity-drive-list { display: grid; gap: 8px; }
+  .capacity-drive-row { width: 100%; min-height: 88px; display: grid; gap: 8px; padding: 12px; border: 1px solid transparent; border-radius: 10px; background: var(--track); color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+  .capacity-drive-row:hover { border-color: color-mix(in srgb,var(--blue) 45%,var(--line)); background: color-mix(in srgb,var(--blue) 7%,var(--panel)); }
+  .capacity-drive-row.is-selected { border-color: var(--blue); background: color-mix(in srgb,var(--blue) 12%,var(--panel)); }
+  .capacity-drive-head { display: grid; grid-template-columns: auto auto auto 1fr; align-items: center; gap: 8px; }
+  .capacity-drive-head strong { justify-self: end; }
+  .capacity-current { padding: 3px 7px; border-radius: 999px; color: #fff; background: var(--blue); font-size: 10px; font-weight: 800; }
+  .capacity-current.is-placeholder { visibility: hidden; }
+  .capacity-drive-state { padding: 3px 6px; border-radius: 999px; font-size: 10px; font-weight: 800; }
+  .capacity-drive-state.critical { color: var(--red); background: color-mix(in srgb,var(--red) 11%,transparent); }
+  .capacity-drive-state.warning { color: var(--orange); background: color-mix(in srgb,var(--orange) 11%,transparent); }
+  .capacity-drive-state.good { color: var(--green); background: color-mix(in srgb,var(--green) 11%,transparent); }
+  .capacity-ratio-track { display: block; height: 8px; overflow: hidden; border-radius: 999px; background: var(--panel); }
+  .capacity-ratio-fill { display: block; height: 100%; border-radius: inherit; background: var(--blue); transition: width 160ms cubic-bezier(.22,1,.36,1); }
+  .capacity-drive-row.warning .capacity-ratio-fill { background: var(--orange); }
+  .capacity-drive-row.critical .capacity-ratio-fill { background: var(--red); }
+  .capacity-drive-facts { color: var(--muted); font-size: 11px; line-height: 1.4; }
+  .range-buttons { display: inline-flex; gap: 3px; padding: 3px; border-radius: 9px; background: var(--track); }
+  .range-buttons button { min-height: 36px; padding: 0 10px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; }
+  .range-buttons button[aria-pressed="true"] { background: var(--panel); color: var(--text); box-shadow: 0 1px 4px rgba(15,23,42,.08); }
+  .capacity-trend-stats { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 6px; margin-bottom: 12px; }
+  .capacity-stat { min-width: 0; padding: 9px 10px; border-radius: 9px; background: var(--track); }
+  .capacity-stat span, .capacity-stat b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .capacity-stat span { color: var(--muted); font-size: 10px; }
+  .capacity-stat b { margin-top: 4px; font-size: 13px; }
+  .capacity-trend-chart { min-height: 270px; display: grid; place-items: center; }
+  .capacity-svg { width: 100%; height: auto; min-height: 250px; overflow: visible; }
+  .capacity-grid-line { stroke: var(--line); stroke-width: 1; }
+  .capacity-axis-label { fill: var(--muted); font-size: 10px; }
+  .capacity-line { fill: none; stroke: var(--blue); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+  .capacity-point { fill: var(--panel); stroke: var(--blue); stroke-width: 1.7; vector-effect: non-scaling-stroke; }
+  .capacity-empty { color: var(--muted); font-size: 13px; line-height: 1.5; text-align: center; }
+  .print-meta { display: none; }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+
   body.compact .card { padding: 14px; }
   body.compact .meta { grid-template-columns: repeat(4, 1fr); }
   body.compact .spark-row { display: none; }
@@ -1627,23 +1566,28 @@ $html = @'
     text-align: center;
   }
 
+  @media (max-width: 1100px) {
+    header { align-items: stretch; flex-direction: column; }
+    .actions { justify-content: flex-start; }
+    .action-group + .action-group { padding-left: 0; }
+  }
+
   @media (max-width: 900px) {
     header { align-items: stretch; flex-direction: column; }
     .actions { justify-content: flex-start; }
     .overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .panel { grid-column: 1 / -1; }
-    .insights { grid-template-columns: 1fr; }
     .change-metrics, .change-lists { grid-template-columns: 1fr 1fr; }
-    .change-lists.release-empty, .change-lists.growth-empty { grid-template-columns: 1fr; }
     .grid { grid-template-columns: 1fr; }
     .history-summary { grid-template-columns: repeat(2,minmax(0,1fr)); }
+    .attention-list, .capacity-visual-grid { grid-template-columns: 1fr; }
+    .attention-list[data-count] { grid-template-columns: 1fr; }
   }
 
   @media (max-width: 560px) {
     body { padding: 24px 14px 40px; }
     .overview { grid-template-columns: 1fr; }
-    .panel { grid-template-columns: 1fr; }
-    .actions > * { width: 100%; justify-content: center; }
+    .actions > * { width: 100%; justify-content: flex-start; }
+    .action-group > * { width: 100%; justify-content: center; }
     .meta { grid-template-columns: 1fr; }
     .change-metrics, .change-lists { grid-template-columns: 1fr; }
     body.compact .meta { grid-template-columns: 1fr 1fr; }
@@ -1663,6 +1607,30 @@ $html = @'
     .history-summary { grid-template-columns: 1fr; }
     .history-tabs { overflow-x: auto; }
     .history-tab { flex: 1 0 auto; }
+    .section-nav { top: 6px; margin-top: -4px; }
+    .attention-list { gap: 8px; }
+    .attention-item { grid-template-columns: auto minmax(0,1fr); }
+    .attention-arrow { display: none; }
+    .trend-heading { align-items: stretch; flex-direction: column; }
+    .range-buttons { width: 100%; }
+    .range-buttons button { flex: 1; min-height: 44px; }
+    .capacity-trend-stats { grid-template-columns: 1fr 1fr; }
+  }
+
+  @media print {
+    :root, [data-theme="dark"] { --bg:#fff; --panel:#fff; --track:#f3f4f6; --line:#d1d5db; --text:#111827; --muted:#4b5563; --blue:#1d4ed8; --green:#047857; --orange:#b45309; --red:#b91c1c; color-scheme:light; }
+    body { padding: 0; background: #fff; color: #111827; }
+    .shell { width: 100%; }
+    .actions, .section-nav, .change-controls, .copy-path, .range-buttons, .history-intro, #history-center, #scan-completeness, .drive-details, .history-expand { display: none !important; }
+    header { margin-bottom: 18px; }
+    .summary-card, .attention-item, .change-list, .capacity-panel, .card, .scan-metadata, .capacity-svg { break-inside: avoid; box-shadow: none !important; }
+    .summary-card:hover, .attention-item:hover { transform: none; }
+    .summary-grid, .attention-list, .capacity-visual-grid, .grid { grid-template-columns: 1fr 1fr; }
+    .latest-change { background: #fff; color: #111827; border-color: #d1d5db; }
+    .latest-change .summary-label, .latest-change .summary-note, .latest-change .change-metric span { color: #4b5563; }
+    .latest-change .change-metrics, .latest-change .change-metric { background: #f3f4f6; }
+    .print-meta { display: block; margin: 18px 0 0; color: #4b5563; font-size: 11px; }
+    footer { margin-top: 12px; }
   }
 </style>
 </head>
@@ -1675,31 +1643,91 @@ $html = @'
       <div class="timestamp" id="ts"></div>
     </div>
     <div class="actions">
-      <input class="search" id="search" type="search" placeholder="筛选盘符">
-      <select class="select" id="sort">
-        <option value="percent-desc">使用率高到低</option>
-        <option value="percent-asc">使用率低到高</option>
-        <option value="free-asc">剩余空间少到多</option>
-        <option value="name-asc">盘符排序</option>
-        <option value="change-desc">增长最多</option>
-      </select>
-      <label class="toggle"><input id="compact" type="checkbox">紧凑</label>
-      <button class="button" id="themeBtn">主题</button>
-      <button class="button" id="copy">复制摘要</button>
-      <a class="button" href="DiskPulse.csv" download>下载历史</a>
+      <div class="action-group action-search" aria-label="搜索与排序">
+        <input class="search" id="search" type="search" placeholder="筛选盘符" aria-label="筛选磁盘盘符">
+        <select class="select" id="sort" aria-label="磁盘排序方式">
+          <option value="percent-desc">使用率高到低</option>
+          <option value="percent-asc">使用率低到高</option>
+          <option value="free-asc">剩余空间少到多</option>
+          <option value="name-asc">盘符排序</option>
+          <option value="change-desc">增长最多</option>
+        </select>
+      </div>
+      <div class="action-group action-display" aria-label="显示设置">
+        <label class="toggle"><input id="compact" type="checkbox">紧凑</label>
+        <button class="button" id="themeBtn" type="button">主题</button>
+      </div>
+      <div class="action-group action-report" aria-label="报告操作">
+        <button class="button" id="copy" type="button">复制摘要</button>
+        <button class="button" id="print-report" type="button">打印报告</button>
+        <a class="button" href="DiskPulse.csv" download>下载历史</a>
+      </div>
     </div>
   </header>
 
-  <section class="overview" aria-label="磁盘摘要">
+  <nav class="section-nav" id="section-nav" aria-label="看板分区导航">
+    <a href="#overview-section">总览</a>
+    <a href="#attention-center">关注</a>
+    <a href="#change-details">本次变化</a>
+    <a href="#capacity-visuals">容量趋势</a>
+    <a href="#history-center">历史对比</a>
+    <a href="#drive-details-section">磁盘详情</a>
+    <a href="#scan-completeness">扫描信息</a>
+  </nav>
+
+  <section class="overview" id="overview-section" aria-label="磁盘摘要">
     <div class="summary-grid" id="summary-grid">
       <article class="summary-card capacity-summary" id="capacity-summary"></article>
       <article class="summary-card latest-change" id="latest-change"></article>
       <article class="summary-card comparison-confidence" id="comparison-confidence"></article>
     </div>
   </section>
-  <section class="insights" aria-label="系统结论"><div class="system-conclusion" id="system-conclusion"></div></section>
-  <div class="section-intro"><div><h2>历史对比中心</h2><p>从既有完整快照比较累计变化与重复方向</p></div></div>
-  <section class="history-center" aria-label="历史对比中心">
+  <section class="attention-section" id="attention-center" aria-labelledby="attention-title">
+    <div class="section-intro"><div><h2 id="attention-title">关注中心</h2><p>优先显示容量压力与数据完整性问题</p></div></div>
+    <div class="attention-list" id="attention-list"></div>
+  </section>
+
+  <div class="section-intro"><div><h2>变化详情</h2><p>摘要和排行会随筛选同步更新，整体容量保持不变</p></div></div>
+  <section class="directory-overview" id="change-details">
+    <div class="change-controls">
+      <label>磁盘<select class="select" id="change-drive-filter" aria-label="筛选磁盘"></select></label>
+      <label>目录层级<select class="select" id="change-level-filter" aria-label="筛选目录层级"><option value="1">一级目录</option><option value="2">二级目录</option><option value="all">全部层级</option></select></label>
+      <label>变化方向<select class="select" id="change-direction-filter" aria-label="筛选变化方向"><option value="all">全部变化</option><option value="growth">仅增长</option><option value="release">仅释放</option></select></label>
+      <label>数据状态<select class="select" id="change-state-filter" aria-label="筛选数据状态"><option value="reliable">可靠变化</option><option value="unknown">未知</option><option value="unavailable">不可用</option></select></label>
+      <label>路径搜索<input class="search" id="change-path-filter" type="search" placeholder="筛选目录路径" aria-label="筛选目录路径"></label>
+    </div>
+    <div class="change-lists">
+      <div class="change-list growth-panel"><div class="change-list-heading"><h3>Top 增长</h3><span class="list-empty-note" id="release-empty-note" hidden>本次没有明显释放</span></div><div id="growth-list"></div></div>
+      <div class="change-list release-panel"><div class="change-list-heading"><h3>Top 释放</h3><span class="list-empty-note" id="growth-empty-note" hidden>本次没有明显增长</span></div><div id="release-list"></div></div>
+    </div>
+    <div class="change-list state-change-list" id="state-change-list" hidden><h3 id="state-change-title">数据状态</h3><div id="state-change-body"></div></div>
+  </section>
+
+  <section class="capacity-visuals" id="capacity-visuals" aria-labelledby="capacity-visuals-title">
+    <div class="section-intro"><div><h2 id="capacity-visuals-title">磁盘容量与使用率</h2><p>比较当前压力，并查看所选磁盘的历史变化</p></div></div>
+    <div class="capacity-visual-grid">
+      <article class="capacity-panel" aria-labelledby="capacity-drive-list-title">
+        <div class="panel-heading"><div><h3 id="capacity-drive-list-title">当前容量</h3><p>每条按单磁盘 100% 比例显示</p></div></div>
+        <div class="capacity-drive-list" id="capacity-drive-select"></div>
+      </article>
+      <article class="capacity-panel trend-panel" aria-labelledby="capacity-trend-title">
+        <div class="panel-heading trend-heading">
+          <div><h3 id="capacity-trend-title">容量历史趋势</h3><p id="capacity-trend-caption">选择磁盘查看趋势</p></div>
+          <div class="range-buttons" id="capacity-range" role="group" aria-label="容量趋势时间范围">
+            <button type="button" data-capacity-range="7" aria-pressed="false">7 天</button>
+            <button type="button" data-capacity-range="30" aria-pressed="true">30 天</button>
+            <button type="button" data-capacity-range="90" aria-pressed="false">90 天</button>
+            <button type="button" data-capacity-range="all" aria-pressed="false">全部</button>
+          </div>
+        </div>
+        <div class="capacity-trend-stats" id="capacity-trend-stats"></div>
+        <div class="capacity-trend-chart" id="capacity-trend-chart"></div>
+      </article>
+    </div>
+  </section>
+
+  <div class="section-intro history-intro"><div><h2>历史对比中心</h2><p>从既有完整快照比较累计变化与重复方向</p></div></div>
+  <section class="history-center" id="history-center" aria-label="历史对比中心">
     <div class="history-head">
       <div><h3>比较范围</h3><p class="history-range-note" id="history-range-note"></p></div>
       <div class="history-controls"><label>时间范围<select class="select" id="history-range"><option value="previous">上一次完整扫描</option><option value="day">约 24 小时前</option><option value="week">约 7 天前</option><option value="earliest">最早可用快照</option><option value="custom">自选历史快照</option></select></label><div class="history-custom" id="history-custom"></div></div>
@@ -1716,26 +1744,14 @@ $html = @'
       <div class="history-column" id="history-trend-panel" role="tabpanel" aria-labelledby="history-trend-tab" hidden><h3>历史变化趋势</h3><div id="history-trend-list"></div><button class="history-expand" type="button" data-history-list="trend">展开全部</button></div>
     </div>
   </section>
-  <div class="section-intro"><div><h2>变化详情</h2><p>摘要和排行会随筛选同步更新，整体容量保持不变</p></div></div>
-  <section class="directory-overview" id="change-details">
-    <div class="change-controls">
-      <label>磁盘<select class="select" id="change-drive-filter" aria-label="筛选磁盘"></select></label>
-      <label>目录层级<select class="select" id="change-level-filter" aria-label="筛选目录层级"><option value="1">一级目录</option><option value="2">二级目录</option><option value="all">全部层级</option></select></label>
-      <label>变化方向<select class="select" id="change-direction-filter" aria-label="筛选变化方向"><option value="all">全部变化</option><option value="growth">仅增长</option><option value="release">仅释放</option></select></label>
-      <label>数据状态<select class="select" id="change-state-filter" aria-label="筛选数据状态"><option value="reliable">可靠变化</option><option value="unknown">未知</option><option value="unavailable">不可用</option></select></label>
-      <label>路径搜索<input class="search" id="change-path-filter" type="search" placeholder="筛选目录路径" aria-label="筛选目录路径"></label>
-    </div>
-    <div class="change-lists">
-      <div class="change-list"><h3>Top 增长</h3><div id="growth-list"></div></div>
-      <div class="change-list"><h3>Top 释放</h3><div id="release-list"></div></div>
-    </div>
-    <div class="change-list state-change-list" id="state-change-list" hidden><h3 id="state-change-title">数据状态</h3><div id="state-change-body"></div></div>
-  </section>
-  <div class="section-intro"><div><h2>磁盘详情</h2><p>容量趋势、比较可信度与目录来源</p></div></div>
+
+  <div class="section-intro" id="drive-details-section"><div><h2>磁盘详情</h2><p>容量趋势、比较可信度与目录来源</p></div></div>
   <section class="grid" id="grid"></section>
   <div class="empty" id="empty">没有匹配的磁盘</div>
   <details class="scan-details" id="scan-completeness"><summary>扫描完整性与详细原因</summary><div id="scan-detail-body"></div></details>
   <section class="scan-metadata" id="scan-metadata" aria-label="扫描元数据"></section>
+  <div class="print-meta" id="print-meta" aria-hidden="true"></div>
+  <div class="sr-only" id="live-status" aria-live="polite"></div>
   <footer id="footer"></footer>
 </main>
 
@@ -1750,7 +1766,8 @@ const HISTORY = Array.isArray(RAW_HISTORY) ? RAW_HISTORY : RAW_HISTORY ? [RAW_HI
 const DIRECTORY = Array.isArray(RAW_DIRECTORY) ? RAW_DIRECTORY : RAW_DIRECTORY ? [RAW_DIRECTORY] : [];
 const HISTORY_CENTER = Array.isArray(RAW_HISTORY_CENTER) ? RAW_HISTORY_CENTER : RAW_HISTORY_CENTER ? [RAW_HISTORY_CENTER] : [];
 const SCAN_META = RAW_SCAN_META || {};
-const TS = "INJECT_TS";
+const TS = INJECT_TS_JSON;
+const SYSTEM_DRIVE = INJECT_SYSTEM_DRIVE;
 
 // TESTABLE_HISTORY_HELPERS_START
 function selectHistoryComparison(disk, range, customScanId) {
@@ -1772,9 +1789,93 @@ function visibleHistoryRows(rows, list, expanded) {
 }
 // TESTABLE_HISTORY_HELPERS_END
 
+// TESTABLE_CAPACITY_HELPERS_START
+function normalizeDriveId(value) {
+  return String(value ?? "").replace(/\\/g, "").trim().toUpperCase();
+}
+
+function compareDriveId(a, b) {
+  const left = normalizeDriveId(a), right = normalizeDriveId(b);
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function capacityDriveOrder(drives) {
+  const statusRank = { critical: 0, warning: 1, good: 2 };
+  return [...drives].sort((a,b) =>
+    (statusRank[a.status] ?? 3) - (statusRank[b.status] ?? 3) ||
+    Number(b.percent || 0) - Number(a.percent || 0) ||
+    compareDriveId(a.id,b.id)
+  );
+}
+
+function defaultCapacityDrive(drives, systemDrive) {
+  const critical = drives.filter((drive) => drive.status === "critical").sort((a,b) =>
+    Number(b.percent || 0) - Number(a.percent || 0) ||
+    Number(a.free || 0) - Number(b.free || 0) ||
+    compareDriveId(a.id,b.id)
+  );
+  if (critical.length) return normalizeDriveId(critical[0].id);
+  const wanted = normalizeDriveId(systemDrive);
+  const system = drives.find((drive) => normalizeDriveId(drive.id) === wanted);
+  if (system) return normalizeDriveId(system.id);
+  return drives.length ? normalizeDriveId([...drives].sort((a,b) => compareDriveId(a.id,b.id))[0].id) : "";
+}
+
+function cleanCapacitySamples(history, current, driveId, reportTimestamp) {
+  const wanted = normalizeDriveId(driveId);
+  const rows = history.filter((row) => normalizeDriveId(row.ID) === wanted);
+  if (current && normalizeDriveId(current.id) === wanted) {
+    rows.push({ Timestamp: reportTimestamp, ID: current.id, Total: current.total, Used: current.used });
+  }
+  const byTime = new Map();
+  rows.forEach((row) => {
+    const time = Date.parse(row.Timestamp);
+    const total = Number(row.Total), used = Number(row.Used);
+    if (!Number.isFinite(time) || !Number.isFinite(total) || !Number.isFinite(used) || total <= 0 || used < 0 || used > total) return;
+    byTime.set(time, { time, timestamp: String(row.Timestamp), total, used, percent: used / total * 100 });
+  });
+  return [...byTime.values()].sort((a,b) => a.time-b.time);
+}
+
+function filterCapacitySamples(samples, range, reportTimestamp) {
+  if (range === "all") return [...samples];
+  const days = Number(range);
+  if (!Number.isFinite(days) || days <= 0 || !samples.length) return [];
+  const reportTime = Date.parse(reportTimestamp);
+  const end = Number.isFinite(reportTime) ? reportTime : samples[samples.length-1].time;
+  const start = end - days * 86400000;
+  return samples.filter((sample) => sample.time >= start && sample.time <= end);
+}
+
+function capacityTrendStats(samples) {
+  if (!samples.length) return null;
+  const used = samples.map((sample) => sample.used);
+  return {
+    first: samples[0], last: samples[samples.length-1], count: samples.length,
+    min: Math.min(...used), max: Math.max(...used),
+    change: samples.length > 1 ? samples[samples.length-1].used - samples[0].used : null
+  };
+}
+
+function buildAttentionItems(drives, directoryItems, reliableRows) {
+  const items = [];
+  const critical = drives.filter((drive) => drive.status === "critical").sort((a,b) =>
+    Number(a.free || 0) - Number(b.free || 0) || Number(b.percent || 0) - Number(a.percent || 0) || compareDriveId(a.id,b.id));
+  const incomplete = directoryItems.filter((item) => item.status === "partial" || item.status === "failed");
+  const warnings = drives.filter((drive) => drive.status === "warning").sort((a,b) =>
+    Number(b.percent || 0) - Number(a.percent || 0) || compareDriveId(a.id,b.id));
+  if (critical.length) items.push({ kind:"critical", tone:"critical", href:"#drive-details-section", title:`${critical.length} 个磁盘空间严重不足`, detail:`${normalizeDriveId(critical[0].id)} 仅剩 ${fmt(critical[0].free)}` });
+  if (incomplete.length) items.push({ kind:"incomplete", tone:"warning", href:"#scan-completeness", title:`${incomplete.length} 个磁盘扫描不完整`, detail:"报告中的目录变化可能不完整，请查看详细原因" });
+  if (warnings.length && items.length < 3) items.push({ kind:"warning", tone:"warning", href:"#drive-details-section", title:`${warnings.length} 个磁盘需要关注`, detail:`${normalizeDriveId(warnings[0].id)} 使用率 ${pct(warnings[0].percent)}` });
+  const main = reliableRows.find((row) => isReliableChange(row) && Number(row.deltaBytes));
+  if (main && items.length < 3) items.push({ kind:"change", tone:"info", href:"#change-details", title:main.deltaBytes > 0 ? "主要可靠增长" : "主要可靠释放", detail:`${main.displayPath} · ${main.deltaBytes > 0 ? "+" : ""}${fmtBytes(main.deltaBytes)}` });
+  return items.length ? items.slice(0,3) : [{ kind:"clear", tone:"good", href:"#overview-section", title:"当前没有需要立即处理的问题", detail:"容量状态与扫描结果均未发现明显风险" }];
+}
+// TESTABLE_CAPACITY_HELPERS_END
+
 const historyMap = {};
 HISTORY.forEach((row) => {
-  const id = String(row.ID).replace(/\\/g, "");
+  const id = normalizeDriveId(row.ID);
   if (!historyMap[id]) historyMap[id] = [];
   historyMap[id].push(row);
 });
@@ -1790,10 +1891,25 @@ const state = {
   historyRange: "previous",
   historyCustom: {},
   historyTab: "growth",
-  historyExpanded: {}
+  historyExpanded: {},
+  capacityDrive: defaultCapacityDrive(DATA,SYSTEM_DRIVE),
+  capacityRange: "30"
 };
 
 const $ = (id) => document.getElementById(id);
+const svgNs = "http://www.w3.org/2000/svg";
+
+function element(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = String(text);
+  return node;
+}
+
+function announce(message) {
+  $("live-status").textContent = "";
+  requestAnimationFrame(() => { $("live-status").textContent = message; });
+}
 
 (function() {
   var saved = localStorage.getItem("diskpulse-theme");
@@ -1817,17 +1933,15 @@ function pct(value) {
   return (Number(value) || 0).toFixed(1).replace(".0", "") + "%";
 }
 
-function statusText(status) {
-  return { good: "健康", warning: "注意", critical: "告警" }[status] || "未知";
-}
-
 function historyFor(id) {
-  return historyMap[id] || [];
+  return historyMap[normalizeDriveId(id)] || [];
 }
 
 function sparkline(rows) {
   const samples = rows.slice(-20).map((row) => Number(row.Percent) || 0);
-  if (samples.length < 2) return '<svg class="spark" viewBox="0 0 120 38" aria-hidden="true"><path d="M2 28 L118 28"></path></svg>';
+  const svg=document.createElementNS(svgNs,"svg"); svg.classList.add("spark"); svg.setAttribute("viewBox","0 0 120 38"); svg.setAttribute("preserveAspectRatio","none"); svg.setAttribute("aria-hidden","true");
+  const path=document.createElementNS(svgNs,"path");
+  if (samples.length < 2) { path.setAttribute("d","M2 28 L118 28"); svg.append(path); return svg; }
   const min = Math.min(...samples);
   const max = Math.max(...samples);
   const span = Math.max(1, max - min);
@@ -1836,7 +1950,7 @@ function sparkline(rows) {
     const y = 34 - ((value - min) / span) * 30;
     return `${x.toFixed(1)} ${y.toFixed(1)}`;
   });
-  return `<svg class="spark" viewBox="0 0 120 38" preserveAspectRatio="none" aria-hidden="true"><path d="M${points.join(" L")}"></path></svg>`;
+  path.setAttribute("d",`M${points.join(" L")}`); svg.append(path); return svg;
 }
 
 function estimateDays(drive, rows) {
@@ -1865,8 +1979,7 @@ function estimateDays(drive, rows) {
 function trend(diff) {
   const value = Number(diff) || 0;
   const text = formatCapacityDelta(value);
-  if (text === "容量基本不变") return `<span class="trend-st">${text}</span>`;
-  return `<span class="${value > 0 ? "trend-up" : "trend-dn"}">${text}</span>`;
+  return element("span",text === "容量基本不变" ? "trend-st" : value > 0 ? "trend-up" : "trend-dn",text);
 }
 
 function totals() {
@@ -1877,64 +1990,6 @@ function totals() {
     acc.diff += Number(d.diff) || 0;
     return acc;
   }, { total: 0, used: 0, free: 0, diff: 0 });
-}
-
-function prevTotals() {
-  var map = {};
-  HISTORY.forEach(function(r) {
-    var id = String(r.ID).replace(/\\/g, "");
-    if (!map[id]) map[id] = [];
-    map[id].push(r);
-  });
-  var acc = { total: 0, used: 0, free: 0 };
-  var hasPrev = false;
-  Object.values(map).forEach(function(rows) {
-    rows.sort(function(a, b) { return String(a.Timestamp).localeCompare(String(b.Timestamp)); });
-    if (rows.length >= 2) {
-      var p = rows[rows.length - 2];
-      acc.total += Number(p.Total) || 0;
-      acc.used += Number(p.Used) || 0;
-      acc.free += Number(p.Free) || 0;
-      hasPrev = true;
-    }
-  });
-  return hasPrev ? acc : null;
-}
-
-function renderOverview() {
-  const t = totals();
-  const pt = prevTotals();
-  const overallPct = t.total > 0 ? (t.used / t.total) * 100 : 0;
-  const mostFull = [...DATA].sort((a, b) => b.percent - a.percent)[0];
-  const comparableCount = DIRECTORY.filter((item) => item.baselineScanId).length; // trust-summary
-  $("overview").innerHTML = `
-    <article class="panel">
-      <div class="ring" style="--pct:${overallPct.toFixed(1)}"><span>${pct(overallPct)}</span></div>
-      <div>
-        <div class="overall-title">整体容量状态</div>
-        <div class="overall-copy">共 ${DATA.length} 个磁盘，已用 ${fmt(t.used)}，剩余 ${fmt(t.free)}。本次采样较上次${t.diff >= 0 ? "增加" : "减少"} ${fmt(Math.abs(t.diff))}。</div>
-      </div>
-    </article>
-    ${metric("总容量", fmt(t.total), "所有本地固定磁盘合计")}
-    ${metric("已使用", fmt(t.used), "当前占用空间", pt ? fmt(pt.used) : "")}
-    ${metric("剩余", fmt(t.free), "可继续写入空间", pt ? fmt(pt.free) : "")}
-    ${metric("最高使用率", mostFull ? `${mostFull.id} ${pct(mostFull.percent)}` : "-", mostFull ? statusText(mostFull.status) : "-")}
-  `;
-  $("insights").innerHTML = [
-    insight("容量最高", mostFull ? `${mostFull.id} 已使用 ${pct(mostFull.percent)}，剩余 ${fmt(mostFull.free)}` : "-", mostFull?.status),
-    insight("比较可信度", `${comparableCount} 个磁盘可可靠比较，${Math.max(0, DIRECTORY.length - comparableCount)} 个等待完整基线`, comparableCount === DIRECTORY.length ? "good" : "warn"),
-    insight("历史样本", `${HISTORY.length} 条记录，可用于趋势判断`, "good")
-  ].join("");
-}
-
-function metric(label, value, note, prev) {
-  var prevHtml = prev ? '<div class="metric-prev">上次 ' + prev + '</div>' : '';
-  return `<article class="metric"><div class="metric-label">${label}</div><div class="metric-value">${value}</div>${prevHtml}<div class="metric-note">${note}</div></article>`;
-}
-
-function insight(title, body, status = "good") {
-  const klass = status === "critical" ? "critical" : status === "warning" || status === "warn" ? "warn" : "good";
-  return `<article class="insight ${klass}"><div class="insight-title">${title}</div><div class="insight-body">${body}</div></article>`;
 }
 
 function sortedDrives() {
@@ -1958,12 +2013,8 @@ function fmtBytes(value) {
   return `${Number(value) < 0 ? "-" : ""}${size.toFixed(index ? 2 : 0)} ${units[index]}`;
 }
 
-function escapeHtml(value) {
-  return String(value ?? "").replace(/[&<>"']/g, (char) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[char]));
-}
-
 function directoryCoverage(id) {
-  return DIRECTORY.find((item) => item.drive.replace(/\\/g, "") === id)?.coverage || null;
+  return DIRECTORY.find((item) => normalizeDriveId(item.drive) === normalizeDriveId(id))?.coverage || null;
 }
 
 // TESTABLE_CHANGE_HELPERS_START
@@ -2081,22 +2132,24 @@ function selectedHistoryState() {
   return {selections,items};
 }
 
-function sizeSparkline(samples) {
-  const values = (samples || []).map((sample) => sample?.[1]).filter((value) => value !== null && value !== undefined).map(Number);
-  if (values.length < 2) return '<svg class="history-spark" viewBox="0 0 120 26" aria-hidden="true"><path d="M2 18 L118 18"></path></svg>';
-  const min = Math.min(...values), max = Math.max(...values), span = Math.max(1,max-min);
-  let seen = 0;
-  const points = (samples || []).flatMap((sample,index) => {
-    if (sample?.[1] === null || sample?.[1] === undefined) return [];
-    seen++;
-    return [`${(2+index/Math.max(1,samples.length-1)*116).toFixed(1)} ${(23-(Number(sample[1])-min)/span*20).toFixed(1)}`];
-  });
-  return `<svg class="history-spark" viewBox="0 0 120 26" preserveAspectRatio="none" aria-hidden="true"><path d="M${points.join(" L")}"></path></svg>`;
+function historyTrendNode(row) {
+  const recent = (row.samples || []).filter((sample) => sample?.[1] !== null && sample?.[1] !== undefined).slice(-5).map((sample) => fmtBytes(sample[1])).join(" → ");
+  const root = element("div","history-row");
+  const main = element("div","history-row-main"); const path=element("span","",`${row.drive} · ${row.displayPath}`); path.title=String(row.displayPath ?? "");
+  main.append(path,element("b",Number(row.cumulativeBytes)>=0?"growth-value":"release-value",`累计 ${Number(row.cumulativeBytes)>0?"+":""}${fmtBytes(row.cumulativeBytes)}`));
+  const meta = element("div","history-row-meta"); [row.label,`增长 ${row.growthCount} 次`,`释放 ${row.releaseCount} 次`,recent || "暂无大小序列"].forEach((text) => meta.append(element("span","",text)));
+  const dates = element("div","history-row-meta"); dates.append(element("span","",`首次 ${formatLocalDate(row.firstSeen)}`),element("span","",`最近 ${formatLocalDate(row.lastSeen)}`));
+  root.append(main,meta,sizeSparklineNode(row.samples),dates);
+  return root;
 }
 
-function historyTrendRow(row) {
-  const recent = (row.samples || []).filter((sample) => sample?.[1] !== null && sample?.[1] !== undefined).slice(-5).map((sample) => fmtBytes(sample[1])).join(" → ");
-  return `<div class="history-row"><div class="history-row-main"><span title="${escapeHtml(row.displayPath)}">${escapeHtml(row.drive)} · ${escapeHtml(row.displayPath)}</span><b class="${Number(row.cumulativeBytes)>=0?"growth-value":"release-value"}">累计 ${Number(row.cumulativeBytes)>0?"+":""}${fmtBytes(row.cumulativeBytes)}</b></div><div class="history-row-meta"><span>${escapeHtml(row.label)}</span><span>增长 ${row.growthCount} 次</span><span>释放 ${row.releaseCount} 次</span><span>${recent || "暂无大小序列"}</span></div>${sizeSparkline(row.samples)}<div class="history-row-meta"><span>首次 ${formatLocalDate(row.firstSeen)}</span><span>最近 ${formatLocalDate(row.lastSeen)}</span></div></div>`;
+function sizeSparklineNode(samples) {
+  const values = (samples || []).filter((sample) => sample?.[1] !== null && sample?.[1] !== undefined).map((sample) => Number(sample[1]));
+  const svg = document.createElementNS(svgNs,"svg"); svg.classList.add("history-spark"); svg.setAttribute("viewBox","0 0 160 26"); svg.setAttribute("aria-hidden","true");
+  if (values.length < 2) return svg;
+  const min=Math.min(...values),max=Math.max(...values),span=max-min||1;
+  const path=document.createElementNS(svgNs,"path"); path.setAttribute("d",values.map((value,index)=>`${index?"L":"M"}${(index/(values.length-1)*158+1).toFixed(1)} ${(24-(value-min)/span*22).toFixed(1)}`).join(" ")); svg.append(path);
+  return svg;
 }
 
 function allDirectoryTrends() {
@@ -2104,7 +2157,7 @@ function allDirectoryTrends() {
 }
 
 function directoryTrendRows(id,level) {
-  const drive = HISTORY_CENTER.find((disk) => disk.drive.replace(/\\/g,"") === id);
+  const drive = HISTORY_CENTER.find((disk) => normalizeDriveId(disk.drive) === normalizeDriveId(id));
   return (drive?.trends || []).filter((row) => Number(row.level) === Number(level)).sort((a,b) => Math.abs(Number(b.cumulativeBytes))-Math.abs(Number(a.cumulativeBytes))).slice(0,6).map((row) => ({...row,drive:drive.drive}));
 }
 
@@ -2121,14 +2174,20 @@ function renderHistoryCenter() {
   const mainGrowth = rankings.growth[0]?.displayPath || "无可靠增长";
   const mainRelease = rankings.release[0]?.displayPath || "无可靠释放";
   $("history-range-note").textContent = `${labels[state.historyRange]} · ${summary.comparable.length} / ${items.length} 个磁盘可可靠比较${selections.filter(x=>x.comparison).length ? " · " + selections.filter(x=>x.comparison).map(x=>`${x.disk.drive} ${formatLocalDate(x.comparison.completedAt)}`).join("；") : " · 当前没有合格历史基线"}`;
-  $("history-summary").innerHTML = [
+  const historySummary = $("history-summary"); historySummary.replaceChildren();
+  [
     ["可靠增长总量","+"+fmtBytes(summary.added)],["可靠释放总量",summary.released?"-"+fmtBytes(summary.released):fmtBytes(0)],
     ["可靠净变化",fmtBytes(summary.located)],["实际磁盘净变化",fmtBytes(summary.actual)],
     ["未解释变化",fmtBytes(unexplained)],["解释摘要",activity],
     ["主要增长来源",mainGrowth],["主要释放来源",mainRelease]
-  ].map(([label,value]) => `<div class="history-metric"><span>${label}</span><b title="${escapeHtml(value)}">${escapeHtml(value)}</b></div>`).join("");
+  ].forEach(([label,value]) => { const metric=element("div","history-metric"); const strong=element("b","",value); strong.title=String(value); metric.append(element("span","",label),strong); historySummary.append(metric); });
 
-  $("history-custom").innerHTML = state.historyRange === "custom" ? HISTORY_CENTER.map((disk) => `<label>${escapeHtml(disk.drive)}<select class="select history-custom-baseline" data-drive="${escapeHtml(disk.drive)}">${(disk.comparisons || []).map((item) => `<option value="${escapeHtml(item.scanId)}" ${state.historyCustom[disk.drive]===item.scanId?"selected":""}>${formatLocalDate(item.completedAt)}</option>`).join("")}</select></label>`).join("") : "";
+  const historyCustom = $("history-custom"); historyCustom.replaceChildren();
+  if (state.historyRange === "custom") HISTORY_CENTER.forEach((disk) => {
+    const label=element("label","",disk.drive); const select=element("select","select history-custom-baseline"); select.dataset.drive=disk.drive;
+    (disk.comparisons || []).forEach((item) => { const option=element("option","",formatLocalDate(item.completedAt)); option.value=String(item.scanId); option.selected=state.historyCustom[disk.drive]===item.scanId; select.append(option); });
+    label.append(select); historyCustom.append(label);
+  });
 
   const trends = allDirectoryTrends();
   const lists = {
@@ -2147,7 +2206,10 @@ function renderHistoryCenter() {
     tab.classList.toggle("is-active",active);
     tab.setAttribute("aria-selected",String(active));
     tab.textContent = `${titles[list]}（${listRows.length}）`;
-    $(ids[list]).innerHTML = visibleHistoryRows(listRows,list,state.historyExpanded).map(historyTrendRow).join("") || `<div class="history-empty">${empty[list]}</div>`;
+    const listRoot=$(ids[list]); listRoot.replaceChildren();
+    const visible=visibleHistoryRows(listRows,list,state.historyExpanded);
+    if (visible.length) visible.forEach((row) => listRoot.append(historyTrendNode(row)));
+    else listRoot.append(element("div","history-empty",empty[list]));
     const expand = panel.querySelector(".history-expand");
     expand.hidden = listRows.length <= historyListLimits[list];
     expand.textContent = state.historyExpanded[list] ? "收起" : `展开全部（${listRows.length}）`;
@@ -2156,20 +2218,26 @@ function renderHistoryCenter() {
 }
 
 function directoryTopThree(id) {
-  const item = DIRECTORY.find((entry) => entry.drive.replace(/\\/g, "") === id);
+  const item = DIRECTORY.find((entry) => normalizeDriveId(entry.drive) === normalizeDriveId(id));
   return reliableChanges(item, 1).sort((a,b) => Math.abs(b.deltaBytes) - Math.abs(a.deltaBytes)).slice(0,3);
 }
 
-function changeRow(row, maxMagnitude, contributionBase) {
+function changeRowNode(row, maxMagnitude, contributionBase) {
   const valueClass = row.deltaBytes >= 0 ? "growth-value" : "release-value";
   const intensity = maxMagnitude ? Math.max(4, Math.abs(Number(row.deltaBytes)) / maxMagnitude * 100) : 0;
   const contribution = contributionBase ? `${(Math.abs(Number(row.deltaBytes)) / contributionBase * 100).toFixed(1)}%` : "-";
-  return `<div class="change-item"><div class="change-main"><span class="change-path expandable-path" title="${escapeHtml(row.displayPath)}">${escapeHtml(row.displayPath)}</span><div class="change-context">${escapeHtml(row.drive)} · ${row.level} 级 · 当前 ${fmtBytes(currentSizeBytes(row))} · 贡献 ${contribution}</div></div><div class="change-side"><b class="${valueClass}">${row.deltaBytes >= 0 ? "+" : ""}${fmtBytes(row.deltaBytes)}</b><button class="copy-path" type="button" data-copy-path="${escapeHtml(row.displayPath)}">复制路径</button></div><div class="intensity-track ${valueClass}"><span class="intensity-fill" style="--intensity:${intensity.toFixed(1)}%"></span></div></div>`;
+  const root=element("div","change-item"), main=element("div","change-main"), path=element("span","change-path expandable-path",row.displayPath);
+  path.title=String(row.displayPath ?? ""); main.append(path,element("div","change-context",`${row.drive} · ${row.level} 级 · 当前 ${fmtBytes(currentSizeBytes(row))} · 贡献 ${contribution}`));
+  const side=element("div","change-side"); side.append(element("b",valueClass,`${row.deltaBytes >= 0 ? "+" : ""}${fmtBytes(row.deltaBytes)}`));
+  const copy=element("button","copy-path","复制路径"); copy.type="button"; copy.dataset.copyPath=String(row.displayPath ?? ""); copy.setAttribute("aria-label",`复制路径 ${row.displayPath}`); side.append(copy);
+  const track=element("div",`intensity-track ${valueClass}`),fill=element("span","intensity-fill"); fill.style.setProperty("--intensity",`${Math.max(0,Math.min(100,intensity)).toFixed(1)}%`); track.append(fill);
+  root.append(main,side,track); return root;
 }
 
-function stateChangeRow(row) {
+function stateChangeRowNode(row) {
   const label = row.state === "unknown" ? "未知变化" : "当前不可用";
-  return `<div class="change-item"><div class="change-main"><span class="change-path expandable-path" title="${escapeHtml(row.displayPath)}">${escapeHtml(row.displayPath)}</span><div class="change-context">${escapeHtml(row.drive)} · ${row.level} 级 · ${label}</div></div><span class="status-badge waiting">${label}</span></div>`;
+  const root=element("div","change-item"), main=element("div","change-main"), path=element("span","change-path expandable-path",row.displayPath); path.title=String(row.displayPath ?? "");
+  main.append(path,element("div","change-context",`${row.drive} · ${row.level} 级 · ${label}`)); root.append(main,element("span","status-badge waiting",label)); return root;
 }
 
 function currentChangeFilters() {
@@ -2195,31 +2263,75 @@ function renderCapacitySummary() {
   const t = totals();
   const overallPct = t.total > 0 ? t.used / t.total * 100 : 0;
   const mostFull = [...DATA].sort((a,b) => b.percent-a.percent)[0];
-  $("capacity-summary").innerHTML = `<div class="summary-label">整体容量</div><div class="capacity-layout"><div class="ring" style="--pct:${overallPct.toFixed(1)}"><span>${pct(overallPct)}</span></div><div><h2 class="summary-title">${capacityStatement(mostFull)}</h2><p class="summary-note">最高使用率 ${mostFull ? `${mostFull.id} ${pct(mostFull.percent)}` : "-"}</p></div></div><div class="summary-facts"><div class="summary-fact"><span>已用</span><b>${fmt(t.used)}</b></div><div class="summary-fact"><span>总容量</span><b>${fmt(t.total)}</b></div><div class="summary-fact"><span>剩余</span><b>${fmt(t.free)}</b></div></div>`;
+  const root = $("capacity-summary");
+  root.replaceChildren();
+  root.append(element("div","summary-label","整体容量"));
+  const layout = element("div","capacity-layout");
+  const ring = element("div","ring");
+  ring.style.setProperty("--pct",String(Math.max(0,Math.min(100,Number(overallPct) || 0))));
+  ring.append(element("span","",pct(overallPct)));
+  const copy = element("div");
+  copy.append(element("h2","summary-title",capacityStatement(mostFull)));
+  copy.append(element("p","summary-note",`最高使用率 ${mostFull ? `${normalizeDriveId(mostFull.id)} ${pct(mostFull.percent)}` : "-"}`));
+  layout.append(ring,copy);
+  root.append(layout);
+  const scan = confidenceFor(DIRECTORY);
+  const baselineWaiting = DIRECTORY.some((item) => !item.baselineScanId);
+  const allFailed = DIRECTORY.length > 0 && DIRECTORY.every((item) => item.status === "failed");
+  const scanState = !DIRECTORY.length ? ["unknown","扫描状态未知"] : allFailed ? ["failed","扫描全部失败"] : scan.incomplete.length || scan.failed.length ? ["partial","扫描部分完成"] : baselineWaiting ? ["waiting","等待比较基线"] : ["complete","扫描全部完成"];
+  const statusLink = element("a",`overview-scan-state ${scanState[0]}`,scanState[1]);
+  statusLink.href = "#scan-completeness";
+  root.append(statusLink);
+  const facts = element("div","summary-facts");
+  [["已用",fmt(t.used)],["总容量",fmt(t.total)],["剩余",fmt(t.free)]].forEach(([label,value]) => {
+    const fact = element("div","summary-fact"); fact.append(element("span","",label),element("b","",value)); facts.append(fact);
+  });
+  root.append(facts);
 }
 
 function renderConfidence(items) {
   const c = confidenceFor(items);
-  $("comparison-confidence").innerHTML = `<div class="summary-label">比较可信度</div><div class="confidence-count confidence-state ${c.state}">${c.comparable.length} / ${items.length}</div><h2 class="summary-title">个磁盘可可靠比较</h2><div class="confidence-list"><span>${c.waiting.length} 个等待完整基线</span><span>${c.incomplete.length + c.failed.length} 个扫描不完整</span><span>优先查看：${c.inspect ? escapeHtml(c.inspect.drive) : "无需检查"}</span></div>`;
+  const root = $("comparison-confidence"); root.replaceChildren();
+  root.append(element("div","summary-label","比较可信度"));
+  root.append(element("div",`confidence-count confidence-state ${c.state}`,`${c.comparable.length} / ${items.length}`));
+  root.append(element("h2","summary-title","个磁盘可可靠比较"));
+  const list = element("div","confidence-list");
+  [`${c.waiting.length} 个等待完整基线`,`${c.incomplete.length + c.failed.length} 个扫描不完整`,`优先查看：${c.inspect ? normalizeDriveId(c.inspect.drive) : "无需检查"}`].forEach((text) => list.append(element("span","",text)));
+  root.append(list);
 }
 
 function renderChangeSummary(items, summary, rankings) {
   const main = rankings.growth[0] || rankings.release[0];
   const gross = summary.added + summary.released;
   const contribution = main && gross ? Math.abs(Number(main.deltaBytes)) / gross * 100 : null;
-  const headline = main ? `${main.deltaBytes > 0 ? "主要增长" : "主要释放"}来自 ${escapeHtml(main.displayPath)}` : emptyChangeCopy({waiting:!summary.comparable.length,comparable:summary.comparable.length > 0,kind:"all"});
+  const headline = main ? `${main.deltaBytes > 0 ? "主要增长" : "主要释放"}来自 ${main.displayPath}` : emptyChangeCopy({waiting:!summary.comparable.length,comparable:summary.comparable.length > 0,kind:"all"});
   const fourthLabel = summary.activityPreferred ? "活动总量" : "目录解释率";
   const fourthValue = summary.activityPreferred ? fmtBytes(gross) : summary.rate === null ? "不适用" : `${summary.rate.toFixed(1)}%`;
-  $("latest-change").innerHTML = `<div class="summary-label">最新变化</div><h2 class="summary-title">${headline}</h2><div class="change-hero"><b>${main ? `${main.deltaBytes > 0 ? "+" : ""}${fmtBytes(main.deltaBytes)}` : "—"}</b><span class="summary-note">${contribution === null ? "没有可靠变化排行" : `主路径贡献 ${contribution.toFixed(1)}%`}</span></div><div class="change-metrics"><div class="change-metric"><span>可靠新增</span><b>+${fmtBytes(summary.added)}</b></div><div class="change-metric"><span>可靠释放</span><b>${summary.released ? "-" : ""}${fmtBytes(summary.released)}</b></div><div class="change-metric"><span>已定位净变化</span><b>${fmtBytes(summary.located)}</b></div><div class="change-metric"><span>${fourthLabel}</span><b>${fourthValue}</b></div></div><div class="reliability-badge">${summary.comparable.length} / ${items.length} 个磁盘可可靠比较</div>`;
+  const root = $("latest-change"); root.replaceChildren();
+  root.append(element("div","summary-label","最新变化"),element("h2","summary-title",headline));
+  const hero = element("div","change-hero");
+  hero.append(element("b","",main ? `${main.deltaBytes > 0 ? "+" : ""}${fmtBytes(main.deltaBytes)}` : "—"),element("span","summary-note",contribution === null ? "没有可靠变化排行" : `主路径贡献 ${contribution.toFixed(1)}%`));
+  root.append(hero);
+  const metrics = element("div","change-metrics");
+  [["可靠新增",`+${fmtBytes(summary.added)}`],["可靠释放",`${summary.released ? "-" : ""}${fmtBytes(summary.released)}`],["已定位净变化",fmtBytes(summary.located)],[fourthLabel,fourthValue]].forEach(([label,value]) => {
+    const metric = element("div","change-metric"); metric.append(element("span","",label),element("b","",value)); metrics.append(metric);
+  });
+  root.append(metrics,element("div","reliability-badge",`${summary.comparable.length} / ${items.length} 个磁盘可可靠比较`));
 }
 
-function renderConclusion(items, summary, rankings) {
-  const mostFull = [...DATA].sort((a,b) => b.percent-a.percent)[0];
-  const c = confidenceFor(items);
-  const mainPaths = [...rankings.growth,...rankings.release].slice(0,2).map((row) => row.displayPath);
-  const change = mainPaths.length ? `主要来自 ${mainPaths.join(" 和 ")}` : emptyChangeCopy({waiting:!summary.comparable.length,comparable:summary.comparable.length > 0,kind:"all"});
-  const reliability = c.state === "complete" ? `${c.comparable.length} 个磁盘均可比较${summary.rate === null ? "" : ` · 解释率 ${summary.rate.toFixed(1)}%`}` : `${c.comparable.length} 个可比较 · ${c.waiting.length} 个等待 · ${c.incomplete.length + c.failed.length} 个不完整`;
-  $("system-conclusion").innerHTML = `<div class="conclusion-grid"><div class="conclusion-item"><span>容量</span><b>${escapeHtml(capacityStatement(mostFull))}</b></div><div class="conclusion-item"><span>变化</span><b>${escapeHtml(change)}</b></div><div class="conclusion-item"><span>可信度</span><b>${escapeHtml(reliability)}</b></div></div>`;
+function renderAttention(rankings) {
+  const root = $("attention-list"); root.replaceChildren();
+  const rows = [...rankings.growth,...rankings.release].sort((a,b) => Math.abs(Number(b.deltaBytes))-Math.abs(Number(a.deltaBytes)));
+  const items = buildAttentionItems(DATA,DIRECTORY,rows);
+  root.dataset.count = String(items.length);
+  items.forEach((item) => {
+    const link = element("a",`attention-item ${item.tone}`);
+    link.href = item.href;
+    const marker = element("span","attention-marker",item.tone === "critical" ? "严重" : item.tone === "warning" ? "注意" : item.tone === "good" ? "正常" : "变化");
+    const copy = element("span","attention-copy"); copy.append(element("b","",item.title),element("small","",item.detail));
+    link.append(marker,copy,element("span","attention-arrow","查看"));
+    root.append(link);
+  });
 }
 
 function renderDirectoryChanges() {
@@ -2239,70 +2351,173 @@ function renderDirectoryChanges() {
   const reliableView = filters.state === "reliable";
   const lists = $("change-details").querySelector(".change-lists");
   lists.hidden = !reliableView;
-  lists.classList.toggle("release-empty",reliableView && growth.length > 0 && release.length === 0);
-  lists.classList.toggle("growth-empty",reliableView && release.length > 0 && growth.length === 0);
+  const onlyGrowth = reliableView && growth.length > 0 && release.length === 0;
+  const onlyRelease = reliableView && release.length > 0 && growth.length === 0;
+  const bothEmpty = reliableView && growth.length === 0 && release.length === 0;
+  lists.classList.toggle("only-growth",onlyGrowth);
+  lists.classList.toggle("only-release",onlyRelease);
+  lists.classList.toggle("both-empty",bothEmpty);
+  $("release-empty-note").hidden = !onlyGrowth;
+  $("growth-empty-note").hidden = !onlyRelease;
   $("state-change-list").hidden = reliableView;
   if (reliableView) {
-    $("growth-list").innerHTML = growth.map((row) => changeRow(row,maxMagnitude,gross)).join("") || `<div class="baseline-guide">${emptyChangeCopy({waiting,comparable:!waiting,kind:"growth"})}</div>`;
-    $("release-list").innerHTML = release.map((row) => changeRow(row,maxMagnitude,gross)).join("") || `<div class="baseline-guide">${emptyChangeCopy({waiting,comparable:!waiting,kind:"release"})}</div>`;
+    [["growth-list",growth,"growth"],["release-list",release,"release"]].forEach(([id,list,kind]) => { const root=$(id); root.replaceChildren(); if(list.length) list.forEach((row)=>root.append(changeRowNode(row,maxMagnitude,gross))); else if (!bothEmpty || kind === "growth") root.append(element("div","baseline-guide",emptyChangeCopy({waiting,comparable:!waiting,kind:bothEmpty?"all":kind}))); });
   } else {
     $("state-change-title").textContent = filters.state === "unknown" ? "未知变化" : "不可用项目";
-    $("state-change-body").innerHTML = rows.map(stateChangeRow).join("") || '<div class="baseline-guide">当前筛选没有对应项目。</div>';
+    const stateRoot=$("state-change-body"); stateRoot.replaceChildren();
+    if(rows.length) rows.forEach((row)=>stateRoot.append(stateChangeRowNode(row))); else stateRoot.append(element("div","baseline-guide","当前筛选没有对应项目。"));
   }
   const summary = summarizeChanges(items,rows);
   renderChangeSummary(items,summary,rankings);
   renderConfidence(items);
-  renderConclusion(items,summary,rankings);
+  renderAttention(rankings);
+}
+
+function capacityStatusLabel(status) {
+  return status === "critical" ? "严重" : status === "warning" ? "提醒" : "正常";
+}
+
+function renderCapacityDriveList() {
+  const root = $("capacity-drive-select"); root.replaceChildren();
+  capacityDriveOrder(DATA).forEach((drive) => {
+    const id = normalizeDriveId(drive.id);
+    const selected = id === state.capacityDrive;
+    const button = element("button",`capacity-drive-row ${drive.status}${selected ? " is-selected" : ""}`);
+    button.type = "button";
+    button.dataset.capacityDrive = id;
+    button.setAttribute("aria-pressed",String(selected));
+    button.setAttribute("aria-label",`${id}，使用率 ${pct(drive.percent)}，已用 ${fmt(drive.used)}，剩余 ${fmt(drive.free)}，总容量 ${fmt(drive.total)}`);
+    const head = element("span","capacity-drive-head");
+    head.append(element("b","",id),element("span",`capacity-drive-state ${drive.status}`,capacityStatusLabel(drive.status)));
+    head.append(element("span",`capacity-current${selected ? "" : " is-placeholder"}`,selected ? "当前" : "占位"));
+    head.append(element("strong","",pct(drive.percent)));
+    const bar = element("span","capacity-ratio-track");
+    const fill = element("span","capacity-ratio-fill");
+    fill.style.width = `${Math.max(0,Math.min(100,Number(drive.percent) || 0))}%`;
+    bar.append(fill);
+    const facts = element("span","capacity-drive-facts",`已用 ${fmt(drive.used)} · 剩余 ${fmt(drive.free)} · 总容量 ${fmt(drive.total)}`);
+    button.append(head,bar,facts);
+    root.append(button);
+  });
+  if (!DATA.length) root.append(element("p","capacity-empty","当前没有可显示的磁盘。"));
+}
+
+function capacityRangeLabel(range) {
+  return range === "all" ? "全部历史" : `最近 ${range} 天`;
+}
+
+function renderCapacityChart(samples, drive) {
+  const root = $("capacity-trend-chart"); root.replaceChildren();
+  const stats = capacityTrendStats(samples);
+  if (!stats) {
+    root.append(element("div","capacity-empty","当前范围没有有效容量样本。"));
+    return;
+  }
+  const width = 720, height = 270, left = 56, right = 18, top = 24, bottom = 38;
+  const plotWidth = width-left-right, plotHeight = height-top-bottom;
+  const minTime = stats.first.time, maxTime = stats.last.time;
+  const rawSpan = stats.max-stats.min;
+  const padding = rawSpan > 0 ? rawSpan*.12 : Math.max(1,stats.max*.04);
+  const minUsed = Math.max(0,stats.min-padding), maxUsed = stats.max+padding;
+  const x = (sample) => left + (maxTime === minTime ? plotWidth/2 : (sample.time-minTime)/(maxTime-minTime)*plotWidth);
+  const y = (sample) => top + (maxUsed-sample.used)/(maxUsed-minUsed)*plotHeight;
+  const svg = document.createElementNS(svgNs,"svg");
+  svg.classList.add("capacity-svg");
+  svg.setAttribute("viewBox",`0 0 ${width} ${height}`);
+  svg.setAttribute("role","img");
+  const titleId = "capacity-chart-title", descId = "capacity-chart-desc";
+  svg.setAttribute("aria-labelledby",`${titleId} ${descId}`);
+  const title = document.createElementNS(svgNs,"title"); title.id=titleId; title.textContent=`${drive.id} 已用容量历史趋势`;
+  const desc = document.createElementNS(svgNs,"desc"); desc.id=descId; desc.textContent=`${capacityRangeLabel(state.capacityRange)}，${formatLocalDate(stats.first.timestamp)} 至 ${formatLocalDate(stats.last.timestamp)}，共 ${stats.count} 个有效样本。`;
+  svg.append(title,desc);
+  [0,.5,1].forEach((ratio) => {
+    const line = document.createElementNS(svgNs,"line");
+    const lineY = top+plotHeight*ratio;
+    line.setAttribute("x1",String(left)); line.setAttribute("x2",String(width-right)); line.setAttribute("y1",String(lineY)); line.setAttribute("y2",String(lineY)); line.classList.add("capacity-grid-line"); svg.append(line);
+    const label = document.createElementNS(svgNs,"text"); label.setAttribute("x",String(left-8)); label.setAttribute("y",String(lineY+4)); label.setAttribute("text-anchor","end"); label.classList.add("capacity-axis-label"); label.textContent=fmt(maxUsed-(maxUsed-minUsed)*ratio); svg.append(label);
+  });
+  const path = document.createElementNS(svgNs,"path");
+  path.classList.add("capacity-line");
+  path.setAttribute("d",samples.map((sample,index) => `${index ? "L" : "M"}${x(sample).toFixed(2)},${y(sample).toFixed(2)}`).join(" "));
+  svg.append(path);
+  samples.forEach((sample) => {
+    const point = document.createElementNS(svgNs,"circle");
+    point.classList.add("capacity-point"); point.setAttribute("cx",x(sample).toFixed(2)); point.setAttribute("cy",y(sample).toFixed(2)); point.setAttribute("r","2.4");
+    const tooltip = document.createElementNS(svgNs,"title"); tooltip.textContent=`${formatLocalDate(sample.timestamp)} · ${fmt(sample.used)} · ${pct(sample.percent)}`; point.append(tooltip); svg.append(point);
+  });
+  [[left,stats.first.timestamp,"start"],[width-right,stats.last.timestamp,"end"]].forEach(([labelX,timestamp,anchor]) => {
+    const label = document.createElementNS(svgNs,"text"); label.setAttribute("x",String(labelX)); label.setAttribute("y",String(height-10)); label.setAttribute("text-anchor",anchor); label.classList.add("capacity-axis-label"); label.textContent=formatLocalDate(timestamp).slice(0,10); svg.append(label);
+  });
+  root.append(svg);
+  if (stats.count === 1) root.append(element("p","capacity-empty","样本不足，无法计算变化。"));
+}
+
+function renderCapacityVisuals() {
+  if (!DATA.some((drive) => normalizeDriveId(drive.id) === state.capacityDrive)) state.capacityDrive = defaultCapacityDrive(DATA,SYSTEM_DRIVE);
+  renderCapacityDriveList();
+  document.querySelectorAll("[data-capacity-range]").forEach((button) => button.setAttribute("aria-pressed",String(button.dataset.capacityRange === state.capacityRange)));
+  const drive = DATA.find((item) => normalizeDriveId(item.id) === state.capacityDrive);
+  const statsRoot = $("capacity-trend-stats"); statsRoot.replaceChildren();
+  if (!drive) {
+    $("capacity-trend-caption").textContent = "当前没有可显示的磁盘";
+    $("capacity-trend-chart").replaceChildren(element("div","capacity-empty","当前没有可显示的磁盘。"));
+    $("print-meta").textContent = `报告生成时间：${TS} · 无可用容量趋势`;
+    return;
+  }
+  const allSamples = cleanCapacitySamples(HISTORY,drive,state.capacityDrive,TS);
+  const samples = filterCapacitySamples(allSamples,state.capacityRange,TS);
+  const stats = capacityTrendStats(samples);
+  $("capacity-trend-caption").textContent = `${state.capacityDrive} · ${capacityRangeLabel(state.capacityRange)}`;
+  const statValues = stats ? [["当前已用",fmt(stats.last.used)],["当前使用率",pct(stats.last.percent)],["区间最高",fmt(stats.max)],["区间最低",fmt(stats.min)],["净变化",stats.change === null ? "样本不足" : `${stats.change >= 0 ? "+" : ""}${fmt(stats.change)}`]] : [["当前已用","—"],["当前使用率","—"],["区间最高","—"],["区间最低","—"],["净变化","—"]];
+  statValues.forEach(([label,value]) => { const card=element("div","capacity-stat"); card.append(element("span","",label),element("b","",value)); statsRoot.append(card); });
+  renderCapacityChart(samples,drive);
+  const rangeText = stats ? `${formatLocalDate(stats.first.timestamp)} 至 ${formatLocalDate(stats.last.timestamp)} · ${stats.count} 个有效样本` : "当前范围没有有效样本";
+  $("print-meta").textContent = `报告生成时间：${TS} · 趋势磁盘：${state.capacityDrive} · ${rangeText}`;
+}
+
+function miniNode(label,value,previous) {
+  const root=element("div","mini"); root.append(element("span","",label),element("b","",value)); if(previous !== null) root.append(element("small","",`上次 ${previous}`)); return root;
+}
+
+function topPathNode(row,maxMagnitude) {
+  const root=element("div","top-path-row"), path=element("span","top-path-name expandable-path",row.displayPath); path.title=String(row.displayPath ?? "");
+  const valueClass=row.deltaBytes>=0?"growth-value":"release-value"; root.append(path,element("b",valueClass,`${row.deltaBytes>=0?"+":""}${fmtBytes(row.deltaBytes)}`));
+  const copy=element("button","copy-path","复制"); copy.type="button"; copy.dataset.copyPath=String(row.displayPath ?? ""); copy.setAttribute("aria-label",`复制路径 ${row.displayPath}`); root.append(copy);
+  const track=element("span",`intensity-track ${valueClass}`),fill=element("span","intensity-fill"); const intensity=maxMagnitude?Math.max(4,Math.abs(Number(row.deltaBytes))/maxMagnitude*100):0; fill.style.setProperty("--intensity",`${Math.max(0,Math.min(100,intensity)).toFixed(1)}%`); track.append(fill); root.append(track); return root;
+}
+
+function evidenceGroupNode(title,rows) {
+  const root=element("div","detail-group"); root.append(element("b","",title));
+  if(rows.length){ const list=element("ul"); rows.forEach((item)=>{ const row=element("li","",`${item.path} · ${item.reason}`); row.title=String(item.path ?? ""); list.append(row); }); root.append(list); }
+  else root.append(element("p","","无")); return root;
 }
 
 function renderCards() {
-  const drives = sortedDrives();
+  const drives = sortedDrives(), grid=$("grid");
   $("empty").style.display = drives.length ? "none" : "block";
-  $("grid").innerHTML = drives.map((d) => {
-    const rows = historyFor(d.id);
-    const lastSeen = rows.length ? rows[rows.length - 1].Timestamp : TS;
-    const prev = rows.length >= 2 ? rows[rows.length - 2] : null;
-    const prevUsed = prev ? '<small>上次 ' + fmt(prev.Used) + '</small>' : '';
-    const prevFree = prev ? '<small>上次 ' + fmt(prev.Free) + '</small>' : '';
-    const prevTotal = prev ? '<small>上次 ' + fmt(prev.Total) + '</small>' : '';
-    const directory = DIRECTORY.find((item) => item.drive.replace(/\\/g, "") === d.id);
-    const coverage = directoryCoverage(d.id);
-    const topThree = directoryTopThree(d.id);
-    const topThreeMax = Math.max(0,...topThree.map((row) => Math.abs(Number(row.deltaBytes))));
-    const detailLevel = Number(state.driveLevels[d.id] || 1);
-    const topTen = reliableChanges(directory,detailLevel).sort((a,b) => Math.abs(b.deltaBytes)-Math.abs(a.deltaBytes)).slice(0,10);
-    const trendRows = directoryTrendRows(d.id,detailLevel);
-    const detailMax = Math.max(0,...topTen.map((row) => Math.abs(Number(row.deltaBytes))));
-    const scanEvidence = classifyScanEvidence(directory ? [directory] : []);
-    const cardStatus = !directory?.baselineScanId ? "waiting" : directory.status === "failed" ? "failed" : directory.status === "partial" ? "partial" : "complete";
-    const activityLabel = coverage?.activityPreferred ? `活动总量 ${fmtBytes(Number(coverage.addedBytes || 0)+Number(coverage.releasedBytes || 0))}` : `目录解释率 ${directory ? coverageLabel(directory) : "-"}`;
-    return `
-      <article class="card ${d.status}">
-        <div class="card-top">
-          <div>
-            <div class="drive-name">磁盘 ${d.id}</div>
-            <div class="drive-sub">最近采样 ${lastSeen}</div>
-          </div>
-          <div class="card-top-actions"><span class="status-badge ${cardStatus}">${directory ? statusLabel(directory.status,directory.baselineScanId) : "未扫描"}</span><div class="badge">使用率 ${pct(d.percent)}</div><!-- badge-copy-v2 --></div>
-        </div>
-        <div class="bar-track"><div class="bar-fill" data-w="${d.percent}%"></div></div>
-        <div class="meta">
-          <div class="mini"><span>已用</span><b>${fmt(d.used)}</b>${prevUsed}</div>
-          <div class="mini"><span>剩余</span><b>${fmt(d.free)}</b>${prevFree}</div>
-          <div class="mini"><span>总量</span><b>${fmt(d.total)}</b>${prevTotal}</div>
-        </div>
-        <div class="spark-row">
-          ${sparkline(rows)}
-          <div>
-            <div>${trend(d.diff)}</div>
-            <div>${estimateDays(d, rows)}</div>
-          </div>
-        </div>
-        <div class="directory-card-extra"><b>${directory?.baselineScanId ? `目录净变化 ${fmtBytes(coverage?.actualNetBytes)}` : "当前目录规模已记录"}</b><span>${activityLabel}</span>${topThree.length ? `<div class="top-paths">${topThree.map((row) => `<div class="top-path-row"><span class="top-path-name expandable-path" title="${escapeHtml(row.displayPath)}">${escapeHtml(row.displayPath)}</span><b class="${row.deltaBytes >= 0 ? "growth-value" : "release-value"}">${row.deltaBytes >= 0 ? "+" : ""}${fmtBytes(row.deltaBytes)}</b><button class="copy-path" type="button" data-copy-path="${escapeHtml(row.displayPath)}">复制</button><span class="intensity-track ${row.deltaBytes>=0?"growth-value":"release-value"}"><span class="intensity-fill" style="--intensity:${topThreeMax?Math.max(4,Math.abs(Number(row.deltaBytes))/topThreeMax*100).toFixed(1):0}%"></span></span></div>`).join("")}</div>` : `<p>${directory?.baselineScanId ? "本次没有可靠目录变化。" : "建立完整基线后显示目录变化 Top 3。"}</p>`}</div>
-        <details class="drive-details"><summary>展开目录与扫描详情</summary><div class="drive-details-body"><label>目录层级 <select class="select drive-level-switch" data-drive="${escapeHtml(d.id)}"><option value="1" ${detailLevel===1?"selected":""}>一级目录</option><option value="2" ${detailLevel===2?"selected":""}>二级目录</option></select></label><div class="top-paths">${topTen.length ? topTen.map((row) => `<div class="top-path-row"><span class="top-path-name expandable-path" title="${escapeHtml(row.displayPath)}">${escapeHtml(row.displayPath)}</span><b class="${row.deltaBytes >= 0 ? "growth-value" : "release-value"}">${row.deltaBytes >= 0 ? "+" : ""}${fmtBytes(row.deltaBytes)}</b><button class="copy-path" type="button" data-copy-path="${escapeHtml(row.displayPath)}">复制</button><span class="intensity-track ${row.deltaBytes>=0?"growth-value":"release-value"}"><span class="intensity-fill" style="--intensity:${detailMax ? Math.max(4,Math.abs(Number(row.deltaBytes))/detailMax*100).toFixed(1):0}%"></span></span></div>`).join("") : `<p>${emptyChangeCopy({waiting:!directory?.baselineScanId,comparable:Boolean(directory?.baselineScanId),kind:"all"})}</p>`}</div><div class="directory-trends"><b>目录历史序列</b>${trendRows.length?trendRows.map(historyTrendRow).join(""):'<p class="history-empty">历史样本不足，暂无可展示序列。</p>'}</div><div class="detail-groups"><div class="detail-group"><b>预期排除</b>${scanEvidence.expected.length?`<ul>${scanEvidence.expected.map((item)=>`<li title="${escapeHtml(item.path)}">${escapeHtml(item.path)} · ${escapeHtml(item.reason)}</li>`).join("")}</ul>`:"<p>无</p>"}</div><div class="detail-group"><b>意外不可用</b>${scanEvidence.unexpected.length?`<ul>${scanEvidence.unexpected.map((item)=>`<li title="${escapeHtml(item.path)}">${escapeHtml(item.path)} · ${escapeHtml(item.reason)}</li>`).join("")}</ul>`:"<p>无</p>"}</div></div><p>基线时间：${directory?.baselineCompletedAt?escapeHtml(directory.baselineCompletedAt):"等待完整基线"} · 扫描状态：${directory?statusLabel(directory.status,directory.baselineScanId):"未扫描"}</p><div>${sparkline(rows)}</div></div></details>
-      </article>
-    `;
-  }).join("");
+  grid.replaceChildren();
+  drives.forEach((d) => {
+    const rows=historyFor(d.id),lastSeen=rows.length?rows[rows.length-1].Timestamp:TS,prev=rows.length>=2?rows[rows.length-2]:null;
+    const directory=DIRECTORY.find((item)=>normalizeDriveId(item.drive)===normalizeDriveId(d.id)),coverage=directoryCoverage(d.id),topThree=directoryTopThree(d.id);
+    const topThreeMax=Math.max(0,...topThree.map((row)=>Math.abs(Number(row.deltaBytes)))),detailLevel=Number(state.driveLevels[d.id]||1);
+    const topTen=reliableChanges(directory,detailLevel).sort((a,b)=>Math.abs(b.deltaBytes)-Math.abs(a.deltaBytes)).slice(0,10),trendRows=directoryTrendRows(d.id,detailLevel),detailMax=Math.max(0,...topTen.map((row)=>Math.abs(Number(row.deltaBytes))));
+    const scanEvidence=classifyScanEvidence(directory?[directory]:[]),cardStatus=!directory?.baselineScanId?"waiting":directory.status==="failed"?"failed":directory.status==="partial"?"partial":"complete";
+    const activityLabel=coverage?.activityPreferred?`活动总量 ${fmtBytes(Number(coverage.addedBytes||0)+Number(coverage.releasedBytes||0))}`:`目录解释率 ${directory?coverageLabel(directory):"-"}`;
+    const card=element("article",`card ${d.status}`);
+    const top=element("div","card-top"),heading=element("div"); heading.append(element("div","drive-name",`磁盘 ${normalizeDriveId(d.id)}`),element("div","drive-sub",`最近采样 ${lastSeen}`));
+    const actions=element("div","card-top-actions"); actions.append(element("span",`status-badge ${cardStatus}`,directory?statusLabel(directory.status,directory.baselineScanId):"未扫描"),element("div","badge",`使用率 ${pct(d.percent)}`)); top.append(heading,actions); card.append(top);
+    const bar=element("div","bar-track"),fill=element("div","bar-fill"); fill.dataset.w=`${Math.max(0,Math.min(100,Number(d.percent)||0))}%`; bar.append(fill); card.append(bar);
+    const meta=element("div","meta"); meta.append(miniNode("已用",fmt(d.used),prev?fmt(prev.Used):null),miniNode("剩余",fmt(d.free),prev?fmt(prev.Free):null),miniNode("总量",fmt(d.total),prev?fmt(prev.Total):null)); card.append(meta);
+    const spark=element("div","spark-row"),trendCopy=element("div"),trendLine=element("div"),estimate=element("div","",estimateDays(d,rows)); trendLine.append(trend(d.diff)); trendCopy.append(trendLine,estimate); spark.append(sparkline(rows),trendCopy); card.append(spark);
+    const extra=element("div","directory-card-extra"); extra.append(element("b","",directory?.baselineScanId?`目录净变化 ${fmtBytes(coverage?.actualNetBytes)}`:"当前目录规模已记录"),element("span","",activityLabel));
+    if(topThree.length){ const paths=element("div","top-paths"); topThree.forEach((row)=>paths.append(topPathNode(row,topThreeMax))); extra.append(paths); } else extra.append(element("p","",directory?.baselineScanId?"本次没有可靠目录变化。":"建立完整基线后显示目录变化 Top 3。")); card.append(extra);
+    const details=element("details","drive-details"); details.append(element("summary","","展开目录与扫描详情")); const body=element("div","drive-details-body");
+    const levelLabel=element("label","","目录层级 "),levelSelect=element("select","select drive-level-switch"); levelSelect.dataset.drive=d.id; [[1,"一级目录"],[2,"二级目录"]].forEach(([value,label])=>{ const option=element("option","",label); option.value=String(value); option.selected=detailLevel===value; levelSelect.append(option); }); levelLabel.append(levelSelect); body.append(levelLabel);
+    const detailPaths=element("div","top-paths"); if(topTen.length) topTen.forEach((row)=>detailPaths.append(topPathNode(row,detailMax))); else detailPaths.append(element("p","",emptyChangeCopy({waiting:!directory?.baselineScanId,comparable:Boolean(directory?.baselineScanId),kind:"all"}))); body.append(detailPaths);
+    const trends=element("div","directory-trends"); trends.append(element("b","","目录历史序列")); if(trendRows.length) trendRows.forEach((row)=>trends.append(historyTrendNode(row))); else trends.append(element("p","history-empty","历史样本不足，暂无可展示序列。")); body.append(trends);
+    const groups=element("div","detail-groups"); groups.append(evidenceGroupNode("预期排除",scanEvidence.expected),evidenceGroupNode("意外不可用",scanEvidence.unexpected)); body.append(groups,element("p","",`基线时间：${directory?.baselineCompletedAt||"等待完整基线"} · 扫描状态：${directory?statusLabel(directory.status,directory.baselineScanId):"未扫描"}`));
+    const detailSpark=element("div"); detailSpark.append(sparkline(rows)); body.append(detailSpark); details.append(body); card.append(details); grid.append(card);
+  });
   requestAnimationFrame(() => {
     document.querySelectorAll(".bar-fill").forEach((bar) => {
       bar.style.width = bar.dataset.w;
@@ -2312,8 +2527,20 @@ function renderCards() {
 
 function renderScanCompleteness() {
   const {expected,unexpected} = classifyScanEvidence(DIRECTORY);
-  const list = (rows,empty) => rows.length ? `<ul>${rows.map((row) => `<li title="${escapeHtml(row.path)}">${escapeHtml(row.drive)} · ${escapeHtml(row.path)} · ${escapeHtml(row.reason)}</li>`).join("")}</ul>` : `<p>${empty}</p>`;
-  $("scan-detail-body").innerHTML = `<div class="scan-completeness-grid"><div class="detail-group"><h3>预期排除</h3><p>重解析点、联接、符号链接、$RECYCLE.BIN 和 System Volume Information 属于正常排除。</p>${list(expected,"没有记录到预期排除项。")}</div><div class="detail-group"><h3>意外不可用</h3><p>访问被拒绝、扫描中消失、枚举失败或暂时不可用会列在这里。</p>${list(unexpected,"没有意外不可用项目。")}</div></div>`;
+  const root = $("scan-detail-body"); root.replaceChildren();
+  const grid = element("div","scan-completeness-grid");
+  const addGroup = (title,description,rows,empty) => {
+    const group = element("div","detail-group"); group.append(element("h3","",title),element("p","",description));
+    if (rows.length) {
+      const list = element("ul");
+      rows.forEach((row) => { const item=element("li","",`${row.drive} · ${row.path} · ${row.reason}`); item.title=String(row.path ?? ""); list.append(item); });
+      group.append(list);
+    } else group.append(element("p","",empty));
+    grid.append(group);
+  };
+  addGroup("预期排除","重解析点、联接、符号链接、$RECYCLE.BIN 和 System Volume Information 属于正常排除。",expected,"没有记录到预期排除项。");
+  addGroup("意外不可用","访问被拒绝、扫描中消失、枚举失败或暂时不可用会列在这里。",unexpected,"没有意外不可用项目。");
+  root.append(grid);
 }
 
 function renderScanMetadata() {
@@ -2321,15 +2548,20 @@ function renderScanMetadata() {
   const end = SCAN_META.completedAt ? new Date(SCAN_META.completedAt) : null;
   const duration = start && end ? `${Math.max(0,Math.round((end-start)/1000))} 秒` : "-";
   const fields = [["扫描开始",formatLocalDate(SCAN_META.startedAt),SCAN_META.startedAt||"-"],["扫描完成",formatLocalDate(SCAN_META.completedAt),SCAN_META.completedAt||"-"],["总耗时",duration,duration],["扫描磁盘",`${Number(SCAN_META.driveCount||0)} 个`,`${Number(SCAN_META.driveCount||0)} 个`]];
-  const metadata = fields.map(([label,value,title]) => `<div class="metadata-item"><span>${label}</span><b title="${escapeHtml(title)}">${escapeHtml(value)}</b></div>`).join("");
   const scanId = String(SCAN_META.scanId||"-");
-  $("scan-metadata").innerHTML = `${metadata}<div class="metadata-item"><span>快照 ID</span><div class="snapshot-value"><b title="${escapeHtml(scanId)}">${escapeHtml(shortSnapshotId(scanId))}</b><button class="copy-path snapshot-copy" type="button" data-copy-path="${escapeHtml(scanId)}">复制</button></div></div>`;
+  const root = $("scan-metadata"); root.replaceChildren();
+  fields.forEach(([label,value,title]) => { const item=element("div","metadata-item"); const strong=element("b","",value); strong.title=String(title); item.append(element("span","",label),strong); root.append(item); });
+  const item = element("div","metadata-item"); item.append(element("span","","快照 ID"));
+  const value = element("div","snapshot-value"); const strong=element("b","",shortSnapshotId(scanId)); strong.title=scanId;
+  const copy = element("button","copy-path snapshot-copy","复制"); copy.type="button"; copy.dataset.copyPath=scanId; copy.setAttribute("aria-label","复制快照 ID");
+  value.append(strong,copy); item.append(value); root.append(item);
 }
 
 function render() {
   document.body.classList.toggle("compact", state.compact);
   renderCapacitySummary();
   renderDirectoryChanges();
+  renderCapacityVisuals();
   renderHistoryCenter();
   renderCards();
   renderScanCompleteness();
@@ -2340,6 +2572,20 @@ function render() {
 $("change-path-filter").addEventListener("input", renderDirectoryChanges);
 $("history-range").addEventListener("change", (event) => { state.historyRange = event.target.value; renderHistoryCenter(); });
 document.addEventListener("click", async (event) => {
+  const capacityDrive = event.target.closest("[data-capacity-drive]");
+  if (capacityDrive) {
+    state.capacityDrive = normalizeDriveId(capacityDrive.dataset.capacityDrive);
+    renderCapacityVisuals();
+    announce(`已选择 ${state.capacityDrive} 容量趋势`);
+    return;
+  }
+  const capacityRange = event.target.closest("[data-capacity-range]");
+  if (capacityRange) {
+    state.capacityRange = capacityRange.dataset.capacityRange;
+    renderCapacityVisuals();
+    announce(`已切换为${capacityRangeLabel(state.capacityRange)}`);
+    return;
+  }
   const historyTab = event.target.closest("[data-history-tab]");
   if (historyTab) {
     state.historyTab = historyTab.dataset.historyTab;
@@ -2356,7 +2602,7 @@ document.addEventListener("click", async (event) => {
   const button = event.target.closest(".copy-path");
   if (button) {
     const path = button.dataset.copyPath;
-    try { await navigator.clipboard.writeText(path); const old=button.textContent; button.textContent="已复制"; setTimeout(()=>button.textContent=old,1200); }
+    try { await navigator.clipboard.writeText(path); const old=button.textContent; button.textContent="已复制"; announce("已复制到剪贴板"); setTimeout(()=>button.textContent=old,1200); }
     catch { alert(path); }
     return;
   }
@@ -2397,12 +2643,17 @@ $("themeBtn").addEventListener("click", () => {
   document.documentElement.setAttribute("data-theme", next);
   localStorage.setItem("diskpulse-theme", next);
   $("themeBtn").textContent = next === "dark" ? " 浅色" : " 深色";
+  $("themeBtn").setAttribute("aria-label",next === "dark" ? "切换到浅色主题" : "切换到深色主题");
+  announce(next === "dark" ? "已切换到深色主题" : "已切换到浅色主题");
 });
 
 (function() {
   var t = document.documentElement.getAttribute("data-theme");
   $("themeBtn").textContent = t === "dark" ? " 浅色" : " 深色";
+  $("themeBtn").setAttribute("aria-label",t === "dark" ? "切换到浅色主题" : "切换到深色主题");
 })();
+
+$("print-report").addEventListener("click", () => window.print());
 
 $("copy").addEventListener("click", async () => {
   const t = totals();
@@ -2414,6 +2665,7 @@ $("copy").addEventListener("click", async () => {
   try {
     await navigator.clipboard.writeText(lines.join("\\n"));
     $("copy").textContent = "已复制";
+    announce("摘要已复制到剪贴板");
     setTimeout(() => $("copy").textContent = "复制摘要", 1400);
   } catch {
     alert(lines.join("\\n"));
@@ -2435,12 +2687,17 @@ render();
 </html>
 '@
 
-$html = $html.Replace('INJECT_DATA', $jsonArray)
-$html = $html.Replace('INJECT_HISTORY_CENTER', $historyCenterJson)
-$html = $html.Replace('INJECT_HISTORY', $historyJson)
-$html = $html.Replace('INJECT_DIRECTORY', $directoryJson)
-$html = $html.Replace('INJECT_SCAN_META', $scanMetaJson)
-$html = $html.Replace('INJECT_TS', $timestamp)
+$replacementMap = @{
+    INJECT_DATA = $jsonArray
+    INJECT_HISTORY = $historyJson
+    INJECT_DIRECTORY = $directoryJson
+    INJECT_HISTORY_CENTER = $historyCenterJson
+    INJECT_SCAN_META = $scanMetaJson
+    INJECT_TS_JSON = $timestampJson
+    INJECT_SYSTEM_DRIVE = $systemDriveJson
+}
+$placeholderPattern = 'INJECT_(?:HISTORY_CENTER|SYSTEM_DRIVE|SCAN_META|TS_JSON|DIRECTORY|HISTORY|DATA)'
+$html = [regex]::Replace($html, $placeholderPattern, { param($match) [string]$replacementMap[$match.Value] })
 
 $utf8NoBom = New-Object System.Text.UTF8Encoding $false
 [System.IO.File]::WriteAllText($htmlFile, $html, $utf8NoBom)

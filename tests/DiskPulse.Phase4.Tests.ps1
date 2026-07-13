@@ -5,15 +5,48 @@ $source = Get-Content -Raw -LiteralPath (Join-Path $root 'check.bat') -Encoding 
 $stable = @('class="grid"','sparkline','estimateDays','id="search"','id="sort"','id="compact"','id="copy"','data-theme','@media')
 $hierarchy = @(
     'id="summary-grid"', 'id="capacity-summary"', 'id="latest-change"',
-    'id="comparison-confidence"', 'id="system-conclusion"', 'id="change-details"',
+    'id="comparison-confidence"', 'id="attention-center"', 'id="attention-list"', 'id="change-details"',
     'id="growth-list"', 'id="release-list"', 'id="change-drive-filter"',
     'id="change-level-filter"', 'id="change-direction-filter"', 'id="change-state-filter"',
-    'id="change-path-filter"', 'id="state-change-list"', 'class="drive-details"', 'data-copy-path',
-    'id="scan-completeness"', 'id="scan-metadata"', 'INJECT_SCAN_META',
-    'release-empty', 'conclusion-item', 'snapshot-copy', '@media (max-width: 1500px)'
+    'id="change-path-filter"', 'id="state-change-list"', 'element("details","drive-details")', 'dataset.copyPath',
+    'id="capacity-visuals"', 'id="capacity-drive-select"', 'id="capacity-range"',
+    'id="capacity-trend-chart"', 'id="print-report"', 'id="section-nav"',
+    'id="scan-completeness"', 'id="scan-metadata"', 'INJECT_SCAN_META', 'INJECT_SYSTEM_DRIVE',
+    'id="release-empty-note"', 'id="growth-empty-note"', 'class="action-group action-search"',
+    'class="action-group action-display"', 'class="action-group action-report"',
+    'root.dataset.count', 'only-growth', 'only-release', 'both-empty', 'capacity-current',
+    'attention-item', 'snapshot-copy', '@media (max-width: 1500px)'
 )
 foreach ($marker in @($stable + $hierarchy)) {
     if ($source -notmatch [regex]::Escape($marker)) { throw "Missing dashboard marker: $marker" }
+}
+
+$bodyMatch = [regex]::Match($source, '(?s)<body>(?<body>.*?)<script>')
+if (-not $bodyMatch.Success) { throw 'Static dashboard body was not found.' }
+$ids = @([regex]::Matches($bodyMatch.Groups['body'].Value, '\bid="(?<id>[^"]+)"') | ForEach-Object { $_.Groups['id'].Value })
+$duplicateIds = @($ids | Group-Object | Where-Object Count -gt 1)
+if ($duplicateIds.Count) { throw "Duplicate static DOM id: $($duplicateIds[0].Name)" }
+$navMatch = [regex]::Match($bodyMatch.Groups['body'].Value, '(?s)<nav class="section-nav".*?</nav>')
+foreach ($link in [regex]::Matches($navMatch.Value, 'href="#(?<id>[^"]+)"')) {
+    if ($ids -notcontains $link.Groups['id'].Value) { throw "Navigation target is missing: $($link.Groups['id'].Value)" }
+}
+
+if ($source -match [regex]::Escape("`$html.Replace('INJECT_")) { throw 'Dashboard placeholders must be replaced in one pass.' }
+if ($source -match 'innerHTML\s*=') { throw 'Dynamic dashboard content must use safe DOM APIs instead of innerHTML.' }
+$injectionTemplate = 'const data=INJECT_DATA;const ts=INJECT_TS_JSON;'
+$injectionMap = @{ INJECT_DATA = '"%!&<>|''INJECT_TS_JSON"'; INJECT_TS_JSON = '"safe-time"' }
+$injectionPattern = 'INJECT_(?:TS_JSON|DATA)'
+$injectionResult = [regex]::Replace($injectionTemplate, $injectionPattern, { param($match) [string]$injectionMap[$match.Value] })
+if ($injectionResult -ne 'const data="%!&<>|''INJECT_TS_JSON";const ts="safe-time";') { throw 'One-pass placeholder replacement altered inserted content.' }
+
+foreach ($id in 'search','sort','compact','themeBtn','copy','print-report','history-range') {
+    $binding = '$(' + '"' + $id + '"' + ').addEventListener'
+    if ([regex]::Matches($source,[regex]::Escape($binding)).Count -ne 1) { throw "Expected exactly one event binding for $id." }
+}
+
+$gitignore = Get-Content -Raw -LiteralPath (Join-Path $root '.gitignore') -Encoding UTF8
+foreach ($exception in '!/PRODUCT.md','!/DESIGN.md') {
+    if ($gitignore -notmatch ('(?m)^' + [regex]::Escape($exception) + '$')) { throw "Missing version-control exception: $exception" }
 }
 
 if ($source -notmatch [regex]::Escape('$directoryJson = ConvertTo-JsonArray ([object[]]$directoryResults)')) {
@@ -75,6 +108,43 @@ assert.equal(emptyChangeCopy({comparable:true,kind:"all"}), "当前没有可可�
 console.log("PASS: dashboard behavior fixtures.");
 '@
 
+$capacityMatch = [regex]::Match($source, '(?s)// TESTABLE_CAPACITY_HELPERS_START(?<code>.*?)// TESTABLE_CAPACITY_HELPERS_END')
+if (-not $capacityMatch.Success) { throw 'Missing testable capacity helper block.' }
+$capacityFixture = @'
+const assert = require("node:assert/strict");
+function fmt(value){ return `${Number(value).toFixed(1)} GB`; }
+function pct(value){ return `${Number(value).toFixed(1)}%`; }
+function fmtBytes(value){ return `${value} B`; }
+function isReliableChange(row){ return ["created","changed","removed"].includes(row.state); }
+const drives = [
+  {id:"C:",status:"good",percent:40,free:60,total:100,used:40},
+  {id:"D:",status:"critical",percent:92,free:8,total:100,used:92},
+  {id:"E:",status:"critical",percent:95,free:20,total:400,used:380}
+];
+assert.equal(defaultCapacityDrive(drives,"C:"),"E:");
+assert.equal(defaultCapacityDrive(drives.filter(x=>x.status!=="critical"),"C:"),"C:");
+assert.deepEqual(capacityDriveOrder(drives).map(x=>x.id),["E:","D:","C:"]);
+const history = [
+  {ID:"C:",Timestamp:"2026-07-01T00:00:00Z",Total:100,Used:20},
+  {ID:"C:",Timestamp:"2026-07-01T00:00:00Z",Total:100,Used:25},
+  {ID:"C:",Timestamp:"bad",Total:100,Used:30},
+  {ID:"C:",Timestamp:"2026-07-02T00:00:00Z",Total:0,Used:0},
+  {ID:"C:",Timestamp:"2026-07-03T00:00:00Z",Total:100,Used:-1},
+  {ID:"C:",Timestamp:"2026-07-04T00:00:00Z",Total:100,Used:101},
+  {ID:"D:",Timestamp:"2026-07-02T00:00:00Z",Total:100,Used:50}
+];
+const samples = cleanCapacitySamples(history,drives[0],"C:","2026-07-13T00:00:00Z");
+assert.deepEqual(samples.map(x=>x.used),[25,40]);
+assert.equal(filterCapacitySamples(samples,"7","2026-07-13T00:00:00Z").length,1);
+assert.equal(filterCapacitySamples([],"30","2026-07-13T00:00:00Z").length,0);
+assert.equal(filterCapacitySamples(samples,"all","2026-07-13T00:00:00Z").length,2);
+assert.equal(capacityTrendStats([samples[0]]).change,null);
+assert.equal(capacityTrendStats(samples).change,15);
+const attention = buildAttentionItems(drives,[{status:"partial"}],[{state:"changed",deltaBytes:10,displayPath:"C:\\Data"}]);
+assert.deepEqual(attention.map(x=>x.kind),["critical","incomplete","change"]);
+console.log("PASS: capacity visualization helpers.");
+'@
+
 $temp = Join-Path ([IO.Path]::GetTempPath()) ('DiskPulse-Phase4-' + [guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($temp) | Out-Null
 try {
@@ -83,9 +153,14 @@ try {
     & node $behaviorFile
     if ($LASTEXITCODE -ne 0) { throw 'Dashboard behavior fixture failed.' }
 
+    $capacityFile = Join-Path $temp 'capacity.js'
+    [System.IO.File]::WriteAllText($capacityFile, $capacityMatch.Groups['code'].Value + [Environment]::NewLine + $capacityFixture, [Text.UTF8Encoding]::new($false))
+    & node $capacityFile
+    if ($LASTEXITCODE -ne 0) { throw 'Capacity visualization fixture failed.' }
+
     $scriptMatch = [regex]::Match($source, '(?s)<script>(?<script>.*?)</script>')
     if (-not $scriptMatch.Success) { throw 'Embedded JavaScript was not found.' }
-    $script = $scriptMatch.Groups['script'].Value.Replace('INJECT_HISTORY_CENTER','[]').Replace('INJECT_DATA','[]').Replace('INJECT_HISTORY','[]').Replace('INJECT_DIRECTORY','[]').Replace('INJECT_SCAN_META','{}').Replace('INJECT_TS','test')
+    $script = $scriptMatch.Groups['script'].Value.Replace('INJECT_HISTORY_CENTER','[]').Replace('INJECT_SYSTEM_DRIVE','"C:"').Replace('INJECT_DATA','[]').Replace('INJECT_HISTORY','[]').Replace('INJECT_DIRECTORY','[]').Replace('INJECT_SCAN_META','{}').Replace('INJECT_TS_JSON','"test"')
     if ($script -match 'INJECT_[A-Z_]+') { throw "Unresolved dashboard placeholder: $($Matches[0])" }
     $scriptFile = Join-Path $temp 'dashboard.js'
     [IO.File]::WriteAllText($scriptFile, $script, [Text.UTF8Encoding]::new($false))
@@ -98,6 +173,9 @@ finally {
 }
 
 $readme = Get-Content -Raw -LiteralPath (Join-Path $root 'README.md') -Encoding UTF8
+foreach ($marker in @('@media print','@media (prefers-reduced-motion: reduce)','scroll-margin-top','aria-live="polite"','aria-pressed="true"')) {
+    if ($source -notmatch [regex]::Escape($marker)) { throw "Missing print, motion, navigation, or accessibility marker: $marker" }
+}
 foreach ($forbidden in @('SMART','性能衰退','健康指标','实时监控')) {
     if ($readme -match [regex]::Escape($forbidden)) { throw "README contains unverified claim: $forbidden" }
 }

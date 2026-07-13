@@ -97,7 +97,7 @@ finally {
     [IO.Directory]::Delete($temp)
 }
 
-foreach ($marker in @('DriveInfo', 'critical', 'warning', 'data-theme', 'class="overview"', 'class="ring"', 'class="insights"', 'sparkline', 'estimateDays', 'id="search"', 'id="sort"', 'id="compact"', 'id="copy"', '@media')) {
+foreach ($marker in @('DriveInfo', 'critical', 'warning', 'data-theme', 'class="overview"', 'element("div","ring"', 'id="attention-center"', 'sparkline', 'estimateDays', 'id="search"', 'id="sort"', 'id="compact"', 'id="copy"', '@media')) {
     if ($source -notmatch [regex]::Escape($marker)) { throw "Stable dashboard marker missing: $marker" }
 }
 
