@@ -548,6 +548,34 @@ function Find-DriveBaseline {
     } | Sort-Object { [datetime]$_.completedAt } -Descending | Select-Object -First 1
 }
 
+function Get-DriveHistoryCandidates {
+    param([array]$Snapshots,[string]$Drive,$Current)
+    if (-not $Snapshots -or $Snapshots.Count -eq 0) { return @() }
+    $currentDrive = @($Current.drives | Where-Object { $_.drive -eq $Drive }) | Select-Object -First 1
+    if (-not $currentDrive) { return @() }
+    $expectedRoot = [string]$currentDrive.rootPath
+    @($Snapshots | Where-Object {
+        $_.scanId -ne $Current.scanId -and
+        (-not ($_.PSObject.Properties.Name -contains 'status') -or $_.status -ne 'failed') -and
+        [datetime]$_.completedAt -lt [datetime]$Current.startedAt -and
+        @($_.drives | Where-Object {
+            $_.drive -eq $Drive -and $_.status -in @('baseline','complete') -and
+            $_.PSObject.Properties.Name -contains 'usedBytes' -and [string]$_.rootPath -eq $expectedRoot
+        }).Count
+    } | Sort-Object { [datetime]$_.completedAt } -Descending)
+}
+
+function Select-DriveHistoryBaseline {
+    param([array]$Candidates,[string]$Mode,$Current,[string]$CustomScanId)
+    if (-not $Candidates -or $Candidates.Count -eq 0) { return $null }
+    if ($Mode -eq 'previous') { return $Candidates | Select-Object -First 1 }
+    if ($Mode -eq 'earliest') { return $Candidates | Select-Object -Last 1 }
+    if ($Mode -eq 'custom') { return $Candidates | Where-Object { $_.scanId -eq $CustomScanId } | Select-Object -First 1 }
+    $days = if ($Mode -eq 'day') { 1 } elseif ($Mode -eq 'week') { 7 } else { return $null }
+    $target = ([datetime]$Current.startedAt).AddDays(-$days)
+    $Candidates | Sort-Object @{Expression={ [math]::Abs((([datetime]$_.completedAt)-$target).TotalSeconds) }},@{Expression={ [datetime]$_.completedAt };Descending=$true} | Select-Object -First 1
+}
+
 function Test-PathEvidenceMatch {
     param([string]$Path,[array]$Evidence)
     foreach($item in $Evidence){
@@ -576,11 +604,112 @@ function Compare-DriveRecords {
 
 function Get-ChangeCoverage {
     param($Current,$Baseline,[array]$Rows)
-    $top=@($Rows|Where-Object{$_.level-eq 1});[int64]$added=0;[int64]$released=0;[int64]$located=0
+    $top=@($Rows|Where-Object{$_.level-eq 1-and$_.state-in@('created','changed','removed')});[int64]$added=0;[int64]$released=0;[int64]$located=0
     foreach($r in $top){$located+=[int64]$r.deltaBytes;if($r.deltaBytes-gt 0){$added+=[int64]$r.deltaBytes}elseif($r.deltaBytes-lt 0){$released+=[math]::Abs([int64]$r.deltaBytes)}}
     $actual=if($Baseline){[int64]$Current.usedBytes-[int64]$Baseline.usedBytes}else{[int64]0}
     $rate=if([math]::Abs($actual)-lt 1){0}else{[math]::Max(0,[math]::Min(100,[math]::Round(([math]::Abs($located)/[math]::Abs($actual))*100,1)))}
     [pscustomobject]@{addedBytes=$added;releasedBytes=$released;locatedNetBytes=$located;actualNetBytes=$actual;unexplainedBytes=$actual-$located;rate=$rate;activityPreferred=([math]::Abs($actual)-lt 1-or[math]::Sign($actual)-ne[math]::Sign($located)-or($added-gt 0-and$released-gt 0))}
+}
+
+function New-HistoryComparison {
+    param($CurrentDrive,$BaselineDrive,$BaselineSnapshot)
+    $changes = @(Compare-DriveRecords $CurrentDrive $BaselineDrive | Where-Object { $_.state -ne 'unchanged' })
+    [pscustomobject]@{
+        scanId = [string]$BaselineSnapshot.scanId
+        completedAt = [string]$BaselineSnapshot.completedAt
+        changes = [object[]]$changes
+        coverage = Get-ChangeCoverage $CurrentDrive $BaselineDrive $changes
+    }
+}
+
+function Get-DirectoryTrendClassification {
+    param([array]$Comparisons)
+    $valid = @($Comparisons | Where-Object { $_.state -in @('created','changed','removed','unchanged') })
+    $recent = @($valid | Select-Object -Last 5)
+    $growth = @($recent | Where-Object { [int64]$_.deltaBytes -gt 0 }).Count
+    $release = @($recent | Where-Object { [int64]$_.deltaBytes -lt 0 }).Count
+    [int64]$cumulative = 0
+    foreach ($row in $valid) { $cumulative += [int64]$row.deltaBytes }
+    $label = '数据不足'
+    $last = if ($valid.Count) { $valid[-1] } else { $null }
+    if ($last -and $last.state -eq 'created' -and @($valid | Select-Object -SkipLast 1 | Where-Object { [int64]$_.deltaBytes -ne 0 }).Count -eq 0) {
+        $label = '首次出现'
+    }
+    elseif ($valid.Count -ge 3) {
+            $priorGrowth = @($valid | Select-Object -SkipLast 1 | Where-Object { [int64]$_.deltaBytes -gt 0 } | ForEach-Object { [int64]$_.deltaBytes } | Sort-Object)
+            $median = if (-not $priorGrowth.Count) { 0 } elseif ($priorGrowth.Count % 2) { [double]$priorGrowth[[math]::Floor($priorGrowth.Count / 2)] } else { ([double]$priorGrowth[$priorGrowth.Count / 2 - 1] + [double]$priorGrowth[$priorGrowth.Count / 2]) / 2 }
+            if ([int64]$last.deltaBytes -gt 0 -and $median -gt 0 -and [int64]$last.deltaBytes -ge (3 * $median)) { $label = '本次突增' }
+            elseif ($growth -ge 3) { $label = '持续增长' }
+            elseif ($release -ge 3) { $label = '持续释放' }
+            elseif ($growth -gt 0 -and $release -gt 0) { $label = '波动较大' }
+    }
+    [pscustomobject]@{ label=$label; cumulativeBytes=$cumulative; growthCount=$growth; releaseCount=$release; occurrenceCount=($growth+$release); comparisonCount=$valid.Count }
+}
+
+function New-HistoryComparisonCenter {
+    param([array]$Snapshots,$Current)
+    $result = New-Object 'Collections.Generic.List[object]'
+    foreach ($currentDrive in @($Current.drives)) {
+        $candidates = @(Get-DriveHistoryCandidates -Snapshots $Snapshots -Drive $currentDrive.drive -Current $Current)
+        $comparisons = New-Object 'Collections.Generic.List[object]'
+        foreach ($candidate in $candidates) {
+            $baselineDrive = @($candidate.drives | Where-Object { $_.drive -eq $currentDrive.drive }) | Select-Object -First 1
+            $comparisons.Add((New-HistoryComparison -CurrentDrive $currentDrive -BaselineDrive $baselineDrive -BaselineSnapshot $candidate))
+        }
+
+        $timeline = @($candidates | Sort-Object { [datetime]$_.completedAt })
+        if ($currentDrive.status -in @('baseline','complete')) { $timeline += $Current }
+        $pairRows = New-Object 'Collections.Generic.List[object]'
+        $trendKeys = @{}
+        foreach ($snapshotItem in $timeline) {
+            $driveItem = @($snapshotItem.drives | Where-Object { $_.drive -eq $currentDrive.drive }) | Select-Object -First 1
+            foreach ($record in @($driveItem.records | Where-Object { $_.level -eq 1 })) {
+                $trendKeys[[string]$record.key] = [pscustomobject]@{ key=$record.key; displayPath=$record.displayPath; level=[int]$record.level }
+            }
+        }
+        for ($index = 1; $index -lt $timeline.Count; $index++) {
+            $olderDrive = @($timeline[$index-1].drives | Where-Object { $_.drive -eq $currentDrive.drive }) | Select-Object -First 1
+            $newerDrive = @($timeline[$index].drives | Where-Object { $_.drive -eq $currentDrive.drive }) | Select-Object -First 1
+            foreach ($row in @(Compare-DriveRecords $newerDrive $olderDrive)) {
+                $pairRows.Add([pscustomobject]@{ key=$row.key; state=$row.state; deltaBytes=[int64]$row.deltaBytes; at=[string]$timeline[$index].completedAt })
+                if ($row.level -eq 2 -and $row.state -in @('created','changed','removed') -and [int64]$row.deltaBytes -ne 0) {
+                    $trendKeys[[string]$row.key] = [pscustomobject]@{ key=$row.key; displayPath=$row.displayPath; level=[int]$row.level }
+                }
+            }
+        }
+
+        $trends = New-Object 'Collections.Generic.List[object]'
+        foreach ($trendKey in $trendKeys.Values) {
+            $samples = New-Object 'Collections.Generic.List[object]'
+            foreach ($snapshotItem in $timeline) {
+                $driveItem = @($snapshotItem.drives | Where-Object { $_.drive -eq $currentDrive.drive }) | Select-Object -First 1
+                $record = @($driveItem.records | Where-Object { $_.key -eq $trendKey.key }) | Select-Object -First 1
+                $samples.Add(@([string]$snapshotItem.completedAt,$(if($record){[int64]$record.sizeBytes}else{$null})))
+            }
+            $directoryComparisons = @($pairRows | Where-Object { $_.key -eq $trendKey.key })
+            $classification = Get-DirectoryTrendClassification $directoryComparisons
+            $seen = @($samples | Where-Object { $null -ne $_[1] })
+            $trends.Add([pscustomobject]@{
+                key=$trendKey.key; displayPath=$trendKey.displayPath; level=$trendKey.level
+                samples=[object[]]$samples; cumulativeBytes=$classification.cumulativeBytes
+                growthCount=$classification.growthCount; releaseCount=$classification.releaseCount
+                occurrenceCount=$classification.occurrenceCount; comparisonCount=$classification.comparisonCount
+                label=$classification.label
+                firstSeen=if($seen.Count){$seen[0][0]}else{$null}; lastSeen=if($seen.Count){$seen[-1][0]}else{$null}
+            })
+        }
+
+        $previous = Select-DriveHistoryBaseline $candidates previous $Current
+        $day = Select-DriveHistoryBaseline $candidates day $Current
+        $week = Select-DriveHistoryBaseline $candidates week $Current
+        $earliest = Select-DriveHistoryBaseline $candidates earliest $Current
+        $result.Add([pscustomobject]@{
+            drive=$currentDrive.drive; status=$currentDrive.status
+            selections=[pscustomobject]@{previous=if($previous){$previous.scanId}else{$null};day=if($day){$day.scanId}else{$null};week=if($week){$week.scanId}else{$null};earliest=if($earliest){$earliest.scanId}else{$null}}
+            comparisons=[object[]]$comparisons; trends=[object[]]$trends
+        })
+    }
+    [object[]]$result
 }
 
 function Complete-InterruptedScans {
@@ -849,6 +978,7 @@ $snapshotPath = Join-Path $paths.Snapshots ($scanId + '.json')
 if (@($snapshotDrives | Where-Object { $_.status -ne 'failed' }).Count) {
     Write-AtomicJson $snapshotPath $snapshot | Out-Null
 }
+$reportStopwatch = [Diagnostics.Stopwatch]::StartNew()
 $directoryResults = New-Object 'Collections.Generic.List[object]'
 foreach ($driveSnapshot in $snapshot.drives) {
     $baselineSnapshot = Find-DriveBaseline -Snapshots @($priorSnapshots) -Drive $driveSnapshot.drive -Current $snapshot
@@ -856,6 +986,7 @@ foreach ($driveSnapshot in $snapshot.drives) {
     $changes = Compare-DriveRecords $driveSnapshot $baselineDrive
     $directoryResults.Add([PSCustomObject]@{ drive=$driveSnapshot.drive; status=$driveSnapshot.status; baselineScanId=if($baselineSnapshot){$baselineSnapshot.scanId}else{$null}; baselineCompletedAt=if($baselineSnapshot){$baselineSnapshot.completedAt}else{$null}; changes=$changes; coverage=Get-ChangeCoverage $driveSnapshot $baselineDrive $changes; errors=$driveSnapshot.errors; unavailable=$driveSnapshot.unavailable; excluded=$driveSnapshot.excluded })
 }
+$historyCenter = New-HistoryComparisonCenter -Snapshots @($priorSnapshots) -Current $snapshot
 Invoke-SnapshotRetention $paths (@($priorSnapshots)+@($snapshot)) @($snapshot.drives.drive) $scanId
 
 $historyRows = [System.Collections.Generic.List[PSObject]](($historyRows |
@@ -868,6 +999,7 @@ $historyRows | Export-Csv $logFile -NoTypeInformation -Force -Encoding UTF8
 $jsonArray = ConvertTo-JsonArray $currentResults
 $historyJson = ConvertTo-JsonArray $historyRows
 $directoryJson = ConvertTo-JsonArray ([object[]]$directoryResults)
+$historyCenterJson = ConvertTo-JsonArray ([object[]]$historyCenter)
 $scanMetaJson = $snapshot | Select-Object scanId,startedAt,completedAt,status,@{n='driveCount';e={@($_.drives).Count}} | ConvertTo-Json -Compress
 if ([string]::IsNullOrWhiteSpace($jsonArray)) { $jsonArray = "[]" }
 if ([string]::IsNullOrWhiteSpace($historyJson)) { $historyJson = "[]" }
@@ -1452,6 +1584,38 @@ $html = @'
     border-radius: 8px;
   }
 
+  .history-center { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px; margin-bottom: 22px; }
+  .history-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
+  .history-head p, .history-range-note, .history-empty { color: var(--muted); font-size: 13px; line-height: 1.6; }
+  .history-controls { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
+  .history-controls label { color: var(--muted); display: grid; font-size: 12px; gap: 5px; }
+  .history-custom { display: flex; gap: 8px; flex-wrap: wrap; }
+  .history-summary { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 10px; margin: 14px 0; }
+  .history-metric { background: var(--bg); border: 1px solid var(--line); border-radius: 9px; padding: 11px; min-width: 0; }
+  .history-metric span { color: var(--muted); display: block; font-size: 11px; margin-bottom: 5px; }
+  .history-metric b { display: block; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .history-tabs { border-bottom: 1px solid var(--line); display: flex; gap: 4px; margin-top: 4px; }
+  .history-tab { background: transparent; border: 0; border-bottom: 2px solid transparent; color: var(--muted); cursor: pointer; font: inherit; font-size: 13px; font-weight: 700; min-height: 44px; padding: 0 14px; }
+  .history-tab:hover { color: var(--text); }
+  .history-tab:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
+  .history-tab.is-active { border-bottom-color: var(--blue); color: var(--text); }
+  .history-panels { padding-top: 12px; }
+  .history-column { border: 1px solid var(--line); border-radius: 10px; padding: 12px; min-width: 0; }
+  .history-column h3 { font-size: 14px; margin-bottom: 8px; }
+  .history-row { border-top: 1px solid var(--line); display: grid; gap: 6px; padding: 12px 0; }
+  .history-row:first-child { border-top: 0; }
+  .history-row-main { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; min-width: 0; }
+  .history-row-main span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .history-row-meta { color: var(--muted); display: flex; font-size: 12px; gap: 8px; line-height: 1.55; flex-wrap: wrap; }
+  .history-spark { height: 26px; width: 100%; }
+  .history-spark path { fill: none; stroke: var(--blue); stroke-width: 2; vector-effect: non-scaling-stroke; }
+  .history-expand { background: transparent; border: 0; color: var(--blue); cursor: pointer; display: block; font: inherit; font-size: 12px; font-weight: 700; margin: 8px auto 0; min-height: 44px; padding: 0 16px; }
+  .history-expand:hover { text-decoration: underline; }
+  .history-expand:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+  .history-expand[hidden] { display: none; }
+  .directory-trends { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 10px; }
+  .directory-trends > b { display: block; margin-bottom: 6px; }
+
   body.compact .card { padding: 14px; }
   body.compact .meta { grid-template-columns: repeat(4, 1fr); }
   body.compact .spark-row { display: none; }
@@ -1472,6 +1636,7 @@ $html = @'
     .change-metrics, .change-lists { grid-template-columns: 1fr 1fr; }
     .change-lists.release-empty, .change-lists.growth-empty { grid-template-columns: 1fr; }
     .grid { grid-template-columns: 1fr; }
+    .history-summary { grid-template-columns: repeat(2,minmax(0,1fr)); }
   }
 
   @media (max-width: 560px) {
@@ -1494,6 +1659,10 @@ $html = @'
     .change-side { align-items: flex-end; flex-direction: column; }
     .change-path.is-expanded, .top-path-name.is-expanded { white-space: normal; overflow-wrap: anywhere; }
     .top-path-row { grid-template-columns: minmax(0,1fr) auto; }
+    .history-head { align-items: stretch; flex-direction: column; }
+    .history-summary { grid-template-columns: 1fr; }
+    .history-tabs { overflow-x: auto; }
+    .history-tab { flex: 1 0 auto; }
   }
 </style>
 </head>
@@ -1529,6 +1698,24 @@ $html = @'
     </div>
   </section>
   <section class="insights" aria-label="系统结论"><div class="system-conclusion" id="system-conclusion"></div></section>
+  <div class="section-intro"><div><h2>历史对比中心</h2><p>从既有完整快照比较累计变化与重复方向</p></div></div>
+  <section class="history-center" aria-label="历史对比中心">
+    <div class="history-head">
+      <div><h3>比较范围</h3><p class="history-range-note" id="history-range-note"></p></div>
+      <div class="history-controls"><label>时间范围<select class="select" id="history-range"><option value="previous">上一次完整扫描</option><option value="day">约 24 小时前</option><option value="week">约 7 天前</option><option value="earliest">最早可用快照</option><option value="custom">自选历史快照</option></select></label><div class="history-custom" id="history-custom"></div></div>
+    </div>
+    <div class="history-summary" id="history-summary"></div>
+    <div class="history-tabs" id="history-tabs" role="tablist" aria-label="历史榜单">
+      <button class="history-tab is-active" id="history-growth-tab" type="button" role="tab" aria-selected="true" aria-controls="history-growth-panel" data-history-tab="growth">持续增长</button>
+      <button class="history-tab" id="history-release-tab" type="button" role="tab" aria-selected="false" aria-controls="history-release-panel" data-history-tab="release">持续释放</button>
+      <button class="history-tab" id="history-trend-tab" type="button" role="tab" aria-selected="false" aria-controls="history-trend-panel" data-history-tab="trend">历史变化</button>
+    </div>
+    <div class="history-panels">
+      <div class="history-column" id="history-growth-panel" role="tabpanel" aria-labelledby="history-growth-tab"><h3>持续增长榜</h3><div id="sustained-growth-list"></div><button class="history-expand" type="button" data-history-list="growth">展开全部</button></div>
+      <div class="history-column" id="history-release-panel" role="tabpanel" aria-labelledby="history-release-tab" hidden><h3>持续释放榜</h3><div id="sustained-release-list"></div><button class="history-expand" type="button" data-history-list="release">展开全部</button></div>
+      <div class="history-column" id="history-trend-panel" role="tabpanel" aria-labelledby="history-trend-tab" hidden><h3>历史变化趋势</h3><div id="history-trend-list"></div><button class="history-expand" type="button" data-history-list="trend">展开全部</button></div>
+    </div>
+  </section>
   <div class="section-intro"><div><h2>变化详情</h2><p>摘要和排行会随筛选同步更新，整体容量保持不变</p></div></div>
   <section class="directory-overview" id="change-details">
     <div class="change-controls">
@@ -1556,12 +1743,34 @@ $html = @'
 const RAW_DATA = INJECT_DATA;
 const RAW_HISTORY = INJECT_HISTORY;
 const RAW_DIRECTORY = INJECT_DIRECTORY;
+const RAW_HISTORY_CENTER = INJECT_HISTORY_CENTER;
 const RAW_SCAN_META = INJECT_SCAN_META;
 const DATA = Array.isArray(RAW_DATA) ? RAW_DATA : RAW_DATA ? [RAW_DATA] : [];
 const HISTORY = Array.isArray(RAW_HISTORY) ? RAW_HISTORY : RAW_HISTORY ? [RAW_HISTORY] : [];
 const DIRECTORY = Array.isArray(RAW_DIRECTORY) ? RAW_DIRECTORY : RAW_DIRECTORY ? [RAW_DIRECTORY] : [];
+const HISTORY_CENTER = Array.isArray(RAW_HISTORY_CENTER) ? RAW_HISTORY_CENTER : RAW_HISTORY_CENTER ? [RAW_HISTORY_CENTER] : [];
 const SCAN_META = RAW_SCAN_META || {};
 const TS = "INJECT_TS";
+
+// TESTABLE_HISTORY_HELPERS_START
+function selectHistoryComparison(disk, range, customScanId) {
+  const scanId = range === "custom" ? customScanId : disk?.selections?.[range];
+  return (disk?.comparisons || []).find((item) => item.scanId === scanId) || null;
+}
+
+function reliableHistoryRows(rows) {
+  return (rows || []).filter((row) => ["created","changed","removed"].includes(row.state));
+}
+
+function defaultHistoryCustomScanId(disk) {
+  return disk?.comparisons?.[0]?.scanId || null;
+}
+
+const historyListLimits = { growth: 5, release: 5, trend: 6 };
+function visibleHistoryRows(rows, list, expanded) {
+  return expanded?.[list] ? rows : rows.slice(0,historyListLimits[list]);
+}
+// TESTABLE_HISTORY_HELPERS_END
 
 const historyMap = {};
 HISTORY.forEach((row) => {
@@ -1577,7 +1786,11 @@ const state = {
   query: "",
   sort: "percent-desc",
   compact: false,
-  driveLevels: {}
+  driveLevels: {},
+  historyRange: "previous",
+  historyCustom: {},
+  historyTab: "growth",
+  historyExpanded: {}
 };
 
 const $ = (id) => document.getElementById(id);
@@ -1858,6 +2071,90 @@ function coverageLabel(item) {
   return `${Number(item.coverage?.rate || 0).toFixed(1)}%`;
 }
 
+function selectedHistoryState() {
+  const selections = HISTORY_CENTER.map((disk) => ({disk,comparison:selectHistoryComparison(disk,state.historyRange,state.historyCustom[disk.drive])}));
+  const items = selections.map(({disk,comparison}) => ({
+    drive:disk.drive,status:disk.status,baselineScanId:comparison?.scanId || null,
+    baselineCompletedAt:comparison?.completedAt || null,coverage:comparison?.coverage || {},
+    changes:(comparison?.changes || []).map((row) => ({...row,drive:disk.drive}))
+  }));
+  return {selections,items};
+}
+
+function sizeSparkline(samples) {
+  const values = (samples || []).map((sample) => sample?.[1]).filter((value) => value !== null && value !== undefined).map(Number);
+  if (values.length < 2) return '<svg class="history-spark" viewBox="0 0 120 26" aria-hidden="true"><path d="M2 18 L118 18"></path></svg>';
+  const min = Math.min(...values), max = Math.max(...values), span = Math.max(1,max-min);
+  let seen = 0;
+  const points = (samples || []).flatMap((sample,index) => {
+    if (sample?.[1] === null || sample?.[1] === undefined) return [];
+    seen++;
+    return [`${(2+index/Math.max(1,samples.length-1)*116).toFixed(1)} ${(23-(Number(sample[1])-min)/span*20).toFixed(1)}`];
+  });
+  return `<svg class="history-spark" viewBox="0 0 120 26" preserveAspectRatio="none" aria-hidden="true"><path d="M${points.join(" L")}"></path></svg>`;
+}
+
+function historyTrendRow(row) {
+  const recent = (row.samples || []).filter((sample) => sample?.[1] !== null && sample?.[1] !== undefined).slice(-5).map((sample) => fmtBytes(sample[1])).join(" → ");
+  return `<div class="history-row"><div class="history-row-main"><span title="${escapeHtml(row.displayPath)}">${escapeHtml(row.drive)} · ${escapeHtml(row.displayPath)}</span><b class="${Number(row.cumulativeBytes)>=0?"growth-value":"release-value"}">累计 ${Number(row.cumulativeBytes)>0?"+":""}${fmtBytes(row.cumulativeBytes)}</b></div><div class="history-row-meta"><span>${escapeHtml(row.label)}</span><span>增长 ${row.growthCount} 次</span><span>释放 ${row.releaseCount} 次</span><span>${recent || "暂无大小序列"}</span></div>${sizeSparkline(row.samples)}<div class="history-row-meta"><span>首次 ${formatLocalDate(row.firstSeen)}</span><span>最近 ${formatLocalDate(row.lastSeen)}</span></div></div>`;
+}
+
+function allDirectoryTrends() {
+  return HISTORY_CENTER.flatMap((disk) => (disk.trends || []).map((trend) => ({...trend,drive:disk.drive})));
+}
+
+function directoryTrendRows(id,level) {
+  const drive = HISTORY_CENTER.find((disk) => disk.drive.replace(/\\/g,"") === id);
+  return (drive?.trends || []).filter((row) => Number(row.level) === Number(level)).sort((a,b) => Math.abs(Number(b.cumulativeBytes))-Math.abs(Number(a.cumulativeBytes))).slice(0,6).map((row) => ({...row,drive:drive.drive}));
+}
+
+function renderHistoryCenter() {
+  const labels = {previous:"上一次完整扫描",day:"约 24 小时前",week:"约 7 天前",earliest:"最早可用快照",custom:"自选历史快照"};
+  if (state.historyRange === "custom") HISTORY_CENTER.forEach((disk) => { state.historyCustom[disk.drive] ||= defaultHistoryCustomScanId(disk); });
+  const {selections,items} = selectedHistoryState();
+  const rows = items.flatMap((item) => reliableHistoryRows(item.changes).filter((row) => Number(row.level) === 1));
+  const rankings = rankChanges(rows);
+  const summary = summarizeChanges(items,rows);
+  const unexplained = summary.comparable.reduce((sum,item) => sum + Number(item.coverage?.unexplainedBytes || 0),0);
+  const gross = summary.added + summary.released;
+  const activity = summary.activityPreferred ? `活动总量 ${fmtBytes(gross)}` : summary.rate === null ? "解释率不适用" : `解释率 ${summary.rate.toFixed(1)}%`;
+  const mainGrowth = rankings.growth[0]?.displayPath || "无可靠增长";
+  const mainRelease = rankings.release[0]?.displayPath || "无可靠释放";
+  $("history-range-note").textContent = `${labels[state.historyRange]} · ${summary.comparable.length} / ${items.length} 个磁盘可可靠比较${selections.filter(x=>x.comparison).length ? " · " + selections.filter(x=>x.comparison).map(x=>`${x.disk.drive} ${formatLocalDate(x.comparison.completedAt)}`).join("；") : " · 当前没有合格历史基线"}`;
+  $("history-summary").innerHTML = [
+    ["可靠增长总量","+"+fmtBytes(summary.added)],["可靠释放总量",summary.released?"-"+fmtBytes(summary.released):fmtBytes(0)],
+    ["可靠净变化",fmtBytes(summary.located)],["实际磁盘净变化",fmtBytes(summary.actual)],
+    ["未解释变化",fmtBytes(unexplained)],["解释摘要",activity],
+    ["主要增长来源",mainGrowth],["主要释放来源",mainRelease]
+  ].map(([label,value]) => `<div class="history-metric"><span>${label}</span><b title="${escapeHtml(value)}">${escapeHtml(value)}</b></div>`).join("");
+
+  $("history-custom").innerHTML = state.historyRange === "custom" ? HISTORY_CENTER.map((disk) => `<label>${escapeHtml(disk.drive)}<select class="select history-custom-baseline" data-drive="${escapeHtml(disk.drive)}">${(disk.comparisons || []).map((item) => `<option value="${escapeHtml(item.scanId)}" ${state.historyCustom[disk.drive]===item.scanId?"selected":""}>${formatLocalDate(item.completedAt)}</option>`).join("")}</select></label>`).join("") : "";
+
+  const trends = allDirectoryTrends();
+  const lists = {
+    growth: trends.filter((row) => row.label === "持续增长").sort((a,b) => Number(b.cumulativeBytes)-Number(a.cumulativeBytes)),
+    release: trends.filter((row) => row.label === "持续释放").sort((a,b) => Number(a.cumulativeBytes)-Number(b.cumulativeBytes)),
+    trend: trends.filter((row) => row.label !== "数据不足" || Number(row.occurrenceCount) > 0).sort((a,b) => Math.abs(Number(b.cumulativeBytes))-Math.abs(Number(a.cumulativeBytes)))
+  };
+  const ids = {growth:"sustained-growth-list",release:"sustained-release-list",trend:"history-trend-list"};
+  const titles = {growth:"持续增长",release:"持续释放",trend:"历史变化"};
+  const empty = {growth:"历史样本不足，至少需要 3 次有效比较。",release:"本范围内没有持续释放目录。",trend:"历史样本不足，暂无明显历史变化。"};
+  Object.entries(lists).forEach(([list,listRows]) => {
+    const panel = $(`history-${list}-panel`);
+    const active = state.historyTab === list;
+    panel.hidden = !active;
+    const tab = document.querySelector(`[data-history-tab="${list}"]`);
+    tab.classList.toggle("is-active",active);
+    tab.setAttribute("aria-selected",String(active));
+    tab.textContent = `${titles[list]}（${listRows.length}）`;
+    $(ids[list]).innerHTML = visibleHistoryRows(listRows,list,state.historyExpanded).map(historyTrendRow).join("") || `<div class="history-empty">${empty[list]}</div>`;
+    const expand = panel.querySelector(".history-expand");
+    expand.hidden = listRows.length <= historyListLimits[list];
+    expand.textContent = state.historyExpanded[list] ? "收起" : `展开全部（${listRows.length}）`;
+    expand.setAttribute("aria-expanded",String(Boolean(state.historyExpanded[list])));
+  });
+}
+
 function directoryTopThree(id) {
   const item = DIRECTORY.find((entry) => entry.drive.replace(/\\/g, "") === id);
   return reliableChanges(item, 1).sort((a,b) => Math.abs(b.deltaBytes) - Math.abs(a.deltaBytes)).slice(0,3);
@@ -1974,6 +2271,7 @@ function renderCards() {
     const topThreeMax = Math.max(0,...topThree.map((row) => Math.abs(Number(row.deltaBytes))));
     const detailLevel = Number(state.driveLevels[d.id] || 1);
     const topTen = reliableChanges(directory,detailLevel).sort((a,b) => Math.abs(b.deltaBytes)-Math.abs(a.deltaBytes)).slice(0,10);
+    const trendRows = directoryTrendRows(d.id,detailLevel);
     const detailMax = Math.max(0,...topTen.map((row) => Math.abs(Number(row.deltaBytes))));
     const scanEvidence = classifyScanEvidence(directory ? [directory] : []);
     const cardStatus = !directory?.baselineScanId ? "waiting" : directory.status === "failed" ? "failed" : directory.status === "partial" ? "partial" : "complete";
@@ -2001,7 +2299,7 @@ function renderCards() {
           </div>
         </div>
         <div class="directory-card-extra"><b>${directory?.baselineScanId ? `目录净变化 ${fmtBytes(coverage?.actualNetBytes)}` : "当前目录规模已记录"}</b><span>${activityLabel}</span>${topThree.length ? `<div class="top-paths">${topThree.map((row) => `<div class="top-path-row"><span class="top-path-name expandable-path" title="${escapeHtml(row.displayPath)}">${escapeHtml(row.displayPath)}</span><b class="${row.deltaBytes >= 0 ? "growth-value" : "release-value"}">${row.deltaBytes >= 0 ? "+" : ""}${fmtBytes(row.deltaBytes)}</b><button class="copy-path" type="button" data-copy-path="${escapeHtml(row.displayPath)}">复制</button><span class="intensity-track ${row.deltaBytes>=0?"growth-value":"release-value"}"><span class="intensity-fill" style="--intensity:${topThreeMax?Math.max(4,Math.abs(Number(row.deltaBytes))/topThreeMax*100).toFixed(1):0}%"></span></span></div>`).join("")}</div>` : `<p>${directory?.baselineScanId ? "本次没有可靠目录变化。" : "建立完整基线后显示目录变化 Top 3。"}</p>`}</div>
-        <details class="drive-details"><summary>展开目录与扫描详情</summary><div class="drive-details-body"><label>目录层级 <select class="select drive-level-switch" data-drive="${escapeHtml(d.id)}"><option value="1" ${detailLevel===1?"selected":""}>一级目录</option><option value="2" ${detailLevel===2?"selected":""}>二级目录</option></select></label><div class="top-paths">${topTen.length ? topTen.map((row) => `<div class="top-path-row"><span class="top-path-name expandable-path" title="${escapeHtml(row.displayPath)}">${escapeHtml(row.displayPath)}</span><b class="${row.deltaBytes >= 0 ? "growth-value" : "release-value"}">${row.deltaBytes >= 0 ? "+" : ""}${fmtBytes(row.deltaBytes)}</b><button class="copy-path" type="button" data-copy-path="${escapeHtml(row.displayPath)}">复制</button><span class="intensity-track ${row.deltaBytes>=0?"growth-value":"release-value"}"><span class="intensity-fill" style="--intensity:${detailMax ? Math.max(4,Math.abs(Number(row.deltaBytes))/detailMax*100).toFixed(1):0}%"></span></span></div>`).join("") : `<p>${emptyChangeCopy({waiting:!directory?.baselineScanId,comparable:Boolean(directory?.baselineScanId),kind:"all"})}</p>`}</div><div class="detail-groups"><div class="detail-group"><b>预期排除</b>${scanEvidence.expected.length?`<ul>${scanEvidence.expected.map((item)=>`<li title="${escapeHtml(item.path)}">${escapeHtml(item.path)} · ${escapeHtml(item.reason)}</li>`).join("")}</ul>`:"<p>无</p>"}</div><div class="detail-group"><b>意外不可用</b>${scanEvidence.unexpected.length?`<ul>${scanEvidence.unexpected.map((item)=>`<li title="${escapeHtml(item.path)}">${escapeHtml(item.path)} · ${escapeHtml(item.reason)}</li>`).join("")}</ul>`:"<p>无</p>"}</div></div><p>基线时间：${directory?.baselineCompletedAt?escapeHtml(directory.baselineCompletedAt):"等待完整基线"} · 扫描状态：${directory?statusLabel(directory.status,directory.baselineScanId):"未扫描"}</p><div>${sparkline(rows)}</div></div></details>
+        <details class="drive-details"><summary>展开目录与扫描详情</summary><div class="drive-details-body"><label>目录层级 <select class="select drive-level-switch" data-drive="${escapeHtml(d.id)}"><option value="1" ${detailLevel===1?"selected":""}>一级目录</option><option value="2" ${detailLevel===2?"selected":""}>二级目录</option></select></label><div class="top-paths">${topTen.length ? topTen.map((row) => `<div class="top-path-row"><span class="top-path-name expandable-path" title="${escapeHtml(row.displayPath)}">${escapeHtml(row.displayPath)}</span><b class="${row.deltaBytes >= 0 ? "growth-value" : "release-value"}">${row.deltaBytes >= 0 ? "+" : ""}${fmtBytes(row.deltaBytes)}</b><button class="copy-path" type="button" data-copy-path="${escapeHtml(row.displayPath)}">复制</button><span class="intensity-track ${row.deltaBytes>=0?"growth-value":"release-value"}"><span class="intensity-fill" style="--intensity:${detailMax ? Math.max(4,Math.abs(Number(row.deltaBytes))/detailMax*100).toFixed(1):0}%"></span></span></div>`).join("") : `<p>${emptyChangeCopy({waiting:!directory?.baselineScanId,comparable:Boolean(directory?.baselineScanId),kind:"all"})}</p>`}</div><div class="directory-trends"><b>目录历史序列</b>${trendRows.length?trendRows.map(historyTrendRow).join(""):'<p class="history-empty">历史样本不足，暂无可展示序列。</p>'}</div><div class="detail-groups"><div class="detail-group"><b>预期排除</b>${scanEvidence.expected.length?`<ul>${scanEvidence.expected.map((item)=>`<li title="${escapeHtml(item.path)}">${escapeHtml(item.path)} · ${escapeHtml(item.reason)}</li>`).join("")}</ul>`:"<p>无</p>"}</div><div class="detail-group"><b>意外不可用</b>${scanEvidence.unexpected.length?`<ul>${scanEvidence.unexpected.map((item)=>`<li title="${escapeHtml(item.path)}">${escapeHtml(item.path)} · ${escapeHtml(item.reason)}</li>`).join("")}</ul>`:"<p>无</p>"}</div></div><p>基线时间：${directory?.baselineCompletedAt?escapeHtml(directory.baselineCompletedAt):"等待完整基线"} · 扫描状态：${directory?statusLabel(directory.status,directory.baselineScanId):"未扫描"}</p><div>${sparkline(rows)}</div></div></details>
       </article>
     `;
   }).join("");
@@ -2032,6 +2330,7 @@ function render() {
   document.body.classList.toggle("compact", state.compact);
   renderCapacitySummary();
   renderDirectoryChanges();
+  renderHistoryCenter();
   renderCards();
   renderScanCompleteness();
   renderScanMetadata();
@@ -2039,7 +2338,21 @@ function render() {
 
 ["change-drive-filter","change-level-filter","change-direction-filter","change-state-filter"].forEach((id) => $(id).addEventListener("change", renderDirectoryChanges));
 $("change-path-filter").addEventListener("input", renderDirectoryChanges);
+$("history-range").addEventListener("change", (event) => { state.historyRange = event.target.value; renderHistoryCenter(); });
 document.addEventListener("click", async (event) => {
+  const historyTab = event.target.closest("[data-history-tab]");
+  if (historyTab) {
+    state.historyTab = historyTab.dataset.historyTab;
+    renderHistoryCenter();
+    return;
+  }
+  const historyExpand = event.target.closest(".history-expand");
+  if (historyExpand) {
+    const list = historyExpand.dataset.historyList;
+    state.historyExpanded[list] = !state.historyExpanded[list];
+    renderHistoryCenter();
+    return;
+  }
   const button = event.target.closest(".copy-path");
   if (button) {
     const path = button.dataset.copyPath;
@@ -2051,6 +2364,12 @@ document.addEventListener("click", async (event) => {
   if (path && window.matchMedia("(max-width: 560px)").matches) path.classList.toggle("is-expanded");
 });
 document.addEventListener("change", (event) => {
+  const customBaseline = event.target.closest(".history-custom-baseline");
+  if (customBaseline) {
+    state.historyCustom[customBaseline.dataset.drive] = customBaseline.value;
+    renderHistoryCenter();
+    return;
+  }
   const level = event.target.closest(".drive-level-switch");
   if (!level) return;
   state.driveLevels[level.dataset.drive] = level.value;
@@ -2117,6 +2436,7 @@ render();
 '@
 
 $html = $html.Replace('INJECT_DATA', $jsonArray)
+$html = $html.Replace('INJECT_HISTORY_CENTER', $historyCenterJson)
 $html = $html.Replace('INJECT_HISTORY', $historyJson)
 $html = $html.Replace('INJECT_DIRECTORY', $directoryJson)
 $html = $html.Replace('INJECT_SCAN_META', $scanMetaJson)
@@ -2124,6 +2444,7 @@ $html = $html.Replace('INJECT_TS', $timestamp)
 
 $utf8NoBom = New-Object System.Text.UTF8Encoding $false
 [System.IO.File]::WriteAllText($htmlFile, $html, $utf8NoBom)
+$reportStopwatch.Stop()
 $scanStage = "生成报告"
 
 if ($env:DISKPULSE_NO_OPEN -ne "1") {
@@ -2144,6 +2465,7 @@ Write-ScanEvent $paths ([PSCustomObject]@{
 $runStopwatch.Stop()
 & $clearConsoleProgress
 Write-Host ("扫描完成：{0:N1} 秒" -f $runStopwatch.Elapsed.TotalSeconds)
+Write-Host ("报告生成：{0:N3} 秒，{1:N0} 字节" -f $reportStopwatch.Elapsed.TotalSeconds, ([Text.Encoding]::UTF8.GetByteCount($html)))
 Write-Host "报告位置：$htmlFile"
 foreach ($driveResult in $snapshot.drives) {
     Write-Host ("{0} 无法访问 {1} 个路径，主动排除 {2} 个路径" -f $driveResult.drive, @($driveResult.unavailable).Count, @($driveResult.excluded).Count)
