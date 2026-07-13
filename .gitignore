@@ -1,0 +1,10 @@
+/runtime/
+/DiskPulse.csv
+/DiskPulse.html
+*.local.json
+*.tmp
+*.bak
+/.impeccable/
+/PRODUCT.md
+/DESIGN.md
+/docs/superpowers/
