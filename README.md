@@ -1,5 +1,7 @@
 # DiskPulse
 
+<img width="1672" height="941" alt="project-diskpulse" src="https://github.com/user-attachments/assets/4b06b439-eb31-4c4f-9e0e-f17e7529a342" />
+
 DiskPulse 是一个零依赖、离线运行的 Windows 磁盘容量与目录变化看板。
 
 双击 `check.bat` 后，程序会读取本地固定磁盘容量，保存历史记录，并在脚本旁的 `runtime/` 中生成自包含 HTML 报告。报告保留容量总览、使用率状态、趋势和满盘预测，并在建立基线后定位一级、二级目录的增长与释放。
