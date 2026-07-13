@@ -82,7 +82,7 @@ $tHistory = $history | Where-Object drive -eq 'T:'
 if ($tHistory.selections.day -ne 'day' -or $tHistory.selections.week -ne 'week') { throw 'Range selections were not serialized.' }
 if (-not @($tHistory.trends | Where-Object level -eq 1).Count) { throw 'Level-one trend series are required.' }
 
-$markers = @('INJECT_HISTORY_CENTER','id="history-range"','id="history-range-note"','id="sustained-growth-list"','id="sustained-release-list"','id="history-trend-list"','history-custom-baseline')
+$markers = @('INJECT_HISTORY_CENTER','id="history-range"','id="history-range-note"','id="history-tabs"','role="tablist"','data-history-tab="growth"','data-history-tab="release"','data-history-tab="trend"','id="sustained-growth-list"','id="sustained-release-list"','id="history-trend-list"','class="history-expand"','history-custom-baseline')
 foreach ($marker in $markers) { if ($source -notmatch [regex]::Escape($marker)) { throw "Missing history center marker: $marker" } }
 
 $helperMatch = [regex]::Match($source, '(?s)// TESTABLE_HISTORY_HELPERS_START(?<code>.*?)// TESTABLE_HISTORY_HELPERS_END')
@@ -96,6 +96,11 @@ assert.equal(selectHistoryComparison(disk,"custom","p").scanId,"p");
 assert.equal(defaultHistoryCustomScanId(disk),"p");
 assert.equal(selectHistoryComparison({selections:{},comparisons:[]},"day"),null);
 assert.deepEqual(reliableHistoryRows([{state:"changed",deltaBytes:2},{state:"created",deltaBytes:3},{state:"removed",deltaBytes:-4},{state:"unknown",deltaBytes:99},{state:"unavailable",deltaBytes:-99}]).map(x=>x.state),["changed","created","removed"]);
+const tenRows = Array.from({length:10},(_,index)=>({index}));
+assert.equal(visibleHistoryRows(tenRows,"growth",{}).length,5);
+assert.equal(visibleHistoryRows(tenRows,"release",{}).length,5);
+assert.equal(visibleHistoryRows(tenRows,"trend",{}).length,6);
+assert.equal(visibleHistoryRows(tenRows,"growth",{growth:true}).length,10);
 console.log("PASS: history center behavior fixtures.");
 '@
 $temp = Join-Path ([IO.Path]::GetTempPath()) ('DiskPulse-Phase5-' + [guid]::NewGuid().ToString('N'))
@@ -122,4 +127,6 @@ finally {
 foreach ($marker in @('[data-theme="dark"]','@media (max-width: 560px)','id="themeBtn"')) {
     if ($source -notmatch [regex]::Escape($marker)) { throw "Stable theme or responsive marker missing: $marker" }
 }
+if ($source -notmatch [regex]::Escape('.history-row-meta { color: var(--muted); display: flex; font-size: 12px;')) { throw 'History helper text must remain readable at 12px.' }
+if ($source -notmatch [regex]::Escape('本范围内没有持续释放目录。')) { throw 'The empty release tab must use compact honest copy.' }
 Write-Host 'PASS: history comparison center selection, semantics, trends, and embedded JavaScript.'

@@ -1594,16 +1594,25 @@ $html = @'
   .history-metric { background: var(--bg); border: 1px solid var(--line); border-radius: 9px; padding: 11px; min-width: 0; }
   .history-metric span { color: var(--muted); display: block; font-size: 11px; margin-bottom: 5px; }
   .history-metric b { display: block; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .history-columns { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; }
+  .history-tabs { border-bottom: 1px solid var(--line); display: flex; gap: 4px; margin-top: 4px; }
+  .history-tab { background: transparent; border: 0; border-bottom: 2px solid transparent; color: var(--muted); cursor: pointer; font: inherit; font-size: 13px; font-weight: 700; min-height: 44px; padding: 0 14px; }
+  .history-tab:hover { color: var(--text); }
+  .history-tab:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
+  .history-tab.is-active { border-bottom-color: var(--blue); color: var(--text); }
+  .history-panels { padding-top: 12px; }
   .history-column { border: 1px solid var(--line); border-radius: 10px; padding: 12px; min-width: 0; }
-  .history-column h3 { font-size: 13px; margin-bottom: 8px; }
-  .history-row { border-top: 1px solid var(--line); display: grid; gap: 5px; padding: 9px 0; }
+  .history-column h3 { font-size: 14px; margin-bottom: 8px; }
+  .history-row { border-top: 1px solid var(--line); display: grid; gap: 6px; padding: 12px 0; }
   .history-row:first-child { border-top: 0; }
   .history-row-main { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; min-width: 0; }
   .history-row-main span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .history-row-meta { color: var(--muted); display: flex; font-size: 11px; gap: 8px; flex-wrap: wrap; }
+  .history-row-meta { color: var(--muted); display: flex; font-size: 12px; gap: 8px; line-height: 1.55; flex-wrap: wrap; }
   .history-spark { height: 26px; width: 100%; }
   .history-spark path { fill: none; stroke: var(--blue); stroke-width: 2; vector-effect: non-scaling-stroke; }
+  .history-expand { background: transparent; border: 0; color: var(--blue); cursor: pointer; display: block; font: inherit; font-size: 12px; font-weight: 700; margin: 8px auto 0; min-height: 44px; padding: 0 16px; }
+  .history-expand:hover { text-decoration: underline; }
+  .history-expand:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+  .history-expand[hidden] { display: none; }
   .directory-trends { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 10px; }
   .directory-trends > b { display: block; margin-bottom: 6px; }
 
@@ -1627,7 +1636,6 @@ $html = @'
     .change-metrics, .change-lists { grid-template-columns: 1fr 1fr; }
     .change-lists.release-empty, .change-lists.growth-empty { grid-template-columns: 1fr; }
     .grid { grid-template-columns: 1fr; }
-    .history-columns { grid-template-columns: 1fr; }
     .history-summary { grid-template-columns: repeat(2,minmax(0,1fr)); }
   }
 
@@ -1653,6 +1661,8 @@ $html = @'
     .top-path-row { grid-template-columns: minmax(0,1fr) auto; }
     .history-head { align-items: stretch; flex-direction: column; }
     .history-summary { grid-template-columns: 1fr; }
+    .history-tabs { overflow-x: auto; }
+    .history-tab { flex: 1 0 auto; }
   }
 </style>
 </head>
@@ -1695,10 +1705,15 @@ $html = @'
       <div class="history-controls"><label>时间范围<select class="select" id="history-range"><option value="previous">上一次完整扫描</option><option value="day">约 24 小时前</option><option value="week">约 7 天前</option><option value="earliest">最早可用快照</option><option value="custom">自选历史快照</option></select></label><div class="history-custom" id="history-custom"></div></div>
     </div>
     <div class="history-summary" id="history-summary"></div>
-    <div class="history-columns">
-      <div class="history-column"><h3>持续增长榜</h3><div id="sustained-growth-list"></div></div>
-      <div class="history-column"><h3>持续释放榜</h3><div id="sustained-release-list"></div></div>
-      <div class="history-column"><h3>历史变化趋势</h3><div id="history-trend-list"></div></div>
+    <div class="history-tabs" id="history-tabs" role="tablist" aria-label="历史榜单">
+      <button class="history-tab is-active" id="history-growth-tab" type="button" role="tab" aria-selected="true" aria-controls="history-growth-panel" data-history-tab="growth">持续增长</button>
+      <button class="history-tab" id="history-release-tab" type="button" role="tab" aria-selected="false" aria-controls="history-release-panel" data-history-tab="release">持续释放</button>
+      <button class="history-tab" id="history-trend-tab" type="button" role="tab" aria-selected="false" aria-controls="history-trend-panel" data-history-tab="trend">历史变化</button>
+    </div>
+    <div class="history-panels">
+      <div class="history-column" id="history-growth-panel" role="tabpanel" aria-labelledby="history-growth-tab"><h3>持续增长榜</h3><div id="sustained-growth-list"></div><button class="history-expand" type="button" data-history-list="growth">展开全部</button></div>
+      <div class="history-column" id="history-release-panel" role="tabpanel" aria-labelledby="history-release-tab" hidden><h3>持续释放榜</h3><div id="sustained-release-list"></div><button class="history-expand" type="button" data-history-list="release">展开全部</button></div>
+      <div class="history-column" id="history-trend-panel" role="tabpanel" aria-labelledby="history-trend-tab" hidden><h3>历史变化趋势</h3><div id="history-trend-list"></div><button class="history-expand" type="button" data-history-list="trend">展开全部</button></div>
     </div>
   </section>
   <div class="section-intro"><div><h2>变化详情</h2><p>摘要和排行会随筛选同步更新，整体容量保持不变</p></div></div>
@@ -1750,6 +1765,11 @@ function reliableHistoryRows(rows) {
 function defaultHistoryCustomScanId(disk) {
   return disk?.comparisons?.[0]?.scanId || null;
 }
+
+const historyListLimits = { growth: 5, release: 5, trend: 6 };
+function visibleHistoryRows(rows, list, expanded) {
+  return expanded?.[list] ? rows : rows.slice(0,historyListLimits[list]);
+}
 // TESTABLE_HISTORY_HELPERS_END
 
 const historyMap = {};
@@ -1768,7 +1788,9 @@ const state = {
   compact: false,
   driveLevels: {},
   historyRange: "previous",
-  historyCustom: {}
+  historyCustom: {},
+  historyTab: "growth",
+  historyExpanded: {}
 };
 
 const $ = (id) => document.getElementById(id);
@@ -2074,7 +2096,7 @@ function sizeSparkline(samples) {
 
 function historyTrendRow(row) {
   const recent = (row.samples || []).filter((sample) => sample?.[1] !== null && sample?.[1] !== undefined).slice(-5).map((sample) => fmtBytes(sample[1])).join(" → ");
-  return `<div class="history-row"><div class="history-row-main"><span title="${escapeHtml(row.displayPath)}">${escapeHtml(row.drive)} · ${escapeHtml(row.displayPath)}</span><b class="${Number(row.cumulativeBytes)>=0?"growth-value":"release-value"}">${Number(row.cumulativeBytes)>0?"+":""}${fmtBytes(row.cumulativeBytes)}</b></div><div class="history-row-meta"><span>${escapeHtml(row.label)}</span><span>增长 ${row.growthCount} 次</span><span>释放 ${row.releaseCount} 次</span><span>${recent || "暂无大小序列"}</span></div>${sizeSparkline(row.samples)}<div class="history-row-meta"><span>首次 ${formatLocalDate(row.firstSeen)}</span><span>最近 ${formatLocalDate(row.lastSeen)}</span></div></div>`;
+  return `<div class="history-row"><div class="history-row-main"><span title="${escapeHtml(row.displayPath)}">${escapeHtml(row.drive)} · ${escapeHtml(row.displayPath)}</span><b class="${Number(row.cumulativeBytes)>=0?"growth-value":"release-value"}">累计 ${Number(row.cumulativeBytes)>0?"+":""}${fmtBytes(row.cumulativeBytes)}</b></div><div class="history-row-meta"><span>${escapeHtml(row.label)}</span><span>增长 ${row.growthCount} 次</span><span>释放 ${row.releaseCount} 次</span><span>${recent || "暂无大小序列"}</span></div>${sizeSparkline(row.samples)}<div class="history-row-meta"><span>首次 ${formatLocalDate(row.firstSeen)}</span><span>最近 ${formatLocalDate(row.lastSeen)}</span></div></div>`;
 }
 
 function allDirectoryTrends() {
@@ -2109,13 +2131,28 @@ function renderHistoryCenter() {
   $("history-custom").innerHTML = state.historyRange === "custom" ? HISTORY_CENTER.map((disk) => `<label>${escapeHtml(disk.drive)}<select class="select history-custom-baseline" data-drive="${escapeHtml(disk.drive)}">${(disk.comparisons || []).map((item) => `<option value="${escapeHtml(item.scanId)}" ${state.historyCustom[disk.drive]===item.scanId?"selected":""}>${formatLocalDate(item.completedAt)}</option>`).join("")}</select></label>`).join("") : "";
 
   const trends = allDirectoryTrends();
-  const growth = trends.filter((row) => row.label === "持续增长").sort((a,b) => Number(b.cumulativeBytes)-Number(a.cumulativeBytes)).slice(0,8);
-  const release = trends.filter((row) => row.label === "持续释放").sort((a,b) => Number(a.cumulativeBytes)-Number(b.cumulativeBytes)).slice(0,8);
-  const notable = trends.filter((row) => row.label !== "数据不足" || Number(row.occurrenceCount) > 0).sort((a,b) => Math.abs(Number(b.cumulativeBytes))-Math.abs(Number(a.cumulativeBytes))).slice(0,8);
-  const empty = '<div class="history-empty">历史样本不足，至少需要 3 次有效比较。</div>';
-  $("sustained-growth-list").innerHTML = growth.map(historyTrendRow).join("") || empty;
-  $("sustained-release-list").innerHTML = release.map(historyTrendRow).join("") || empty;
-  $("history-trend-list").innerHTML = notable.map(historyTrendRow).join("") || empty;
+  const lists = {
+    growth: trends.filter((row) => row.label === "持续增长").sort((a,b) => Number(b.cumulativeBytes)-Number(a.cumulativeBytes)),
+    release: trends.filter((row) => row.label === "持续释放").sort((a,b) => Number(a.cumulativeBytes)-Number(b.cumulativeBytes)),
+    trend: trends.filter((row) => row.label !== "数据不足" || Number(row.occurrenceCount) > 0).sort((a,b) => Math.abs(Number(b.cumulativeBytes))-Math.abs(Number(a.cumulativeBytes)))
+  };
+  const ids = {growth:"sustained-growth-list",release:"sustained-release-list",trend:"history-trend-list"};
+  const titles = {growth:"持续增长",release:"持续释放",trend:"历史变化"};
+  const empty = {growth:"历史样本不足，至少需要 3 次有效比较。",release:"本范围内没有持续释放目录。",trend:"历史样本不足，暂无明显历史变化。"};
+  Object.entries(lists).forEach(([list,listRows]) => {
+    const panel = $(`history-${list}-panel`);
+    const active = state.historyTab === list;
+    panel.hidden = !active;
+    const tab = document.querySelector(`[data-history-tab="${list}"]`);
+    tab.classList.toggle("is-active",active);
+    tab.setAttribute("aria-selected",String(active));
+    tab.textContent = `${titles[list]}（${listRows.length}）`;
+    $(ids[list]).innerHTML = visibleHistoryRows(listRows,list,state.historyExpanded).map(historyTrendRow).join("") || `<div class="history-empty">${empty[list]}</div>`;
+    const expand = panel.querySelector(".history-expand");
+    expand.hidden = listRows.length <= historyListLimits[list];
+    expand.textContent = state.historyExpanded[list] ? "收起" : `展开全部（${listRows.length}）`;
+    expand.setAttribute("aria-expanded",String(Boolean(state.historyExpanded[list])));
+  });
 }
 
 function directoryTopThree(id) {
@@ -2303,6 +2340,19 @@ function render() {
 $("change-path-filter").addEventListener("input", renderDirectoryChanges);
 $("history-range").addEventListener("change", (event) => { state.historyRange = event.target.value; renderHistoryCenter(); });
 document.addEventListener("click", async (event) => {
+  const historyTab = event.target.closest("[data-history-tab]");
+  if (historyTab) {
+    state.historyTab = historyTab.dataset.historyTab;
+    renderHistoryCenter();
+    return;
+  }
+  const historyExpand = event.target.closest(".history-expand");
+  if (historyExpand) {
+    const list = historyExpand.dataset.historyList;
+    state.historyExpanded[list] = !state.historyExpanded[list];
+    renderHistoryCenter();
+    return;
+  }
   const button = event.target.closest(".copy-path");
   if (button) {
     const path = button.dataset.copyPath;
