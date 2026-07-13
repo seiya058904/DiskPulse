@@ -183,30 +183,224 @@ function Add-FileAggregate {
     }
 }
 
-function Invoke-DirectoryScan {
-    param([string] $Drive, [string] $RootPath, [scriptblock] $BeforeEntry)
+if (-not ('DiskPulseFastScanner' -as [type])) {
+Add-Type -TypeDefinition @'
+using System;
+using System.IO;
+using System.Collections.Generic;
 
-    $root = [IO.Path]::GetFullPath($RootPath).TrimEnd('\')
-    $rootPrefix = $root + '\'
+public sealed class DiskPulseFastRecord {
+    public string key, kind, displayPath, path, latestWriteTime;
+    public int level, fileCount;
+    public long sizeBytes;
+    public bool enumerationComplete = true, childrenEnumerationComplete = true;
+}
+public sealed class DiskPulseFastEvidence { public string path, reason, kind; }
+public sealed class DiskPulseFastProgress {
+    public string phase, drive, currentPath;
+    public long filesProcessed, directoriesProcessed, elapsedMilliseconds;
+    public int completedTopLevel, totalTopLevel;
+    public double percentComplete;
+}
+public sealed class DiskPulseFastResult {
+    public string drive, rootPath, status;
+    public bool enumerationComplete, childrenEnumerationComplete;
+    public List<DiskPulseFastRecord> records = new List<DiskPulseFastRecord>();
+    public List<DiskPulseFastEvidence> excluded = new List<DiskPulseFastEvidence>();
+    public List<DiskPulseFastEvidence> unavailable = new List<DiskPulseFastEvidence>();
+    public List<DiskPulseFastEvidence> errors = new List<DiskPulseFastEvidence>();
+}
+public static class DiskPulseFastScanner {
+    sealed class Work { public string Path, Top; public Work(string p, string t) { Path=p; Top=t; } }
+    static string Key(string p) { return Path.GetFullPath(p).Replace('/', '\\').TrimEnd('\\').ToLowerInvariant(); }
+    public static string NormalizeRoot(string rootPath) {
+        string full=Path.GetFullPath(rootPath);
+        return full.Equals(Path.GetPathRoot(full),StringComparison.OrdinalIgnoreCase) ? full : full.TrimEnd('\\');
+    }
+    static void AddEvidence(List<DiskPulseFastEvidence> list, string path, string reason, string kind=null) {
+        list.Add(new DiskPulseFastEvidence { path=path, reason=reason, kind=kind });
+    }
+    static DiskPulseFastRecord DirectoryRecord(string path, int level) {
+        string full=Path.GetFullPath(path).TrimEnd('\\');
+        return new DiskPulseFastRecord { key=Key(full), kind="directory", displayPath=full, level=level };
+    }
+    static void AddFile(DiskPulseFastRecord record, long length, string write) {
+        record.sizeBytes += length; record.fileCount++;
+        if (record.latestWriteTime==null || String.CompareOrdinal(write, record.latestWriteTime)>0) record.latestWriteTime=write;
+    }
+    public static DiskPulseFastResult Scan(string drive, string rootPath, Action<DiskPulseFastProgress> progress) {
+        string root=NormalizeRoot(rootPath);
+        string prefix=root.EndsWith("\\",StringComparison.Ordinal) ? root : root+"\\", current=root;
+        var result=new DiskPulseFastResult { drive=drive.ToUpperInvariant(), rootPath=root, status="complete" };
+        var records=new Dictionary<string,DiskPulseFastRecord>(StringComparer.OrdinalIgnoreCase);
+        var rootFiles=new DiskPulseFastRecord { key=drive.ToUpperInvariant()+"|root-files", kind="rootFiles", displayPath=drive.ToUpperInvariant()+"\\（根目录文件）", path=Path.GetFullPath(rootPath), level=1 };
+        records[rootFiles.key]=rootFiles;
+        var stack=new Stack<Work>(); stack.Push(new Work(root,null));
+        var pending=new Dictionary<string,int>(StringComparer.OrdinalIgnoreCase);
+        long files=0, dirs=0, entries=0; int completed=0,total=0; bool rootEnumerated=false;
+        var watch=System.Diagnostics.Stopwatch.StartNew(); long last=-1000;
+        Action<string,string,bool> emit=(phase,path,force)=>{
+            if(progress==null) return; long elapsed=watch.ElapsedMilliseconds;
+            if(!force && elapsed-last<1000) return;
+            double percent=!rootEnumerated ? -1 : (total==0 ? 100 : Math.Min(100,Math.Round((double)completed/total*100,1)));
+            last=elapsed;
+            try { progress(new DiskPulseFastProgress { phase=phase,drive=drive.ToUpperInvariant(),filesProcessed=files,directoriesProcessed=dirs,currentPath=path,elapsedMilliseconds=elapsed,completedTopLevel=completed,totalTopLevel=total,percentComplete=percent }); } catch {}
+        };
+        emit("starting",root,true);
+        while(stack.Count>0) {
+            var work=stack.Pop(); string directory=work.Path, top=work.Top; current=directory; dirs++; emit("scanning",current,false);
+            try {
+                foreach(FileSystemInfo info in new DirectoryInfo(directory).EnumerateFileSystemInfos()) {
+                    string entry=info.FullName;
+                    current=entry; entries++;
+                    try {
+                        var attrs=info.Attributes; bool isDir=info is DirectoryInfo;
+                        if(!isDir) files++;
+                        if((entries & 4095)==0) emit("scanning",current,false);
+                        if((attrs & FileAttributes.ReparsePoint)!=0) { AddEvidence(result.excluded,entry,"reparse-point"); continue; }
+                        string relative=entry.Substring(prefix.Length); string[] parts=relative.Split(new[]{'\\'},StringSplitOptions.RemoveEmptyEntries);
+                        if(isDir) {
+                            string name=Path.GetFileName(entry);
+                            if(name.Equals("System Volume Information",StringComparison.OrdinalIgnoreCase) || name.Equals("$RECYCLE.BIN",StringComparison.OrdinalIgnoreCase)) { AddEvidence(result.excluded,entry,"configured-exclusion"); continue; }
+                            for(int level=1;level<=Math.Min(2,parts.Length);level++) {
+                                string p=root+"\\"+String.Join("\\",parts,0,level), key=Key(p);
+                                if(!records.ContainsKey(key)) records[key]=DirectoryRecord(p,level);
+                            }
+                            string childTop=top;
+                            if(parts.Length==1) { childTop=Key(entry); if(!pending.ContainsKey(childTop)) { pending[childTop]=0; total++; } }
+                            if(childTop!=null) pending[childTop]++;
+                            stack.Push(new Work(entry,childTop)); continue;
+                        }
+                        var file=(FileInfo)info; long length=file.Length; string write=file.LastWriteTimeUtc.ToString("o");
+                        if(parts.Length==1) AddFile(rootFiles,length,write);
+                        else for(int level=1;level<=Math.Min(2,parts.Length-1);level++) AddFile(records[Key(root+"\\"+String.Join("\\",parts,0,level))],length,write);
+                    } catch(UnauthorizedAccessException) { AddEvidence(result.excluded,entry,"access-denied"); }
+                    catch(Exception ex) { result.status="partial"; AddEvidence(result.errors,entry,ex.Message,"entry-disappeared"); AddEvidence(result.unavailable,entry,"entry-unavailable"); }
+                }
+                if(directory.Equals(root,StringComparison.OrdinalIgnoreCase)) { rootEnumerated=true; emit("scanning",current,true); }
+            } catch(Exception ex) {
+                if(directory.Equals(root,StringComparison.OrdinalIgnoreCase)) { AddEvidence(result.errors,directory,ex.Message,"enumeration-failed"); AddEvidence(result.unavailable,directory,"enumeration-failed"); result.status="failed"; rootFiles.enumerationComplete=false; rootFiles.childrenEnumerationComplete=false; break; }
+                if(ex is UnauthorizedAccessException) AddEvidence(result.excluded,directory,"access-denied");
+                else { AddEvidence(result.errors,directory,ex.Message,"enumeration-failed"); AddEvidence(result.unavailable,directory,"enumeration-failed"); result.status="partial"; }
+                foreach(var record in records.Values) if(record.kind=="directory" && directory.StartsWith(record.displayPath,StringComparison.OrdinalIgnoreCase)) record.childrenEnumerationComplete=false;
+            }
+            if(top!=null && pending.ContainsKey(top) && --pending[top]==0) { completed++; emit("scanning",directory,false); }
+        }
+        watch.Stop(); emit(result.status=="failed"?"failed":"complete",current,true);
+        result.records.AddRange(records.Values); result.enumerationComplete=result.status=="complete"; result.childrenEnumerationComplete=result.status=="complete";
+        return result;
+    }
+}
+'@
+}
+
+function Invoke-DirectoryScan {
+    param(
+        [string] $Drive,
+        [string] $RootPath,
+        [scriptblock] $BeforeEntry,
+        [scriptblock] $ProgressCallback
+    )
+
+    if (-not $BeforeEntry) {
+        $nativeCallback = if ($ProgressCallback) {
+            [Action[DiskPulseFastProgress]]{
+                param($progress)
+                try { & $ProgressCallback $progress } catch { Write-Debug "DiskPulse progress callback failed: $($_.Exception.Message)" }
+            }
+        } else { $null }
+        $native = [DiskPulseFastScanner]::Scan($Drive, $RootPath, $nativeCallback)
+        return [PSCustomObject]@{
+            drive                       = $native.drive
+            rootPath                    = $native.rootPath
+            status                      = $native.status
+            enumerationComplete         = $native.enumerationComplete
+            childrenEnumerationComplete = $native.childrenEnumerationComplete
+            records                     = [object[]]$native.records
+            excluded                    = [object[]]$native.excluded
+            unavailable                 = [object[]]$native.unavailable
+            errors                      = [object[]]$native.errors
+        }
+    }
+
+    $root = [DiskPulseFastScanner]::NormalizeRoot($RootPath)
+    $rootPrefix = if ($root.EndsWith('\')) { $root } else { $root + '\' }
     $records = New-Object 'Collections.Generic.Dictionary[string,object]' ([StringComparer]::OrdinalIgnoreCase)
     $errors = New-Object 'Collections.Generic.List[object]'
     $unavailable = New-Object 'Collections.Generic.List[object]'
     $excluded = New-Object 'Collections.Generic.List[object]'
     $rootFiles = New-RootFilesRecord $Drive $root
     $records[$rootFiles.key] = $rootFiles
-    $stack = New-Object 'Collections.Generic.Stack[string]'
-    $stack.Push($root)
+    $stack = New-Object 'Collections.Generic.Stack[object]'
+    $stack.Push([PSCustomObject]@{ Path = $root; TopLevelKey = $null })
+    $pendingTopLevel = New-Object 'Collections.Generic.Dictionary[string,int]' ([StringComparer]::OrdinalIgnoreCase)
     $status = "complete"
+    $filesProcessed = 0
+    $directoriesProcessed = 0
+    $entriesProcessed = 0
+    $completedTopLevel = 0
+    $totalTopLevel = 0
+    $rootEnumerated = $false
+    $currentPath = $root
+    $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+    $progressState = @{ LastUpdateMilliseconds = -1000 }
+    $emitProgress = {
+        param([string] $Phase, [string] $Path, [bool] $Force)
+        if (-not $ProgressCallback) { return }
+        $elapsed = $stopwatch.ElapsedMilliseconds
+        if (-not $Force -and ($elapsed - $progressState.LastUpdateMilliseconds) -lt 1000) { return }
+        $percent = if (-not $rootEnumerated) {
+            -1
+        }
+        elseif ($totalTopLevel -eq 0) {
+            100
+        }
+        else {
+            [math]::Min(100, [math]::Round(($completedTopLevel / $totalTopLevel) * 100, 1))
+        }
+        $progressState.LastUpdateMilliseconds = $elapsed
+        try {
+            & $ProgressCallback ([PSCustomObject]@{
+                phase                = $Phase
+                drive                = $Drive.ToUpperInvariant()
+                filesProcessed       = $filesProcessed
+                directoriesProcessed = $directoriesProcessed
+                currentPath          = $Path
+                elapsedMilliseconds  = $elapsed
+                completedTopLevel     = $completedTopLevel
+                totalTopLevel         = $totalTopLevel
+                percentComplete       = $percent
+            })
+        }
+        catch {
+            Write-Debug "DiskPulse progress callback failed: $($_.Exception.Message)"
+        }
+    }
+
+    & $emitProgress "starting" $root $true
 
     while ($stack.Count -gt 0) {
-        $directory = $stack.Pop()
+        $work = $stack.Pop()
+        $directory = [string]$work.Path
+        $topLevelKey = [string]$work.TopLevelKey
+        $directoriesProcessed++
+        $currentPath = $directory
+        & $emitProgress "scanning" $currentPath $false
         try {
             $entries = [IO.DirectoryInfo]::new($directory).EnumerateFileSystemInfos()
             foreach ($entry in $entries) {
+                $currentPath = [string]$entry.FullName
+                if ($entry -isnot [IO.DirectoryInfo]) { $filesProcessed++ }
+                $entriesProcessed++
+                if (($entriesProcessed -band 255) -eq 0) {
+                    & $emitProgress "scanning" $currentPath $false
+                }
                 try {
-                    if ($BeforeEntry) { & $BeforeEntry $entry }
-                    $entry.Refresh()
-                    if (-not $entry.Exists) { throw "Entry disappeared during scan." }
+                    if ($BeforeEntry) {
+                        & $BeforeEntry $entry
+                        $entry.Refresh()
+                        if (-not $entry.Exists) { throw "Entry disappeared during scan." }
+                    }
                     if (($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
                         $excluded.Add([PSCustomObject]@{ path = $entry.FullName; reason = "reparse-point" })
                         continue
@@ -226,7 +420,21 @@ function Invoke-DirectoryScan {
                                 $records[$key] = New-DirectoryRecord $path $level
                             }
                         }
-                        $stack.Push($entry.FullName)
+                        $childTopLevelKey = if ($parts.Count -eq 1) {
+                            $key = Normalize-PathKey $entry.FullName
+                            if (-not $pendingTopLevel.ContainsKey($key)) {
+                                $pendingTopLevel[$key] = 0
+                                $totalTopLevel++
+                            }
+                            $key
+                        }
+                        else {
+                            $topLevelKey
+                        }
+                        if ($childTopLevelKey) {
+                            $pendingTopLevel[$childTopLevelKey]++
+                        }
+                        $stack.Push([PSCustomObject]@{ Path = $entry.FullName; TopLevelKey = $childTopLevelKey })
                         continue
                     }
 
@@ -241,29 +449,55 @@ function Invoke-DirectoryScan {
                     }
                 }
                 catch {
-                    $status = "partial"
-                    $errors.Add([PSCustomObject]@{ path = [string]$entry.FullName; reason = $_.Exception.Message; kind = "entry-disappeared" })
-                    $unavailable.Add([PSCustomObject]@{ path = [string]$entry.FullName; reason = "entry-unavailable" })
+                    if ($_.Exception -is [UnauthorizedAccessException]) {
+                        $excluded.Add([PSCustomObject]@{ path = [string]$entry.FullName; reason = "access-denied" })
+                    }
+                    else {
+                        $status = "partial"
+                        $errors.Add([PSCustomObject]@{ path = [string]$entry.FullName; reason = $_.Exception.Message; kind = "entry-disappeared" })
+                        $unavailable.Add([PSCustomObject]@{ path = [string]$entry.FullName; reason = "entry-unavailable" })
+                    }
                 }
+            }
+            if ($directory -eq $root) {
+                $rootEnumerated = $true
+                & $emitProgress "scanning" $currentPath $true
             }
         }
         catch {
-            $errors.Add([PSCustomObject]@{ path = $directory; reason = $_.Exception.Message; kind = "enumeration-failed" })
-            $unavailable.Add([PSCustomObject]@{ path = $directory; reason = "enumeration-failed" })
             if ($directory -eq $root) {
+                $errors.Add([PSCustomObject]@{ path = $directory; reason = $_.Exception.Message; kind = "enumeration-failed" })
+                $unavailable.Add([PSCustomObject]@{ path = $directory; reason = "enumeration-failed" })
                 $status = "failed"
                 $rootFiles.enumerationComplete = $false
                 $rootFiles.childrenEnumerationComplete = $false
                 break
             }
-            $status = "partial"
+            if ($_.Exception -is [UnauthorizedAccessException]) {
+                $excluded.Add([PSCustomObject]@{ path = $directory; reason = "access-denied" })
+            }
+            else {
+                $errors.Add([PSCustomObject]@{ path = $directory; reason = $_.Exception.Message; kind = "enumeration-failed" })
+                $unavailable.Add([PSCustomObject]@{ path = $directory; reason = "enumeration-failed" })
+                $status = "partial"
+            }
             foreach ($record in $records.Values) {
                 if ($record.kind -eq "directory" -and $directory.StartsWith($record.displayPath, [StringComparison]::OrdinalIgnoreCase)) {
                     $record.childrenEnumerationComplete = $false
                 }
             }
         }
+        if ($topLevelKey -and $pendingTopLevel.ContainsKey($topLevelKey)) {
+            $pendingTopLevel[$topLevelKey]--
+            if ($pendingTopLevel[$topLevelKey] -eq 0) {
+                $completedTopLevel++
+                & $emitProgress "scanning" $directory $true
+            }
+        }
     }
+
+    $stopwatch.Stop()
+    & $emitProgress $(if ($status -eq "failed") { "failed" } else { "complete" }) $currentPath $true
 
     $recordValues = [object[]]$records.Values
     $excludedValues = [object[]]$excluded
@@ -302,9 +536,15 @@ function Read-Snapshots {
 function Find-DriveBaseline {
     param([array]$Snapshots,[string]$Drive,$Current)
     if (-not $Snapshots -or $Snapshots.Count -eq 0) { return $null }
+    $currentDrive = if ($Current.PSObject.Properties.Name -contains 'drives') { @($Current.drives | Where-Object { $_.drive -eq $Drive }) | Select-Object -First 1 } else { $null }
+    $expectedRoot = if ($currentDrive) { [string]$currentDrive.rootPath } else { $null }
     $Snapshots | Where-Object {
         $_.scanId -ne $Current.scanId -and [datetime]$_.completedAt -lt [datetime]$Current.startedAt -and
-        @($_.drives | Where-Object { $_.drive -eq $Drive -and $_.status -in @('baseline','complete') }).Count
+        @($_.drives | Where-Object {
+            $_.drive -eq $Drive -and $_.status -in @('baseline','complete') -and
+            $_.PSObject.Properties.Name -contains 'usedBytes' -and
+            (-not $expectedRoot -or [string]$_.rootPath -eq $expectedRoot)
+        }).Count
     } | Sort-Object { [datetime]$_.completedAt } -Descending | Select-Object -First 1
 }
 
@@ -362,6 +602,50 @@ function Invoke-SnapshotRetention {
     foreach($candidate in @($files|Where-Object{-not$protected.ContainsKey([string]$_.Snapshot.scanId)}|Sort-Object @{e='Partial';Descending=$true},@{e={$_.Snapshot.completedAt};Ascending=$true})){if($files.Count-le$Limit){break};try{Remove-Item -LiteralPath $candidate.File.FullName -Force;$files=@($files|Where-Object{$_.File.FullName-ne$candidate.File.FullName})}catch{Write-Warning "无法清理快照 $($candidate.File.Name)"}}
 }
 
+function Should-RenderConsoleProgress {
+    param(
+        [Parameter(Mandatory=$true)] $Progress,
+        [Parameter(Mandatory=$true)] $State
+    )
+    $isFirst = [int64]$State.LastRenderedMilliseconds -lt 0 -or [int64]$Progress.filesProcessed -eq 0
+    $isFinal = [int]$Progress.totalTopLevel -ge 0 -and [int]$Progress.completedTopLevel -eq [int]$Progress.totalTopLevel
+    $intervalElapsed = ([int64]$Progress.elapsedMilliseconds - [int64]$State.LastRenderedMilliseconds) -ge 1000
+    if (-not ($isFirst -or $isFinal -or $intervalElapsed)) { return $false }
+    $State.LastRenderedMilliseconds = [int64]$Progress.elapsedMilliseconds
+    return $true
+}
+
+function Format-ScanProgressLine {
+    param(
+        [Parameter(Mandatory=$true)] $Progress,
+        [int] $CompletedDrives = 0,
+        [int] $TotalDrives = 1
+    )
+    $barWidth = 16
+    $knownPercent = $Progress.percentComplete -ge 0 -and $TotalDrives -gt 0
+    if ($knownPercent) {
+        $driveFraction = [double]$Progress.percentComplete / 100
+        $overallPercent = [math]::Max(0, [math]::Min(100, (($CompletedDrives + $driveFraction) / $TotalDrives) * 100))
+        $filled = [math]::Min($barWidth, [math]::Floor($overallPercent * $barWidth / 100))
+        $bar = (([string][char]0x2588) * $filled) + (([string][char]0x2591) * ($barWidth - $filled))
+        $percentText = ('{0,3:N0}%' -f $overallPercent)
+    }
+    else {
+        $bar = (([string][char]0x2591) * $barWidth)
+        $percentText = '扫描中'
+    }
+
+    $prefix = '[{0}] {1} {2} | 文件 {3} | 目录 {4} | {5:N1} 秒 | ' -f $bar, $percentText, $Progress.drive,
+        [int64]$Progress.filesProcessed, [int64]$Progress.directoriesProcessed, ([double]$Progress.elapsedMilliseconds / 1000)
+    $path = [string]$Progress.currentPath
+    $available = [math]::Max(0, 130 - $prefix.Length)
+    if ($path.Length -gt $available) {
+        if ($available -gt 1) { $path = ([string][char]0x2026) + $path.Substring($path.Length - ($available - 1)) }
+        else { $path = '' }
+    }
+    return $prefix + $path
+}
+
 function Invoke-DiskPulse {
 $paths = Get-DiskPulsePaths
 Ensure-Directory $paths.Runtime
@@ -373,6 +657,16 @@ $legacyFile = Copy-LegacyHistory $paths
 $scanId = New-ScanId
 $owner = Acquire-DiskPulseLock $paths $scanId
 $startedAt = (Get-Date).ToUniversalTime().ToString("o")
+$runStopwatch = [Diagnostics.Stopwatch]::StartNew()
+$scanStage = "初始化"
+$consoleProgressState = @{ LastLength = 0; Active = $false; LastRenderedMilliseconds = -1 }
+$clearConsoleProgress = {
+    if ($consoleProgressState.Active) {
+        Write-Host ("`r" + (' ' * $consoleProgressState.LastLength) + "`r") -NoNewline
+        $consoleProgressState.Active = $false
+        $consoleProgressState.LastLength = 0
+    }
+}
 Write-ScanEvent $paths ([PSCustomObject]@{ scanId = $scanId; status = "running"; startedAt = $startedAt })
 
 try {
@@ -519,9 +813,23 @@ foreach ($d in $drives) {
 
 $priorSnapshots = Read-Snapshots $paths
 $snapshotDrives = New-Object 'Collections.Generic.List[object]'
+$completedDrives = 0
+$totalDrives = @($drives).Count
 foreach ($d in $drives) {
+    $scanStage = "扫描磁盘 $($d.DeviceID)"
     $capacity = $currentResults | Where-Object { $_.id -eq ($d.DeviceID -replace '\\','') } | Select-Object -First 1
-    $scan = Invoke-DirectoryScan -Drive $d.DeviceID -RootPath ($d.DeviceID + '\')
+    $consoleProgress = {
+        param($progress)
+        if (-not (Should-RenderConsoleProgress -Progress $progress -State $consoleProgressState)) { return }
+        $line = Format-ScanProgressLine -Progress $progress -CompletedDrives $completedDrives -TotalDrives $totalDrives
+        $width = [math]::Max($line.Length, $consoleProgressState.LastLength)
+        Write-Host ("`r" + $line.PadRight($width)) -NoNewline
+        $consoleProgressState.LastLength = $line.Length
+        $consoleProgressState.Active = $true
+    }
+    $scan = Invoke-DirectoryScan -Drive $d.DeviceID -RootPath ($d.DeviceID + '\') -ProgressCallback $consoleProgress
+    $completedDrives++
+    $consoleProgressState.LastRenderedMilliseconds = -1
     $priorComplete = $priorSnapshots | Where-Object { @($_.drives | Where-Object { $_.drive -eq $d.DeviceID -and $_.status -in @('baseline','complete') }).Count } | Select-Object -First 1
     if ($scan.status -eq 'complete' -and -not $priorComplete) { $scan.status = 'baseline' }
     $scan | Add-Member totalBytes ([int64]$d.Size)
@@ -1531,6 +1839,7 @@ $html = $html.Replace('INJECT_TS', $timestamp)
 
 $utf8NoBom = New-Object System.Text.UTF8Encoding $false
 [System.IO.File]::WriteAllText($htmlFile, $html, $utf8NoBom)
+$scanStage = "生成报告"
 
 if ($env:DISKPULSE_NO_OPEN -ne "1") {
     try {
@@ -1547,8 +1856,20 @@ Write-ScanEvent $paths ([PSCustomObject]@{
     startedAt = $startedAt
     completedAt = (Get-Date).ToUniversalTime().ToString("o")
 })
+$runStopwatch.Stop()
+& $clearConsoleProgress
+Write-Host ("扫描完成：{0:N1} 秒" -f $runStopwatch.Elapsed.TotalSeconds)
+Write-Host "报告位置：$htmlFile"
+foreach ($driveResult in $snapshot.drives) {
+    Write-Host ("{0} 无法访问 {1} 个路径，主动排除 {2} 个路径" -f $driveResult.drive, @($driveResult.unavailable).Count, @($driveResult.excluded).Count)
+}
 }
 catch {
+$runStopwatch.Stop()
+& $clearConsoleProgress
+Write-Host "扫描失败：$scanStage" -ForegroundColor Red
+Write-Host ("已用时间：{0:N1} 秒" -f $runStopwatch.Elapsed.TotalSeconds)
+Write-Host "错误：$($_.Exception.Message)" -ForegroundColor Red
     Write-ScanEvent $paths ([PSCustomObject]@{
         scanId = $scanId
         status = "failed"
@@ -1559,6 +1880,7 @@ catch {
     throw
 }
 finally {
+    & $clearConsoleProgress
     Release-DiskPulseLock $paths $owner
 }
 }
