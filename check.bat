@@ -1286,6 +1286,7 @@ function Invoke-DiskPulseAIRequest {
                 @{ role = 'user';   content = [string]$Prompt.user }
             )
             temperature = 0.2
+            max_tokens = 2048
         }
         $bodyJson = ConvertTo-Json -InputObject $bodyObj -Depth 8 -Compress
         $bodyBytes = [Text.Encoding]::UTF8.GetBytes($bodyJson)
@@ -1300,7 +1301,9 @@ function Invoke-DiskPulseAIRequest {
             $response = & $Transport $uri $headers $bodyBytes $timeout
         }
         else {
-            $response = Invoke-RestMethod -Uri $uri -Method Post -Headers $headers -Body $bodyBytes -ContentType 'application/json; charset=utf-8' -TimeoutSec $timeout
+            $webResponse = Invoke-WebRequest -Uri $uri -Method Post -Headers $headers -Body $bodyBytes -ContentType 'application/json; charset=utf-8' -TimeoutSec $timeout -UseBasicParsing
+            $rawContent = [System.Text.Encoding]::UTF8.GetString($webResponse.RawContentStream.ToArray())
+            $response = $rawContent | ConvertFrom-Json
         }
         return [PSCustomObject]@{ ok = $true; response = $response }
     }
@@ -1750,15 +1753,7 @@ Profile-Mark "historyCenter"
 Invoke-SnapshotRetention $paths (@($priorSnapshots)+@($snapshot)) @($snapshot.drives.drive) $scanId
 Profile-Mark "snapshotRetention"
 
-$aiAnalysisResult = $null
-try {
-    $aiOutputPath = Join-Path $paths.Runtime 'last-ai-analysis.json'
-    $aiAnalysisResult = Invoke-DiskPulseAIAnalysis -ScanId $scanId -DirectoryResults $directoryResults -HistoryCenter $historyCenter -Snapshot $snapshot -OutputPath $aiOutputPath
-}
-catch {
-    $aiAnalysisResult = [PSCustomObject]@{ status = 'unknown-error'; format = 'none'; analysis = $null; rawText = $null; model = '' }
-}
-Profile-Mark "aiAnalysis"
+$aiAnalysisResult = [PSCustomObject]@{ status = 'analyzing'; format = 'none'; analysis = $null; rawText = $null; model = ''; scanId = $scanId; generatedAt = ''; error = $null }
 
 $historyRows = [System.Collections.Generic.List[PSObject]](($historyRows |
     Sort-Object Timestamp -Descending |
@@ -2764,6 +2759,7 @@ function renderAIAnalysis() {
   if (!root) return;
   root.replaceChildren();
   const statusMap = {
+    "analyzing": "AI 分析中，请稍候...",
     "disabled": "AI 分析未启用",
     "not-configured": "尚未配置 AI",
     "baseline-required": "当前正在建立首次比较基线",
@@ -2777,6 +2773,11 @@ function renderAIAnalysis() {
     "unknown-error": "AI 分析失败"
   };
   const st = AI_ANALYSIS.status || "unknown-error";
+  if (st === "analyzing") {
+    root.appendChild(element("div", "ai-status", "⏳ " + statusMap["analyzing"]));
+    setTimeout(() => { location.reload(); }, 5000);
+    return;
+  }
   if (st === "success") {
     if (AI_ANALYSIS.format === "structured" && AI_ANALYSIS.analysis) {
       const a = AI_ANALYSIS.analysis;
@@ -3652,6 +3653,24 @@ if ($env:DISKPULSE_NO_OPEN -ne "1") {
     }
 }
 Profile-Mark "browserOpen"
+
+$aiOutputPath = Join-Path $paths.Runtime 'last-ai-analysis.json'
+try {
+    $aiAnalysisResult = Invoke-DiskPulseAIAnalysis -ScanId $scanId -DirectoryResults $directoryResults -HistoryCenter $historyCenter -Snapshot $snapshot -OutputPath $aiOutputPath
+}
+catch {
+    $aiAnalysisResult = [PSCustomObject]@{ status = 'unknown-error'; format = 'none'; analysis = $null; rawText = $null; model = ''; scanId = $scanId; generatedAt = (Get-Date).ToUniversalTime().ToString('o'); error = $null }
+}
+
+if ($aiAnalysisResult.status -ne 'analyzing') {
+    try {
+        $aiJsonNew = ConvertTo-DiskPulseSafeJSON $aiAnalysisResult
+        $html = [regex]::Replace($html, 'AI_ANALYSIS\s*=\s*\{[^;]*\}', 'AI_ANALYSIS = ' + $aiJsonNew)
+        [System.IO.File]::WriteAllText($htmlFile, $html, (New-Object System.Text.UTF8Encoding $false))
+    }
+    catch {}
+}
+Profile-Mark "aiAnalysis"
 
 Write-ScanEvent $paths ([PSCustomObject]@{
     scanId = $scanId

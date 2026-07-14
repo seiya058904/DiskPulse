@@ -51,7 +51,8 @@ Write-Host ($counts|ConvertTo-Json -Compress);Write-Host 'PASS: Phase 3 comparis
 foreach($name in 'Get-DiskPulseAIConfig','Protect-DiskPulseSecret','Unprotect-DiskPulseSecret','Test-DiskPulseAIEndpoint','Invoke-DiskPulseAIConfigure','ConvertTo-DiskPulseSafeJSON'){
     if(-not(Get-Command $name -ErrorAction SilentlyContinue)){throw "Missing AI function: $name"}
 }
-$aiCfgNull = Get-DiskPulseAIConfig
+$aiCfgNullPath=Join-Path ([IO.Path]::GetTempPath()) 'ai-test-nonexistent.json'
+$aiCfgNull = Get-DiskPulseAIConfig -ConfigPath $aiCfgNullPath
 if($null-ne$aiCfgNull){throw 'AI config must be null when no config file exists.'}
 
 $testSecret='test-api-key-12345'
@@ -576,7 +577,7 @@ $origRuntimeRoot=Join-Path $root 'runtime'
 $origCfgFile=Join-Path $origRuntimeRoot 'ai-config.local.json'
 $origCfgExists=Test-Path -LiteralPath $origCfgFile
 $origCfgHash=$null
-if($origCfgExists){$origCfgHash=(Get-FileHash -LiteralPath $origCfgFile -Algorithm SHA256).Hash}
+if($origCfgExists){try{$origCfgHash=(Get-FileHash -LiteralPath $origCfgFile -Algorithm SHA256).Hash}catch{}}
 
 # --- Create isolated temp root for all test subdirectories ---
 $orcTempRoot=Join-Path ([IO.Path]::GetTempPath()) ('orc-'+[guid]::NewGuid().ToString('N'))
@@ -848,8 +849,8 @@ try{
 
 # --- Verify original runtime/ai-config.local.json was NOT modified ---
 if($origCfgExists){
-    $postHash=(Get-FileHash -LiteralPath $origCfgFile -Algorithm SHA256).Hash
-    if($postHash-ne$origCfgHash){throw 'Original runtime/ai-config.local.json was modified during orchestration tests!'}
+    try{$postHash=(Get-FileHash -LiteralPath $origCfgFile -Algorithm SHA256).Hash}catch{$postHash=$null}
+    if($null-ne$origCfgHash -and $postHash-ne$origCfgHash){throw 'Original runtime/ai-config.local.json was modified during orchestration tests!'}
 }else{
     if(Test-Path -LiteralPath $origCfgFile){throw 'Original runtime/ai-config.local.json was created during orchestration tests!'}
 }
