@@ -165,7 +165,7 @@ try {
 
     $scriptMatch = [regex]::Match($source, '(?s)<script>(?<script>.*?)</script>')
     if (-not $scriptMatch.Success) { throw 'Embedded JavaScript was not found.' }
-    $script = $scriptMatch.Groups['script'].Value.Replace('INJECT_HISTORY_CENTER','[]').Replace('INJECT_SYSTEM_DRIVE','"C:"').Replace('INJECT_DATA','[]').Replace('INJECT_HISTORY','[]').Replace('INJECT_DIRECTORY','[]').Replace('INJECT_SCAN_META','{}').Replace('INJECT_TS_JSON','"test"')
+    $script = $scriptMatch.Groups['script'].Value.Replace('INJECT_HISTORY_CENTER','[]').Replace('INJECT_SYSTEM_DRIVE','"C:"').Replace('INJECT_DATA','[]').Replace('INJECT_HISTORY','[]').Replace('INJECT_DIRECTORY','[]').Replace('INJECT_SCAN_META','{}').Replace('INJECT_TS_JSON','"test"').Replace('INJECT_AI_ANALYSIS','{}')
     if ($script -match 'INJECT_[A-Z_]+') { throw "Unresolved dashboard placeholder: $($Matches[0])" }
     $scriptFile = Join-Path $temp 'dashboard.js'
     [IO.File]::WriteAllText($scriptFile, $script, [Text.UTF8Encoding]::new($false))
@@ -198,4 +198,213 @@ if ([regex]::Matches($source,'(?m)^\s*:root\s*\{').Count -ne 1) { throw 'Design 
 foreach ($forbidden in @('SMART','性能衰退','健康指标','实时监控')) {
     if ($readme -match [regex]::Escape($forbidden)) { throw "README contains unverified claim: $forbidden" }
 }
-Write-Host 'PASS: visual hierarchy, state behavior, and embedded JavaScript.'
+# === Phase 4: AI Analysis HTML/JS Tests ===
+
+# INJECT_AI_ANALYSIS marker
+if ($source -notmatch [regex]::Escape('INJECT_AI_ANALYSIS')) { throw 'Missing INJECT_AI_ANALYSIS placeholder.' }
+if ($source -notmatch [regex]::Escape('INJECT_(?:AI_ANALYSIS|HISTORY_CENTER')) { throw 'AI_ANALYSIS must be in placeholder pattern.' }
+
+# AI section markers
+foreach ($marker in @('id="ai-analysis"','ai-analysis-content','ai-analysis-note','AI 变化解释','renderAIAnalysis')) {
+    if ($source -notmatch [regex]::Escape($marker)) { throw "Missing AI section marker: $marker" }
+}
+
+# Navigation link
+if ($source -notmatch 'href="#ai-analysis"') { throw 'Missing AI analysis nav link.' }
+
+# scroll-margin-top
+if ($source -notmatch '#ai-analysis.*scroll-margin') { throw 'AI section must have scroll-margin-top.' }
+
+# No innerHTML in AI rendering
+$aiRenderMatch = [regex]::Match($source, '(?s)function renderAIAnalysis\(\)\s*\{(.*?)\nfunction ')
+if ($aiRenderMatch.Success) {
+    if ($aiRenderMatch.Groups[1].Value -match 'innerHTML') { throw 'renderAIAnalysis must not use innerHTML.' }
+    if ($aiRenderMatch.Groups[1].Value -match 'insertAdjacentHTML') { throw 'renderAIAnalysis must not use insertAdjacentHTML.' }
+}
+
+# INJECT_AI_ANALYSIS in unresolved check
+$unresolvedScript = $scriptMatch.Groups['script'].Value.Replace('INJECT_HISTORY_CENTER','[]').Replace('INJECT_SYSTEM_DRIVE','"C:"').Replace('INJECT_DATA','[]').Replace('INJECT_HISTORY','[]').Replace('INJECT_DIRECTORY','[]').Replace('INJECT_SCAN_META','{}').Replace('INJECT_TS_JSON','"test"').Replace('INJECT_AI_ANALYSIS','{}')
+if ($unresolvedScript -match 'INJECT_[A-Z_]+') { throw "Unresolved placeholder: $($Matches[0])" }
+
+Write-Host 'PASS: visual hierarchy, state behavior, embedded JavaScript, and AI section markers.'
+
+# === AI Rendering and XSS Tests ===
+$aiFnMatch = [regex]::Match($source, '(?s)const \$\s*=\s*\(id\)\s*=>\s*document\.getElementById\(id\);.*?function renderAIAnalysis\(\)\s*\{.*?\n\}')
+if (-not $aiFnMatch.Success) { throw 'Failed to extract AI rendering functions from check.bat.' }
+
+$aiTestCode = @'
+var assert = require("node:assert/strict");
+
+// --- Minimal DOM stub ---
+var allElements = [];
+var elementsById = {};
+
+function createNode(tag) {
+  var children = [];
+  return {
+    tag: tag,
+    className: "",
+    textContent: "",
+    _children: children,
+    appendChild: function(child) { children.push(child); return child; },
+    replaceChildren: function() { children.length = 0; }
+  };
+}
+
+var document = {
+  getElementById: function(id) {
+    if (!elementsById[id]) elementsById[id] = createNode("div");
+    return elementsById[id];
+  },
+  createElement: function(tag) {
+    var node = createNode(tag);
+    allElements.push(node);
+    return node;
+  }
+};
+
+function formatLocalDate(d) { return "stub-date"; }
+
+var AI_ANALYSIS = {};
+
+// --- Extracted functions ($, element, renderAIAnalysis) are prepended above ---
+
+function collectText(node) {
+  var text = "";
+  if (node.textContent) text += node.textContent;
+  var ch = node._children || [];
+  for (var i = 0; i < ch.length; i++) {
+    text += " " + collectText(ch[i]);
+  }
+  return text.trim();
+}
+
+function getRoot() {
+  return document.getElementById("ai-analysis-content");
+}
+
+function hasTag(tagName) {
+  for (var i = 0; i < allElements.length; i++) {
+    if (allElements[i].tag === tagName) return true;
+  }
+  return false;
+}
+
+// --- Functional test fixtures ---
+var fixtures = [
+  ["structured success",
+   {status:"success", format:"structured", analysis:{summary:"Test summary", possibleCauses:["Cause 1","Cause 2"], confidence:"high", evidence:["Evidence"], recommendations:["Rec"], cautions:["Cautions"]}, model:"test-model", generatedAt:"2026-07-14T10:30:00Z"},
+   ["Test summary", "Cause 1", "Cause 2", "Evidence", "Rec", "Cautions", "高", "test-model"]],
+  ["text fallback",
+   {status:"success", format:"text", rawText:"Plain text analysis result"},
+   ["AI 返回了非结构化内容", "Plain text analysis result"]],
+  ["disabled",
+   {status:"disabled"},
+   ["AI 分析未启用"]],
+  ["not-configured",
+   {status:"not-configured"},
+   ["尚未配置 AI"]],
+  ["baseline-required",
+   {status:"baseline-required"},
+   ["当前正在建立首次比较基线"]],
+  ["no-reliable-changes",
+   {status:"no-reliable-changes"},
+   ["本次没有可靠变化"]],
+  ["configuration-error",
+   {status:"configuration-error"},
+   ["AI 配置有误"]],
+  ["timeout",
+   {status:"timeout"},
+   ["AI 请求超时"]],
+  ["authentication-failed",
+   {status:"authentication-failed"},
+   ["API Key"]],
+  ["rate-limited",
+   {status:"rate-limited"},
+   ["额度或频率受限"]],
+  ["connection-failed",
+   {status:"connection-failed"},
+   ["无法连接 AI"]],
+  ["invalid-response",
+   {status:"invalid-response"},
+   ["格式无法识别"]],
+  ["unknown-error",
+   {status:"unknown-error"},
+   ["AI 分析失败"]],
+  ["unknown status",
+   {status:"something-unknown"},
+   ["AI 分析失败"]],
+  ["empty arrays",
+   {status:"success", format:"structured", analysis:{summary:"S", possibleCauses:[], confidence:"low", evidence:[], recommendations:[], cautions:[]}},
+   ["S", "低"]],
+  ["unknown confidence",
+   {status:"success", format:"structured", analysis:{summary:"S", possibleCauses:[], confidence:"unknown-value", evidence:[], recommendations:[], cautions:[]}},
+   ["S", "低"]]
+];
+
+for (var f = 0; f < fixtures.length; f++) {
+  var name = fixtures[f][0];
+  var input = fixtures[f][1];
+  var expected = fixtures[f][2];
+  allElements.length = 0;
+  AI_ANALYSIS = input;
+  try {
+    renderAIAnalysis();
+  } catch (e) {
+    assert.fail("Fixture \"" + name + "\" threw: " + e.message);
+  }
+  var root = getRoot();
+  var text = collectText(root);
+  for (var i = 0; i < expected.length; i++) {
+    assert.ok(text.indexOf(expected[i]) !== -1, "\"" + name + "\" should contain \"" + expected[i] + "\" in \"" + text + "\"");
+  }
+}
+
+// --- XSS tests ---
+var xssPayloads = [
+  '</script><script>alert(1)</script>',
+  '<img src=x onerror=alert(1)>',
+  'javascript:alert(1)'
+];
+
+var xssFixtures = [
+  ["xss in summary",
+   {status:"success", format:"structured", analysis:{summary:xssPayloads[0], possibleCauses:[xssPayloads[1]], confidence:"high", evidence:[], recommendations:[], cautions:[]}, model:"test", generatedAt:"2026-07-14T10:30:00Z"}],
+  ["xss in rawText",
+   {status:"success", format:"text", rawText:xssPayloads[2]}],
+  ["xss in all fields",
+   {status:"success", format:"structured", analysis:{summary:xssPayloads[0], possibleCauses:[xssPayloads[1]], confidence:"medium", evidence:[xssPayloads[2]], recommendations:[xssPayloads[0]], cautions:[xssPayloads[1]]}, model:"xss", generatedAt:"2026-07-14T10:30:00Z"}]
+];
+
+for (var f = 0; f < xssFixtures.length; f++) {
+  var name = xssFixtures[f][0];
+  var input = xssFixtures[f][1];
+  allElements.length = 0;
+  AI_ANALYSIS = input;
+  try {
+    renderAIAnalysis();
+  } catch (e) {
+    assert.fail("XSS fixture \"" + name + "\" threw: " + e.message);
+  }
+  assert.ok(!hasTag("script"), "\"" + name + "\" must not create <script> elements");
+  assert.ok(!hasTag("img"), "\"" + name + "\" must not create <img> elements");
+  assert.ok(!hasTag("a"), "\"" + name + "\" must not create <a> elements");
+}
+
+console.log("PASS: AI rendering fixture (Node.js).");
+'@
+
+$aiTemp = Join-Path ([IO.Path]::GetTempPath()) ('DiskPulse-AI-Test-' + [guid]::NewGuid().ToString('N'))
+[IO.Directory]::CreateDirectory($aiTemp) | Out-Null
+try {
+    $aiTestFile = Join-Path $aiTemp 'ai-render-test.js'
+    [IO.File]::WriteAllText($aiTestFile, $aiFnMatch.Value + [Environment]::NewLine + $aiTestCode, [Text.UTF8Encoding]::new($false))
+    & node $aiTestFile
+    if ($LASTEXITCODE -ne 0) { throw 'AI render test failed.' }
+}
+finally {
+    Get-ChildItem -LiteralPath $aiTemp -File | ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force }
+    Remove-Item -LiteralPath $aiTemp
+}
+
+Write-Host 'PASS: AI rendering and XSS tests.'

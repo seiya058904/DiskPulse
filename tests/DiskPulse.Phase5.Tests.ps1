@@ -112,7 +112,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'History center behavior fixture failed.' }
 
     $scriptMatch = [regex]::Match($source, '(?s)<script>(?<script>.*?)</script>')
-    $script = $scriptMatch.Groups['script'].Value.Replace('INJECT_HISTORY_CENTER','[]').Replace('INJECT_SYSTEM_DRIVE','"C:"').Replace('INJECT_DATA','[]').Replace('INJECT_HISTORY','[]').Replace('INJECT_DIRECTORY','[]').Replace('INJECT_SCAN_META','{}').Replace('INJECT_TS_JSON','"test"')
+    $script = $scriptMatch.Groups['script'].Value.Replace('INJECT_HISTORY_CENTER','[]').Replace('INJECT_SYSTEM_DRIVE','"C:"').Replace('INJECT_DATA','[]').Replace('INJECT_HISTORY','[]').Replace('INJECT_DIRECTORY','[]').Replace('INJECT_SCAN_META','{}').Replace('INJECT_TS_JSON','"test"').Replace('INJECT_AI_ANALYSIS','{}')
     if ($script -match 'INJECT_[A-Z_]+') { throw "Unresolved dashboard placeholder: $($Matches[0])" }
     $scriptFile = Join-Path $temp 'dashboard.js'
     [IO.File]::WriteAllText($scriptFile, $script, [Text.UTF8Encoding]::new($false))

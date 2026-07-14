@@ -11,7 +11,8 @@ DiskPulse is a zero-dependency Windows disk storage monitor. A single polyglot B
 - `check.bat` — the entire backend (polyglot: BAT preamble invokes PowerShell). All CSS/JS/HTML is embedded as a here-string template.
 - `DiskPulse.vbs` — silent launcher (hidden window, error dialog on failure)
 - `check-profile.bat` — performance diagnostics launcher (generates `runtime/last-profile.json`)
-- `runtime/` — all generated data: `DiskPulse.csv`, `DiskPulse.html`, `snapshots/`, `scans.jsonl`, `last-run.log`, `last-profile.json`
+- `configure-ai.bat` — interactive AI configuration entry point (calls check.bat with DISKPULSE_AI_CONFIGURE=1)
+- `runtime/` — all generated data: `DiskPulse.csv`, `DiskPulse.html`, `snapshots/`, `scans.jsonl`, `last-run.log`, `last-profile.json`, `ai-config.local.json`, `last-ai-analysis.json`
 
 ## How to Run
 
@@ -25,6 +26,9 @@ check.bat
 # Performance profiling (generates runtime/last-profile.json)
 check-profile.bat
 # or: set DISKPULSE_PROFILE=1 && check.bat
+
+# AI configuration (interactive menu)
+configure-ai.bat
 ```
 
 No build step. Requires Windows with PowerShell 5.1+.
@@ -41,6 +45,13 @@ powershell.exe -NoProfile -File "tests\DiskPulse.Phase5.Tests.ps1"
 powershell.exe -NoProfile -File "tests\DiskPulse.Scanner.Tests.ps1"
 ```
 
+Also run with PowerShell 7 (pwsh) to verify cross-version compatibility:
+
+```powershell
+pwsh -NoProfile -File "tests\DiskPulse.Phase3.Tests.ps1"
+pwsh -NoProfile -File "tests\DiskPulse.Phase4.Tests.ps1"
+```
+
 All 5 must pass before committing. Phase4/5 extract embedded JavaScript from `check.bat` and run it through Node.js for fixture validation.
 
 ## Architecture
@@ -53,13 +64,14 @@ The PowerShell code in `check.bat` follows a linear pipeline:
 4. **Scan directories** — per-drive via `[DiskPulseFastScanner]::Scan()`, producing records for root files, level-1 and level-2 directories
 5. **Compare with baseline** — `Compare-DriveRecords` detects created/changed/removed directories
 6. **Build history comparison center** — `New-HistoryComparisonCenter` (optimized with pre-built indexes for trend aggregation)
-7. **Persist** — trim history, write CSV, write snapshot JSON
-8. **Generate HTML** — here-string template with `INJECT_*` placeholders replaced via regex
-9. **Open browser** — `Start-Process` (skipped when `DISKPULSE_NO_OPEN=1`)
+7. **AI analysis (optional)** — `Invoke-DiskPulseAIAnalysis` (only when configured and enabled)
+8. **Persist** — trim history, write CSV, write snapshot JSON
+9. **Generate HTML** — here-string template with `INJECT_*` placeholders replaced via regex
+10. **Open browser** — `Start-Process` (skipped when `DISKPULSE_NO_OPEN=1`)
 
 ### HTML Template
 
-The here-string uses single-quoted `@'...'@` so PowerShell does not interpolate `$` or backticks. The closing delimiter `'@` must appear at the start of a line. Placeholders (`INJECT_DATA`, `INJECT_HISTORY`, `INJECT_DIRECTORY`, `INJECT_HISTORY_CENTER`, `INJECT_SCAN_META`, `INJECT_TS_JSON`, `INJECT_SYSTEM_DRIVE`) are replaced via one-pass regex substitution.
+The here-string uses single-quoted `@'...'@` so PowerShell does not interpolate `$` or backticks. The closing delimiter `'@` must appear at the start of a line. Placeholders (`INJECT_DATA`, `INJECT_HISTORY`, `INJECT_DIRECTORY`, `INJECT_HISTORY_CENTER`, `INJECT_SCAN_META`, `INJECT_TS_JSON`, `INJECT_SYSTEM_DRIVE`, `INJECT_AI_ANALYSIS`) are replaced via one-pass regex substitution.
 
 ### Key Functions in check.bat
 
@@ -68,13 +80,30 @@ The here-string uses single-quoted `@'...'@` so PowerShell does not interpolate 
 - `New-HistoryComparisonCenter` — builds trend analysis across all snapshots (heavily indexed for performance)
 - `Get-DirectoryTrendClassification` — labels trend as 持续增长/持续释放/波动较大/本次突增/首次出现/数据不足
 
+### AI Functions (Optional Feature)
+
+AI functions are defined in a clearly marked section after the existing helpers:
+
+- `Get-DiskPulseAIConfig` — reads `runtime/ai-config.local.json` (optional ConfigPath parameter for testing)
+- `Protect-DiskPulseSecret` / `Unprotect-DiskPulseSecret` — DPAPI encrypt/decrypt for API Key
+- `Test-DiskPulseAIEndpoint` — validates endpoint URL (HTTPS or local HTTP)
+- `ConvertTo-DiskPulseRedactedPath` — sanitizes user profile paths
+- `New-DiskPulseAIInput` — constructs AI input from scan results
+- `New-DiskPulseAIPrompt` — builds system/user messages
+- `Invoke-DiskPulseAIRequest` — HTTP call with injectable Transport scriptblock for testing
+- `ConvertFrom-DiskPulseAIResponse` — parses structured JSON or plain text responses
+- `New-DiskPulseAIStatus` / `Write-DiskPulseAIResult` — unified result object and file I/O
+- `Invoke-DiskPulseAIAnalysis` — orchestration: checks conditions, calls request, saves result
+- `Invoke-DiskPulseAIConfigure` — interactive configuration menu (called via configure-ai.bat)
+- `ConvertTo-DiskPulseSafeJSON` — escapes AI content for safe injection into `<script>` context
+
 ### Silent Mode
 
 When `DISKPULSE_SILENT=1`, all `Write-Host` and progress callbacks are suppressed. Errors are written to `runtime/last-run.log`. Balloon notifications for critical disks are preserved.
 
 ### Profiling
 
-When `DISKPULSE_PROFILE=1`, phase timing is recorded via `Profile-Mark` calls and written to `runtime/last-profile.json`. Key phases: `init`, `addType`, `readHistory`, `diskQuery`, `readSnapshots`, `scan:<drive>`, `history:aggregateTrends:<drive>`, `htmlReplace`, `htmlWrite`.
+When `DISKPULSE_PROFILE=1`, phase timing is recorded via `Profile-Mark` calls and written to `runtime/last-profile.json`. Key phases: `init`, `addType`, `readHistory`, `diskQuery`, `readSnapshots`, `scan:<drive>`, `history:aggregateTrends:<drive>`, `aiAnalysis`, `htmlReplace`, `htmlWrite`.
 
 ## Key Constants
 
@@ -86,6 +115,11 @@ When `DISKPULSE_PROFILE=1`, phase timing is recorded via `Profile-Mark` calls an
 
 - Single-file architecture: all code in `check.bat`
 - Zero runtime dependencies
-- No external network requests
+- No external network requests by default; AI is opt-in
 - Do not use `innerHTML` — all DOM updates via `element()` helper or `textContent`
 - The here-string closing delimiter `'@` must not appear as the first character of any line in the template body
+- AI content injected into HTML must use `ConvertTo-DiskPulseSafeJSON` for script-context safety
+- API Key must never appear in HTML, logs, snapshots, or test output
+- Tests must never make real network requests or call real AI APIs
+- All AI test fixtures use offline Transport scriptblocks
+- PowerShell 5.1 compatible: no `??` operator, no `[string]::Take`, no PS7-only syntax
