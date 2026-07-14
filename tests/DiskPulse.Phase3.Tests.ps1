@@ -139,12 +139,17 @@ try{
     # Case insensitive
     $r=ConvertTo-DiskPulseRedactedPath 'c:\users\admin\Documents'
     if($r-ne'%USERPROFILE%\Documents'){throw "Case insensitive must match, got: $r"}
-    # admin-old must NOT be replaced
-    $r=ConvertTo-DiskPulseRedactedPath 'C:\Users\admin-old\stuff'
-    if($r-ne'C:\Users\admin-old\stuff'){throw "admin-old must not be replaced, got: $r"}
-    # administrator must NOT be replaced
+    # Other user → %OTHER_USERPROFILE%
+    $r=ConvertTo-DiskPulseRedactedPath 'C:\Users\Alice\AppData'
+    if($r-ne'%OTHER_USERPROFILE%\AppData'){throw "Other user must be redacted, got: $r"}
     $r=ConvertTo-DiskPulseRedactedPath 'C:\Users\administrator\stuff'
-    if($r-ne'C:\Users\administrator\stuff'){throw "administrator must not be replaced, got: $r"}
+    if($r-ne'%OTHER_USERPROFILE%\stuff'){throw "administrator must be OTHER_USERPROFILE, got: $r"}
+    # Public → %PUBLICPROFILE%
+    $r=ConvertTo-DiskPulseRedactedPath 'C:\Users\Public\Documents'
+    if($r-ne'%PUBLICPROFILE%\Documents'){throw "Public must be PUBLICPROFILE, got: $r"}
+    # Default → %DEFAULTPROFILE%
+    $r=ConvertTo-DiskPulseRedactedPath 'C:\Users\Default\AppData'
+    if($r-ne'%DEFAULTPROFILE%\AppData'){throw "Default must be DEFAULTPROFILE, got: $r"}
     # Non-user path unchanged
     $r=ConvertTo-DiskPulseRedactedPath 'C:\Windows\System32'
     if($r-ne'C:\Windows\System32'){throw "Non-user path must not change, got: $r"}
@@ -580,7 +585,21 @@ try{
         return @{dir=$d;cfgPath=$cp;outPath=Join-Path $d 'result.json'}
     }
 
-    # ========== SKIP STATES (Transport NOT called, call count = 0) ==========
+    # ========== ALL STATES write result file (verify scanId, generatedAt, no secrets) ==========
+
+    # Helper: verify result file for any state
+    function Verify-ResultFile($td, $expectedStatus, $scanId) {
+        if(-not(Test-Path -LiteralPath $td.outPath)){throw "${expectedStatus}: output must exist"}
+        $sv=Get-Content -Raw -LiteralPath $td.outPath -Encoding UTF8
+        $saved=$sv|ConvertFrom-Json
+        if($saved.status-ne$expectedStatus){throw "${expectedStatus}: saved status mismatch, got '$($saved.status)'"}
+        if($saved.scanId-ne$scanId){throw "${expectedStatus}: scanId must match, got '$($saved.scanId)'"}
+        if(-not $saved.generatedAt){throw "${expectedStatus}: generatedAt must exist"}
+        if($sv-match'api\.example\.com'){throw "${expectedStatus}: saved JSON must not contain endpoint"}
+        if($sv-match'test-key'){throw "${expectedStatus}: saved JSON must not contain API key"}
+        if($sv-match'Bearer'){throw "${expectedStatus}: saved JSON must not contain Bearer"}
+        if($sv-match'WebException'){throw "${expectedStatus}: saved JSON must not contain exception text"}
+    }
 
     # 1. disabled: enabled=false in config
     $td=New-TD 'disabled' (@{schemaVersion=1;enabled=$false;endpoint='https://api.example.com/v1';model='test-model'})
@@ -589,7 +608,7 @@ try{
     if($r.status-ne'disabled'){throw "disabled: expected 'disabled', got '$($r.status)'"}
     if($r.format-ne'none'){throw "disabled: format must be 'none'"}
     if($script:tc-ne 0){throw "disabled: transport called $($script:tc) times, expected 0"}
-    if(Test-Path -LiteralPath $td.outPath){throw "disabled: output must not exist"}
+    Verify-ResultFile $td 'disabled' 's1'
 
     # 2. not-configured: config file doesn't exist
     $td=New-TD 'not-configured' $null
@@ -598,15 +617,15 @@ try{
     $r=Invoke-DiskPulseAIAnalysis -ScanId 's2' -DirectoryResults $orcDir -HistoryCenter @() -Snapshot $orcSnap -ConfigPath $ncCfg -OutputPath $td.outPath -Transport $st
     if($r.status-ne'not-configured'){throw "not-configured: expected 'not-configured', got '$($r.status)'"}
     if($script:tc-ne 0){throw "not-configured: transport called $($script:tc) times, expected 0"}
-    if(Test-Path -LiteralPath $td.outPath){throw "not-configured: output must not exist"}
+    Verify-ResultFile $td 'not-configured' 's2'
 
-    # 3. configuration-error: endpoint invalid (http non-localhost)
+    # 3. configuration-error: endpoint invalid
     $td=New-TD 'cfg-err-ep' (@{schemaVersion=1;enabled=$true;endpoint='http://invalid.example.com';model='test-model';protectedApiKey=$validKey;timeoutSeconds=10})
     $script:tc=0
     $r=Invoke-DiskPulseAIAnalysis -ScanId 's3' -DirectoryResults $orcDir -HistoryCenter @() -Snapshot $orcSnap -ConfigPath $td.cfgPath -OutputPath $td.outPath -Transport $st
     if($r.status-ne'configuration-error'){throw "cfg-err-ep: expected 'configuration-error', got '$($r.status)'"}
     if($script:tc-ne 0){throw "cfg-err-ep: transport called $($script:tc) times, expected 0"}
-    if(Test-Path -LiteralPath $td.outPath){throw "cfg-err-ep: output must not exist"}
+    Verify-ResultFile $td 'configuration-error' 's3'
 
     # 4. configuration-error: remote empty key
     $td=New-TD 'cfg-err-key' (@{schemaVersion=1;enabled=$true;endpoint='https://api.example.com/v1/chat/completions';model='test-model';protectedApiKey='';timeoutSeconds=10})
@@ -614,40 +633,40 @@ try{
     $r=Invoke-DiskPulseAIAnalysis -ScanId 's4' -DirectoryResults $orcDir -HistoryCenter @() -Snapshot $orcSnap -ConfigPath $td.cfgPath -OutputPath $td.outPath -Transport $st
     if($r.status-ne'configuration-error'){throw "cfg-err-key: expected 'configuration-error', got '$($r.status)'"}
     if($script:tc-ne 0){throw "cfg-err-key: transport called $($script:tc) times, expected 0"}
-    if(Test-Path -LiteralPath $td.outPath){throw "cfg-err-key: output must not exist"}
+    Verify-ResultFile $td 'configuration-error' 's4'
 
-    # 5. configuration-error: DPAPI decrypt failure (corrupted protectedApiKey)
+    # 5. configuration-error: DPAPI decrypt failure
     $fakeKey=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('not-dpapi-data'))
     $td=New-TD 'cfg-err-dpapi' (@{schemaVersion=1;enabled=$true;endpoint='https://api.example.com/v1/chat/completions';model='test-model';protectedApiKey=$fakeKey;timeoutSeconds=10})
     $script:tc=0
     $r=Invoke-DiskPulseAIAnalysis -ScanId 's5' -DirectoryResults $orcDir -HistoryCenter @() -Snapshot $orcSnap -ConfigPath $td.cfgPath -OutputPath $td.outPath -Transport $st
     if($r.status-ne'configuration-error'){throw "cfg-err-dpapi: expected 'configuration-error', got '$($r.status)'"}
     if($script:tc-ne 0){throw "cfg-err-dpapi: transport called $($script:tc) times, expected 0"}
-    if(Test-Path -LiteralPath $td.outPath){throw "cfg-err-dpapi: output must not exist"}
+    Verify-ResultFile $td 'configuration-error' 's5'
 
-    # 6. baseline-required: no baselineScanId in directoryResults
+    # 6. baseline-required
     $td=New-TD 'baseline-req' $validCfgObj
     $script:tc=0
     $r=Invoke-DiskPulseAIAnalysis -ScanId 's6' -DirectoryResults $orcDirNoBaseline -HistoryCenter @() -Snapshot $orcSnap -ConfigPath $td.cfgPath -OutputPath $td.outPath -Transport $st
     if($r.status-ne'baseline-required'){throw "baseline-required: expected 'baseline-required', got '$($r.status)'"}
     if($script:tc-ne 0){throw "baseline-required: transport called $($script:tc) times, expected 0"}
-    if(Test-Path -LiteralPath $td.outPath){throw "baseline-required: output must not exist"}
+    Verify-ResultFile $td 'baseline-required' 's6'
 
-    # 7. no-reliable-changes: only unchanged records (no created/changed/removed)
+    # 7. no-reliable-changes
     $td=New-TD 'no-changes' $validCfgObj
     $script:tc=0
     $r=Invoke-DiskPulseAIAnalysis -ScanId 's7' -DirectoryResults $orcDirNoChange -HistoryCenter @() -Snapshot $orcSnap -ConfigPath $td.cfgPath -OutputPath $td.outPath -Transport $st
     if($r.status-ne'no-reliable-changes'){throw "no-changes: expected 'no-reliable-changes', got '$($r.status)'"}
     if($script:tc-ne 0){throw "no-changes: transport called $($script:tc) times, expected 0"}
-    if(Test-Path -LiteralPath $td.outPath){throw "no-changes: output must not exist"}
+    Verify-ResultFile $td 'no-reliable-changes' 's7'
 
-    # 8. all-failed: all drives status=failed → returns no-reliable-changes
+    # 8. all-failed
     $td=New-TD 'all-failed' $validCfgObj
     $script:tc=0
     $r=Invoke-DiskPulseAIAnalysis -ScanId 's8' -DirectoryResults $orcDirAllFailed -HistoryCenter @() -Snapshot $orcSnap -ConfigPath $td.cfgPath -OutputPath $td.outPath -Transport $st
     if($r.status-ne'no-reliable-changes'){throw "all-failed: expected 'no-reliable-changes', got '$($r.status)'"}
     if($script:tc-ne 0){throw "all-failed: transport called $($script:tc) times, expected 0"}
-    if(Test-Path -LiteralPath $td.outPath){throw "all-failed: output must not exist"}
+    Verify-ResultFile $td 'no-reliable-changes' 's8'
 
     # ========== REQUEST STATES (Transport called once, call count = 1) ==========
 

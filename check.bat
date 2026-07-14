@@ -854,24 +854,30 @@ function Unprotect-DiskPulseSecret {
     catch { return $null }
 }
 
+function Test-DiskPulseAILocalEndpoint {
+    param([string]$Endpoint)
+    if ([string]::IsNullOrWhiteSpace($Endpoint)) { return $false }
+    try {
+        $uri = [System.Uri]::new($Endpoint.Trim())
+        if (-not $uri.IsAbsoluteUri) { return $false }
+        if ($uri.Scheme -ne 'http') { return $false }
+        $uriHost = $uri.Host
+        if ($uriHost -eq 'localhost' -or $uriHost -eq '127.0.0.1' -or $uriHost -eq '::1') { return $true }
+    }
+    catch {}
+    $lower = $Endpoint.Trim().ToLowerInvariant()
+    if ($lower -match '^http://\[::1\](?::\d+)?(?:/|$)') { return $true }
+    return $false
+}
+
 function Test-DiskPulseAIEndpoint {
     param([string]$Endpoint)
     if ([string]::IsNullOrWhiteSpace($Endpoint)) { return $false }
     $trimmed = $Endpoint.Trim()
-    $lower = $trimmed.ToLowerInvariant()
-    if ($lower.StartsWith('https://')) {
+    if ($trimmed.ToLowerInvariant().StartsWith('https://')) {
         try { $uri = [System.Uri]::new($trimmed); return $uri.IsAbsoluteUri } catch { return $false }
     }
-    if ($lower.StartsWith('http://')) {
-        $localHosts = @('localhost', '127.0.0.1', '::1')
-        try {
-            $uri = [System.Uri]::new($trimmed)
-            if ($uri.IsAbsoluteUri -and $uri.Host -in $localHosts) { return $true }
-        }
-        catch {}
-        if ($lower -match '^http://\[::1\]:') { return $true }
-    }
-    return $false
+    return (Test-DiskPulseAILocalEndpoint $Endpoint)
 }
 
 function ConvertTo-DiskPulseSafeJSON {
@@ -917,7 +923,7 @@ function Invoke-DiskPulseAIConfigure {
                 $model = Read-Host 'Model name'
                 if ([string]::IsNullOrWhiteSpace($model)) { Write-Host 'Model cannot be empty.' -ForegroundColor Red; break }
                 $protectedKey = ''
-                $isLocalEp = $endpoint -match '^http://(localhost|127\.0\.0\.1|\[::1\]):'
+                $isLocalEp = Test-DiskPulseAILocalEndpoint $endpoint
                 $needKey = $true
                 if ($isLocalEp) {
                     $useKey = Read-Host 'Local endpoint detected. Configure API Key? (y/N)'
@@ -1016,7 +1022,7 @@ function Invoke-DiskPulseAIConfigure {
             '5' {
                 $cfg = Get-DiskPulseAIConfig
                 if (-not $cfg -or -not $cfg.enabled) { Write-Host 'AI is not configured or not enabled.' -ForegroundColor Yellow; break }
-                $isLocalEp = $cfg.endpoint -match '^http://(localhost|127\.0\.0\.1|\[::1\]):'
+                $isLocalEp = Test-DiskPulseAILocalEndpoint $cfg.endpoint
                 $hasKey = $false
                 if ($cfg.protectedApiKey) { $dk = Unprotect-DiskPulseSecret $cfg.protectedApiKey; if ($dk) { $hasKey = $true } }
                 if (-not $hasKey -and -not $isLocalEp) { Write-Host 'API Key is invalid or not configured.' -ForegroundColor Red; break }
@@ -1057,17 +1063,40 @@ function Invoke-DiskPulseAIConfigure {
 function ConvertTo-DiskPulseRedactedPath {
     param([string]$Path)
     if ([string]::IsNullOrWhiteSpace($Path)) { return $Path }
-    $profile = [string]$env:USERPROFILE
-    if ([string]::IsNullOrWhiteSpace($profile)) { return $Path }
-    $profileBase = $profile.TrimEnd('\')
-    $profilePrefix = $profileBase + '\'
     $pathNormalized = $Path.TrimEnd('\')
-    if ($pathNormalized.Equals($profileBase, [StringComparison]::OrdinalIgnoreCase)) {
-        return '%USERPROFILE%'
+    $usersRoot = [IO.Path]::Combine([IO.Path]::GetPathRoot($Path), 'Users')
+    $usersPrefix = $usersRoot + '\'
+    # Current user profile
+    $profile = [string]$env:USERPROFILE
+    if (-not [string]::IsNullOrWhiteSpace($profile)) {
+        $profileBase = $profile.TrimEnd('\')
+        $profilePrefix = $profileBase + '\'
+        if ($pathNormalized.Equals($profileBase, [StringComparison]::OrdinalIgnoreCase)) {
+            return '%USERPROFILE%'
+        }
+        if ($pathNormalized.StartsWith($profilePrefix, [StringComparison]::OrdinalIgnoreCase)) {
+            return '%USERPROFILE%\' + $Path.Substring($profilePrefix.Length)
+        }
     }
-    if ($pathNormalized.StartsWith($profilePrefix, [StringComparison]::OrdinalIgnoreCase)) {
-        $relative = $Path.Substring($profilePrefix.Length)
-        return '%USERPROFILE%\' + $relative
+    # Other users under C:\Users\<username>
+    if ($pathNormalized.StartsWith($usersPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        $remainder = $pathNormalized.Substring($usersPrefix.Length)
+        $slashIdx = $remainder.IndexOf('\')
+        $userName = if ($slashIdx -ge 0) { $remainder.Substring(0, $slashIdx) } else { $remainder }
+        $lowerUser = $userName.ToLowerInvariant()
+        if ($lowerUser -eq 'public') {
+            $replacement = '%PUBLICPROFILE%'
+        }
+        elseif ($lowerUser -eq 'default') {
+            $replacement = '%DEFAULTPROFILE%'
+        }
+        else {
+            $replacement = '%OTHER_USERPROFILE%'
+        }
+        if ($slashIdx -ge 0) {
+            return $replacement + '\' + $remainder.Substring($slashIdx + 1)
+        }
+        return $replacement
     }
     return $Path
 }
@@ -1246,7 +1275,7 @@ function Invoke-DiskPulseAIRequest {
     try {
         $uri = [string]$Config.endpoint
         $headers = @{}
-        $isLocal = $uri -match '^http://(localhost|127\.0\.0\.1|\[::1\]):'
+        $isLocal = Test-DiskPulseAILocalEndpoint $uri
         if ($Config.protectedApiKey) {
             $plainKey = Unprotect-DiskPulseSecret $Config.protectedApiKey
         }
@@ -1266,7 +1295,7 @@ function Invoke-DiskPulseAIRequest {
         $timeout = if ($Config.PSObject.Properties.Name -contains 'timeoutSeconds' -and $Config.timeoutSeconds) { [int]$Config.timeoutSeconds } else { 45 }
 
         try {
-            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            [Net.ServicePointManager]::SecurityProtocol = $savedProtocol -bor [Net.SecurityProtocolType]::Tls12
         }
         catch {}
 
@@ -1422,77 +1451,80 @@ function Invoke-DiskPulseAIAnalysis {
     try {
         $config = if ([string]::IsNullOrWhiteSpace($ConfigPath)) { Get-DiskPulseAIConfig } else { Get-DiskPulseAIConfig -ConfigPath $ConfigPath }
         if (-not $config -or -not $config.enabled) {
-            if (-not $config) { $resultStatus = 'not-configured' } else { $resultStatus = 'disabled' }
-            return [PSCustomObject]@{ status = $resultStatus; format = 'none'; analysis = $null; rawText = $null; model = '' }
+            $resultStatus = if ($config) { 'disabled' } else { 'not-configured' }
         }
-        if (-not (Test-DiskPulseAIEndpoint $config.endpoint)) {
+        elseif (-not (Test-DiskPulseAIEndpoint $config.endpoint)) {
+            $resultStatus = 'configuration-error'; $resultModel = [string]$config.model
+        }
+        elseif ([string]::IsNullOrWhiteSpace($config.model)) {
             $resultStatus = 'configuration-error'
-            return [PSCustomObject]@{ status = $resultStatus; format = 'none'; analysis = $null; rawText = $null; model = [string]$config.model }
         }
-        if ([string]::IsNullOrWhiteSpace($config.model)) {
-            $resultStatus = 'configuration-error'
-            return [PSCustomObject]@{ status = $resultStatus; format = 'none'; analysis = $null; rawText = $null; model = '' }
+        elseif (-not (Test-DiskPulseAILocalEndpoint $config.endpoint) -and [string]::IsNullOrWhiteSpace($config.protectedApiKey)) {
+            $resultStatus = 'configuration-error'; $resultModel = [string]$config.model
         }
-        $isLocalEp = $config.endpoint -match '^http://(localhost|127\.0\.0\.1|\[::1\]):'
-        if (-not $isLocalEp -and [string]::IsNullOrWhiteSpace($config.protectedApiKey)) {
-            $resultStatus = 'configuration-error'
-            return [PSCustomObject]@{ status = $resultStatus; format = 'none'; analysis = $null; rawText = $null; model = [string]$config.model }
-        }
-        if (-not $isLocalEp -and $config.protectedApiKey) {
+        elseif (-not (Test-DiskPulseAILocalEndpoint $config.endpoint) -and $config.protectedApiKey) {
             $testKey = Unprotect-DiskPulseSecret $config.protectedApiKey
-            if (-not $testKey) {
-                $resultStatus = 'configuration-error'
-                return [PSCustomObject]@{ status = $resultStatus; format = 'none'; analysis = $null; rawText = $null; model = [string]$config.model }
+            if (-not $testKey) { $resultStatus = 'configuration-error'; $resultModel = [string]$config.model }
+            else { $testKey = $null }
+        }
+
+        if ($resultStatus -eq 'unknown-error') {
+            $hasReliableBaseline = $false
+            foreach ($dr in @($DirectoryResults)) {
+                if ($dr.baselineScanId) { $hasReliableBaseline = $true; break }
             }
-            $testKey = $null
-        }
-
-        $hasReliableBaseline = $false
-        foreach ($dr in @($DirectoryResults)) {
-            if ($dr.baselineScanId) { $hasReliableBaseline = $true; break }
-        }
-        if (-not $hasReliableBaseline) {
-            $resultStatus = 'baseline-required'
-            return [PSCustomObject]@{ status = $resultStatus; format = 'none'; analysis = $null; rawText = $null; model = [string]$config.model }
-        }
-
-        $hasReliableChanges = $false
-        $allFailed = $true
-        foreach ($dr in @($DirectoryResults)) {
-            if ($dr.status -ne 'failed') { $allFailed = $false }
-            foreach ($ch in @($dr.changes)) {
-                if ($ch.state -in @('created','changed','removed')) { $hasReliableChanges = $true; break }
+            if (-not $hasReliableBaseline) {
+                $resultStatus = 'baseline-required'; $resultModel = if ($config) { [string]$config.model } else { '' }
             }
-            if ($hasReliableChanges) { break }
-        }
-        if ($allFailed -or -not $hasReliableChanges) {
-            $resultStatus = 'no-reliable-changes'
-            return [PSCustomObject]@{ status = $resultStatus; format = 'none'; analysis = $null; rawText = $null; model = [string]$config.model }
         }
 
-        $aiInput = New-DiskPulseAIInput -DirectoryResults $DirectoryResults -HistoryCenter $HistoryCenter -Snapshot $Snapshot
-        $aiInputJson = ConvertTo-Json -InputObject $aiInput -Depth 12 -Compress
-        $prompt = New-DiskPulseAIPrompt -AIInputJSON $aiInputJson
-        $reqResult = Invoke-DiskPulseAIRequest -Config $config -Prompt $prompt -Transport $Transport
-        $parsed = ConvertFrom-DiskPulseAIResponse $reqResult
-        $resultStatus = $parsed.status
-        $resultFormat = $parsed.format
-        $resultAnalysis = $parsed.analysis
-        $resultRawText = $parsed.rawText
-        $resultModel = [string]$config.model
+        if ($resultStatus -eq 'unknown-error') {
+            $hasReliableChanges = $false
+            $allFailed = $true
+            foreach ($dr in @($DirectoryResults)) {
+                if ($dr.status -ne 'failed') { $allFailed = $false }
+                foreach ($ch in @($dr.changes)) {
+                    if ($ch.state -in @('created','changed','removed')) { $hasReliableChanges = $true; break }
+                }
+                if ($hasReliableChanges) { break }
+            }
+            if ($allFailed -or -not $hasReliableChanges) {
+                $resultStatus = 'no-reliable-changes'; $resultModel = [string]$config.model
+            }
+        }
+
+        if ($resultStatus -eq 'unknown-error') {
+            $resultModel = [string]$config.model
+            $aiInput = New-DiskPulseAIInput -DirectoryResults $DirectoryResults -HistoryCenter $HistoryCenter -Snapshot $Snapshot
+            $aiInputJson = ConvertTo-Json -InputObject $aiInput -Depth 12 -Compress
+            $prompt = New-DiskPulseAIPrompt -AIInputJSON $aiInputJson
+            $reqResult = Invoke-DiskPulseAIRequest -Config $config -Prompt $prompt -Transport $Transport
+            $parsed = ConvertFrom-DiskPulseAIResponse $reqResult
+            $resultStatus = $parsed.status
+            $resultFormat = $parsed.format
+            $resultAnalysis = $parsed.analysis
+            $resultRawText = $parsed.rawText
+        }
     }
     catch {
         $resultStatus = 'unknown-error'
     }
 
+    $statusObj = New-DiskPulseAIStatus -ScanId $ScanId -Status $resultStatus -Model $resultModel -Analysis $resultAnalysis -RawText $resultRawText -Format $resultFormat
+
     try {
         if ($OutputPath) {
-            Write-DiskPulseAIResult -ScanId $ScanId -Status $resultStatus -Model $resultModel -Format $resultFormat -Analysis $resultAnalysis -RawText $resultRawText -OutputPath $OutputPath
+            $json = ConvertTo-Json -InputObject $statusObj -Depth 8
+            $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+            $tmpPath = $OutputPath + '.tmp'
+            [System.IO.File]::WriteAllText($tmpPath, $json, $utf8NoBom)
+            if (Test-Path -LiteralPath $OutputPath) { Remove-Item -LiteralPath $OutputPath -Force }
+            [IO.File]::Move($tmpPath, $OutputPath)
         }
     }
     catch {}
 
-    return [PSCustomObject]@{ status = $resultStatus; format = $resultFormat; analysis = $resultAnalysis; rawText = $resultRawText; model = $resultModel }
+    return $statusObj
 }
 
 function Invoke-DiskPulse {
