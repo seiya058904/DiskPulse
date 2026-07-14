@@ -2,12 +2,12 @@
 
 ## Project Overview
 
-DiskPulse is a zero-dependency Windows disk capacity and directory change monitor. A single polyglot BAT/PowerShell script (`check.bat`, ~2900 lines) scans local fixed disks, records usage history to CSV, and generates a self-contained HTML dashboard with dark mode, trend analysis, and accessibility support.
+DiskPulse is a zero-dependency Windows disk capacity and directory change monitor. A single polyglot BAT/PowerShell script (`check.bat`, ~3500 lines) scans local fixed disks, records usage history to CSV, and generates a self-contained HTML dashboard with dark mode, trend analysis, and accessibility support.
 
 - **Language:** PowerShell 5.1+ (embedded in a BAT wrapper), C# compiled inline via `Add-Type`, HTML/CSS/JS in a here-string template
 - **Runtime:** Windows only, no external dependencies
-- **Entry points:** `DiskPulse.vbs` (silent), `check.bat` (debug), `check-profile.bat` (profiling)
-- **Output:** `runtime/DiskPulse.html`, `runtime/DiskPulse.csv`, `runtime/snapshots/*.json`
+- **Entry points:** `DiskPulse.vbs` (silent), `check.bat` (debug), `check-profile.bat` (profiling), `configure-ai.bat` (AI config)
+- **Output:** `runtime/DiskPulse.html`, `runtime/DiskPulse.csv`, `runtime/snapshots/*.json`, `runtime/last-ai-analysis.json`
 
 ## Project Structure
 
@@ -15,8 +15,9 @@ DiskPulse is a zero-dependency Windows disk capacity and directory change monito
 check.bat              Main program (BAT preamble + PowerShell + embedded C#/HTML/JS)
 DiskPulse.vbs          Silent launcher (VBScript, hidden window)
 check-profile.bat      Performance diagnostics launcher
+configure-ai.bat       AI configuration entry point (interactive menu)
 tests/                 Standalone PowerShell test scripts (5 files)
-runtime/               Generated data (gitignored): CSV, HTML, snapshots, scans, logs
+runtime/               Generated data (gitignored): CSV, HTML, snapshots, scans, logs, AI config
 docs/                  Design documentation
 PRODUCT.md             Product requirements and design principles
 DESIGN.md              Visual design constraints
@@ -34,9 +35,10 @@ CLAUDE.md              Claude Code integration guide
 4. **Scan directories** — per-drive via native C# `Scan()` method
 5. **Compare with baseline** — `Compare-DriveRecords` produces created/changed/removed/unchanged
 6. **Build history comparison center** — `New-HistoryComparisonCenter` with pre-built indexes for trend aggregation
-7. **Persist** — write CSV, snapshot JSON
-8. **Generate HTML** — here-string template, `INJECT_*` placeholders replaced via regex
-9. **Open browser** — `Start-Process` (skipped when `DISKPULSE_NO_OPEN=1`)
+7. **AI analysis (optional)** — `Invoke-DiskPulseAIAnalysis` (only when configured and enabled)
+8. **Persist** — write CSV, snapshot JSON
+9. **Generate HTML** — here-string template, `INJECT_*` placeholders replaced via regex
+10. **Open browser** — `Start-Process` (skipped when `DISKPULSE_NO_OPEN=1`)
 
 **Key constraint:** The here-string closing delimiter `'@` must appear at the start of a line. The HTML template body must not contain a line starting with `'@`.
 
@@ -54,6 +56,9 @@ check.bat
 # Performance profiling
 check-profile.bat
 # or: set DISKPULSE_PROFILE=1 && check.bat
+
+# AI configuration
+configure-ai.bat
 ```
 
 ### Run Tests
@@ -68,9 +73,16 @@ powershell.exe -NoProfile -File "tests\DiskPulse.Phase5.Tests.ps1"
 powershell.exe -NoProfile -File "tests\DiskPulse.Scanner.Tests.ps1"
 ```
 
+Also verify with PowerShell 7:
+
+```powershell
+pwsh -NoProfile -File "tests\DiskPulse.Phase3.Tests.ps1"
+pwsh -NoProfile -File "tests\DiskPulse.Phase4.Tests.ps1"
+```
+
 - Phase1: helpers, locking, migration, events, atomic JSON, dashboard markers
-- Phase3: comparison states, baseline selection, coverage
-- Phase4: visual hierarchy, state behavior, embedded JavaScript (runs `node --check` on extracted JS)
+- Phase3: comparison states, baseline selection, coverage, AI config, input construction, API request/response, orchestration
+- Phase4: visual hierarchy, state behavior, embedded JavaScript, AI section markers, rendering fixtures
 - Phase5: history comparison center selection, semantics, trends, embedded JavaScript
 - Scanner: real directory scanner aggregation and edge cases
 
@@ -113,10 +125,16 @@ Rules:
 
 - **Never** commit `.env`, API keys, tokens, passwords, or connection strings
 - **Never** commit files from `runtime/` (generated data)
-- Do not add external network requests — the tool is offline-only
+- **Never** commit `runtime/ai-config.local.json` (contains encrypted API key)
+- Do not add external network requests as default behavior — AI is opt-in only
 - Do not embed secrets in documentation, commit messages, or log output
 - `DiskPulse.vbs` must remain ASCII-only (VBScript fails on UTF-8 Chinese characters)
+- `configure-ai.bat` must remain ASCII-only
 - The program requires only standard Windows permissions; no admin rights for normal operation
+- AI content injected into HTML must use `ConvertTo-DiskPulseSafeJSON` for script-context safety
+- API Key must never appear in HTML, logs, snapshots, or test output
+- Tests must never make real network requests or call real AI APIs
+- All AI test fixtures use offline Transport scriptblocks
 
 ## Agent-Specific Instructions
 
@@ -130,6 +148,7 @@ Rules:
 8. **Do not install dependencies, run auto-fixers, or format the entire codebase.**
 9. **Do not commit, push, deploy, publish, or create releases without explicit user authorization.**
 10. **Mark uncertain content.** If you cannot verify a claim, label it as needing confirmation.
+11. **AI feature constraints:** AI is opt-in, default off. Network requests are optional. Tests must use offline Transport fixtures. API Key uses DPAPI. AI content is untrusted input requiring safe serialization.
 
 ## Pre-Commit Checklist
 
@@ -137,6 +156,9 @@ Rules:
 - [ ] `git diff --check` — no whitespace errors
 - [ ] `git diff` — changes are correct and complete
 - [ ] All 5 test suites pass (or failures explained)
+- [ ] PowerShell 7 tests also pass
+- [ ] `node --check` passes on extracted JavaScript
 - [ ] No secrets, tokens, or credentials in diff
 - [ ] No `runtime/` files staged
+- [ ] No API Key in generated HTML or test output
 - [ ] Commit message is clear and scoped
