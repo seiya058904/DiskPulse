@@ -65,11 +65,18 @@ if($dec-ne$testSecret){throw 'Decrypted secret must match original.'}
 $badDec=Unprotect-DiskPulseSecret 'not-valid-base64!!!'
 if($null-ne$badDec){throw 'Invalid Base64 must return null.'}
 
-foreach($ep in @('https://api.openai.com/v1/chat/completions','https://example.com/api','http://localhost:11434/v1','http://127.0.0.1:8080/api','http://[::1]:3000/api')){
+foreach($ep in @('https://api.openai.com/v1/chat/completions','https://example.com/api','http://localhost:11434/v1','http://localhost/v1/chat/completions','http://127.0.0.1:8080/api','http://127.0.0.1/v1/chat/completions','http://[::1]:3000/api','http://[::1]/v1/chat/completions')){
     if(-not(Test-DiskPulseAIEndpoint $ep)){throw "Must be valid: $ep"}
 }
 foreach($ep in @('http://api.example.com/v1','ftp://example.com/api','https://','','not-a-url','http://localhost.evil.com:11434/','http://127.0.0.1.evil.com/','http://user@localhost.evil.com/')){
     if(Test-DiskPulseAIEndpoint $ep){throw "Must be invalid: $ep"}
+}
+# Test-DiskPulseAILocalEndpoint specific
+foreach($ep in @('http://localhost/','http://localhost:11434/v1','http://127.0.0.1/','http://127.0.0.1:8080/api','http://[::1]/','http://[::1]:11434/v1')){
+    if(-not(Test-DiskPulseAILocalEndpoint $ep)){throw "Local must be valid: $ep"}
+}
+foreach($ep in @('https://localhost/','http://localhost.evil.com/','http://127.0.0.1.evil.com/','http://[::1]:bad/','http://[::1]:65536/','http://[::1]:99999/','http://[::1','ftp://localhost/','http://api.example.com/v1')){
+    if(Test-DiskPulseAILocalEndpoint $ep){throw "Local must be invalid: $ep"}
 }
 
 $safeJson=ConvertTo-DiskPulseSafeJSON ([pscustomobject]@{summary='test'})
@@ -797,6 +804,43 @@ try{
     if(($sv|ConvertFrom-Json).status-ne'unknown-error'){throw "unknown-err: saved status must be 'unknown-error'"}
     if($sv-match'unexpected'){throw "unknown-err: saved JSON must not contain exception text"}
     if($sv-match'api\.example\.com'){throw "unknown-err: saved JSON must not contain endpoint"}
+
+    # ========== OVERWRITE TESTS (same OutputPath, state must be replaced) ==========
+
+    # success → disabled: file overwritten, old analysis gone
+    $td=New-TD 'ow-test' $validCfgObj
+    $owOut=$td.outPath
+    $script:tc=0
+    $r=Invoke-DiskPulseAIAnalysis -ScanId 'ow-s1' -DirectoryResults $orcDir -HistoryCenter @() -Snapshot $orcSnap -ConfigPath $td.cfgPath -OutputPath $owOut -Transport $okT
+    if($r.status-ne'success'){throw "ow-success: expected 'success', got '$($r.status)'"}
+    $sv1=Get-Content -Raw -LiteralPath $owOut -Encoding UTF8
+    if(($sv1|ConvertFrom-Json).scanId-ne'ow-s1'){throw 'ow-success: scanId must be ow-s1'}
+    if(($sv1|ConvertFrom-Json).analysis.summary-ne'Disk analysis OK'){throw 'ow-success: old analysis must exist'}
+
+    # Now run disabled on same OutputPath
+    $r=Invoke-DiskPulseAIAnalysis -ScanId 'ow-s2' -DirectoryResults $orcDir -HistoryCenter @() -Snapshot $orcSnap -ConfigPath (Join-Path ([IO.Path]::GetTempPath()) ('ow-disabled-'+[guid]::NewGuid().ToString('N')+'.json')) -OutputPath $owOut -Transport $st
+    # Create a temp config with enabled=false for this test
+    $owDisCfg=Join-Path $td.dir 'dis.json'
+    @{schemaVersion=1;enabled=$false;endpoint='https://x';model='m'}|ConvertTo-Json|Set-Content -LiteralPath $owDisCfg -Encoding UTF8
+    $r=Invoke-DiskPulseAIAnalysis -ScanId 'ow-s2' -DirectoryResults $orcDir -HistoryCenter @() -Snapshot $orcSnap -ConfigPath $owDisCfg -OutputPath $owOut -Transport $st
+    if($r.status-ne'disabled'){throw "ow-disabled: expected 'disabled', got '$($r.status)'"}
+    $sv2=Get-Content -Raw -LiteralPath $owOut -Encoding UTF8
+    $saved2=$sv2|ConvertFrom-Json
+    if($saved2.scanId-ne'ow-s2'){throw "ow-disabled: scanId must be ow-s2, got '$($saved2.scanId)'"}
+    if($saved2.analysis){throw 'ow-disabled: old analysis must be gone'}
+    if($saved2.rawText){throw 'ow-disabled: old rawText must be gone'}
+    if($sv2-match'Disk analysis OK'){throw 'ow-disabled: old analysis text must not appear in file'}
+
+    # success → no-reliable-changes: old analysis cleared
+    $r=Invoke-DiskPulseAIAnalysis -ScanId 'ow-s3' -DirectoryResults $orcDir -HistoryCenter @() -Snapshot $orcSnap -ConfigPath $td.cfgPath -OutputPath $owOut -Transport $okT
+    if($r.status-ne'success'){throw "ow-s3: expected success"}
+    $r=Invoke-DiskPulseAIAnalysis -ScanId 'ow-s4' -DirectoryResults $orcDirNoChange -HistoryCenter @() -Snapshot $orcSnap -ConfigPath $td.cfgPath -OutputPath $owOut -Transport $st
+    if($r.status-ne'no-reliable-changes'){throw "ow-nrc: expected no-reliable-changes"}
+    $sv3=Get-Content -Raw -LiteralPath $owOut -Encoding UTF8
+    $saved3=$sv3|ConvertFrom-Json
+    if($saved3.scanId-ne'ow-s4'){throw "ow-nrc: scanId must be ow-s4"}
+    if($saved3.analysis){throw 'ow-nrc: old analysis must be gone'}
+    if($sv3-match'Disk analysis OK'){throw 'ow-nrc: old analysis text must not appear'}
 
 }finally{
     if(Test-Path -LiteralPath $orcTempRoot){Remove-Item -LiteralPath $orcTempRoot -Recurse -Force -ErrorAction SilentlyContinue}

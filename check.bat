@@ -861,13 +861,10 @@ function Test-DiskPulseAILocalEndpoint {
         $uri = [System.Uri]::new($Endpoint.Trim())
         if (-not $uri.IsAbsoluteUri) { return $false }
         if ($uri.Scheme -ne 'http') { return $false }
-        $uriHost = $uri.Host
-        if ($uriHost -eq 'localhost' -or $uriHost -eq '127.0.0.1' -or $uriHost -eq '::1') { return $true }
+        $uriHost = $uri.Host.Trim('[', ']')
+        return ($uriHost -eq 'localhost' -or $uriHost -eq '127.0.0.1' -or $uriHost -eq '::1' -or $uriHost -match '^(0+:){7}0*1$')
     }
-    catch {}
-    $lower = $Endpoint.Trim().ToLowerInvariant()
-    if ($lower -match '^http://\[::1\](?::\d+)?(?:/|$)') { return $true }
-    return $false
+    catch { return $false }
 }
 
 function Test-DiskPulseAIEndpoint {

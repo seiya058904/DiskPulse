@@ -82,4 +82,4 @@ AI 解释结果会注入到 HTML 报告的 "AI 变化解释" 区域。
 
 ### 结果文件
 
-每次 AI 分析的结果保存在 `runtime/last-ai-analysis.json`，仅用于排查问题，包含状态、模型名和分析内容（或错误类别），不包含 API Key 或 endpoint。
+最近一次扫描的 AI 状态或分析结果保存在 `runtime/last-ai-analysis.json`，用于排查问题，包含状态、模型名和分析内容（或错误类别），不包含 API Key 或 endpoint。
