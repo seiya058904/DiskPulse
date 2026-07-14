@@ -1286,6 +1286,7 @@ function Invoke-DiskPulseAIRequest {
                 @{ role = 'user';   content = [string]$Prompt.user }
             )
             temperature = 0.2
+            max_tokens = 2048
         }
         $bodyJson = ConvertTo-Json -InputObject $bodyObj -Depth 8 -Compress
         $bodyBytes = [Text.Encoding]::UTF8.GetBytes($bodyJson)
