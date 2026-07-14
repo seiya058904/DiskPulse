@@ -1301,7 +1301,9 @@ function Invoke-DiskPulseAIRequest {
             $response = & $Transport $uri $headers $bodyBytes $timeout
         }
         else {
-            $response = Invoke-RestMethod -Uri $uri -Method Post -Headers $headers -Body $bodyBytes -ContentType 'application/json; charset=utf-8' -TimeoutSec $timeout
+            $webResponse = Invoke-WebRequest -Uri $uri -Method Post -Headers $headers -Body $bodyBytes -ContentType 'application/json; charset=utf-8' -TimeoutSec $timeout -UseBasicParsing
+            $rawContent = [System.Text.Encoding]::UTF8.GetString($webResponse.RawContentStream.ToArray())
+            $response = $rawContent | ConvertFrom-Json
         }
         return [PSCustomObject]@{ ok = $true; response = $response }
     }
