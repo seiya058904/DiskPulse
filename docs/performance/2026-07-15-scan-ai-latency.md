@@ -109,4 +109,3 @@ The provider did not return a usable `usage` object in the authorized calls. The
 - Three successful post-change structured API calls were not possible within the five-call authorization budget.
 - Provider token usage comparison was unavailable because the endpoint omitted usage fields.
 - Installer GUI button-click scan was not automated.
-

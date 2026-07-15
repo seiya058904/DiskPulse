@@ -295,4 +295,3 @@ git push -u origin perf/scan-ai-latency
 - [ ] **Step 3: Create a Draft PR without merging.**
 
 Use the GitHub connector or `gh` fallback to open a Draft PR from `perf/scan-ai-latency` into `main`. Include the performance report, exact test results, accepted/reverted experiments, and any unexecuted validation. Do not create a release or merge the PR.
-
