@@ -23,7 +23,8 @@ function Profile-Mark([string]$Key) {
 
 function Get-DiskPulsePaths {
     $root = [IO.Path]::GetFullPath([string]$env:DISKPULSE_ROOT)
-    $runtime = Join-Path $root "runtime"
+    $dataRoot = if ([string]::IsNullOrWhiteSpace($env:DISKPULSE_DATA_ROOT)) { $root } else { [IO.Path]::GetFullPath([string]$env:DISKPULSE_DATA_ROOT) }
+    $runtime = Join-Path $dataRoot "runtime"
     [PSCustomObject]@{
         Root     = $root
         Runtime  = $runtime
@@ -635,6 +636,9 @@ function New-HistoryComparison {
 
 function Get-DirectoryTrendClassification {
     param([array]$Comparisons)
+    if (-not $Comparisons) {
+        return [pscustomobject]@{ label='数据不足'; cumulativeBytes=[int64]0; growthCount=0; releaseCount=0; occurrenceCount=0; comparisonCount=0 }
+    }
     $valid = @($Comparisons | Where-Object { $_.state -in @('created','changed','removed','unchanged') })
     $recent = @($valid | Select-Object -Last 5)
     $growth = @($recent | Where-Object { [int64]$_.deltaBytes -gt 0 }).Count
@@ -826,6 +830,7 @@ function Get-DiskPulseAIConfig {
         if ([string]::IsNullOrWhiteSpace([string]$config.endpoint) -or [string]::IsNullOrWhiteSpace([string]$config.model)) { return $null }
         return [PSCustomObject]@{
             enabled         = [bool]$config.enabled
+            provider        = if ($config.PSObject.Properties.Name -contains 'provider') { [string]$config.provider } else { 'custom' }
             endpoint        = [string]$config.endpoint
             model           = [string]$config.model
             protectedApiKey = [string]$config.protectedApiKey
@@ -880,6 +885,16 @@ function Test-DiskPulseAIEndpoint {
     return (Test-DiskPulseAILocalEndpoint $Endpoint)
 }
 
+function Get-DiskPulseAIProviders {
+    @(
+        [pscustomobject]@{ id='deepseek'; name='DeepSeek / 深度求索'; endpoint='https://api.deepseek.com'; model='deepseek-v4-flash'; models=@('deepseek-v4-flash') }
+        [pscustomobject]@{ id='mimo'; name='Xiaomi MiMo / 小米 MiMo'; endpoint='https://api.xiaomimimo.com/v1'; model='mimo-v2.5-pro'; models=@('mimo-v2.5-pro','mimo-v2.5') }
+        [pscustomobject]@{ id='qwen'; name='Alibaba Qwen / 阿里云百炼'; endpoint='https://dashscope.aliyuncs.com/compatible-mode/v1'; model='qwen3.7-plus'; models=@('qwen3.7-plus') }
+        [pscustomobject]@{ id='openai'; name='OpenAI'; endpoint='https://api.openai.com/v1'; model='gpt-5.4-mini'; models=@('gpt-5.4-mini') }
+        [pscustomobject]@{ id='custom'; name='Custom OpenAI-compatible / 自定义兼容接口'; endpoint=''; model=''; models=@() }
+    )
+}
+
 function ConvertTo-DiskPulseSafeJSON {
     param($Value)
     $json = ConvertTo-Json -InputObject $Value -Depth 12 -Compress
@@ -901,36 +916,70 @@ function Invoke-DiskPulseAIConfigure {
         if (Test-Path -LiteralPath $configPath) {
             try { $existing = Get-Content -Raw -LiteralPath $configPath -Encoding UTF8 | ConvertFrom-Json } catch {}
         }
-        $statusText = if ($existing -and $existing.enabled) { 'Enabled' } elseif ($existing) { 'Disabled' } else { 'Not configured' }
+        $statusText = if ($existing -and $existing.enabled) { 'Enabled / 已启用' } elseif ($existing) { 'Disabled / 已禁用' } else { 'Not configured / 未配置' }
         Write-Host ''
-        Write-Host '=== DiskPulse AI Configuration ===' -ForegroundColor Cyan
-        Write-Host "Status: $statusText"
+        Write-Host '=== DiskPulse AI Configuration / DiskPulse AI 配置 ===' -ForegroundColor Cyan
+        Write-Host "Status / 状态: $statusText"
         Write-Host ''
-        Write-Host '1. Enable and configure AI'
-        Write-Host '2. Modify existing configuration'
-        Write-Host '3. Disable AI'
-        Write-Host '4. Delete AI configuration'
-        Write-Host '5. Test API connection'
-        Write-Host '6. Exit'
+        Write-Host '1. Enable and configure AI / 启用并配置 AI'
+        Write-Host '2. Modify existing configuration / 修改现有配置'
+        Write-Host '3. Disable AI / 禁用 AI'
+        Write-Host '4. Delete AI configuration / 删除 AI 配置'
+        Write-Host '5. Test API connection / 测试 API 连接'
+        Write-Host '6. Exit / 退出'
         Write-Host ''
-        $choice = Read-Host 'Select (1-6)'
+        $choice = Read-Host 'Select (1-6) / 请选择 (1-6)'
         switch ($choice) {
             '1' {
-                $endpoint = Read-Host 'API Endpoint (https://...)'
-                if (-not (Test-DiskPulseAIEndpoint $endpoint)) {
-                    Write-Host 'Invalid endpoint. Use https:// or local http://localhost/127.0.0.1/[::1].' -ForegroundColor Red; break
+                $providers = @(Get-DiskPulseAIProviders)
+                Write-Host '请选择 AI 服务商 / Select provider:' -ForegroundColor Cyan
+                for ($providerIndex = 0; $providerIndex -lt $providers.Count; $providerIndex++) {
+                    Write-Host ("{0}. {1}" -f ($providerIndex + 1), $providers[$providerIndex].name)
                 }
-                $model = Read-Host 'Model name'
-                if ([string]::IsNullOrWhiteSpace($model)) { Write-Host 'Model cannot be empty.' -ForegroundColor Red; break }
+                $providerChoice = Read-Host 'Provider (1-5) / 服务商 (1-5)'
+                $providerNumber = 0
+                if (-not [int]::TryParse($providerChoice, [ref]$providerNumber) -or $providerNumber -lt 1 -or $providerNumber -gt $providers.Count) {
+                    Write-Host 'Invalid provider selection. / 服务商选择无效。' -ForegroundColor Red; break
+                }
+                $provider = $providers[$providerNumber - 1]
+                $endpoint = [string]$provider.endpoint
+                $model = [string]$provider.model
+                if ($provider.id -eq 'custom') {
+                    $endpoint = Read-Host 'API Endpoint / API 接口地址 (https://...)'
+                    if (-not (Test-DiskPulseAIEndpoint $endpoint)) {
+                        Write-Host 'Invalid endpoint. Use https:// or local http://localhost/127.0.0.1/[::1].' -ForegroundColor Red; break
+                    }
+                    $model = Read-Host 'Model name / 模型名称'
+                    if ([string]::IsNullOrWhiteSpace($model)) { Write-Host 'Model cannot be empty.' -ForegroundColor Red; break }
+                }
+                else {
+                    $models = @($provider.models)
+                    if ($models.Count -gt 1) {
+                        Write-Host '请选择模型 / Select model:' -ForegroundColor Cyan
+                        for ($modelIndex = 0; $modelIndex -lt $models.Count; $modelIndex++) {
+                            Write-Host ("{0}. {1}" -f ($modelIndex + 1), $models[$modelIndex])
+                        }
+                        $modelChoice = Read-Host ("Model (1-{0}) / 模型 (1-{0}, 默认 1)" -f $models.Count)
+                        $modelNumber = 1
+                        if (-not [string]::IsNullOrWhiteSpace($modelChoice)) {
+                            [int]::TryParse($modelChoice, [ref]$modelNumber) | Out-Null
+                        }
+                        if ($modelNumber -lt 1 -or $modelNumber -gt $models.Count) {
+                            Write-Host 'Invalid model selection. / 模型选择无效。' -ForegroundColor Red; break
+                        }
+                        $model = [string]$models[$modelNumber - 1]
+                    }
+                }
+                Write-Host ("Using {0}; model: {1}" -f $provider.name, $model) -ForegroundColor Gray
                 $protectedKey = ''
                 $isLocalEp = Test-DiskPulseAILocalEndpoint $endpoint
                 $needKey = $true
                 if ($isLocalEp) {
-                    $useKey = Read-Host 'Local endpoint detected. Configure API Key? (y/N)'
+                    $useKey = Read-Host 'Local endpoint detected. Configure API Key? / 检测到本地接口，是否配置 API Key？(y/N)'
                     if ($useKey -ne 'y' -and $useKey -ne 'Y') { $needKey = $false }
                 }
                 if ($needKey) {
-                    $secureKey = Read-Host 'API Key' -AsSecureString
+                    $secureKey = Read-Host 'API Key / API 密钥' -AsSecureString
                     $BSTR = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureKey)
                     try {
                         $plainKey = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($BSTR)
@@ -947,7 +996,7 @@ function Invoke-DiskPulseAIConfigure {
                         $plainKey = $null
                     }
                 }
-                $timeoutStr = Read-Host 'Timeout in seconds (default 45)'
+                $timeoutStr = Read-Host 'Timeout in seconds / 超时时间（秒，默认 45）'
                 $timeout = 45
                 if (-not [string]::IsNullOrWhiteSpace($timeoutStr)) {
                     [int]::TryParse($timeoutStr, [ref]$timeout) | Out-Null
@@ -957,27 +1006,28 @@ function Invoke-DiskPulseAIConfigure {
                 [ordered]@{
                     schemaVersion   = 1
                     enabled         = $true
+                    provider        = [string]$provider.id
                     endpoint        = $endpoint
                     model           = $model
                     protectedApiKey = $protectedKey
                     timeoutSeconds  = $timeout
                     updatedAt       = (Get-Date).ToUniversalTime().ToString('o')
                 } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $configPath -Encoding UTF8
-                Write-Host 'AI configuration saved.' -ForegroundColor Green
+                Write-Host 'AI configuration saved. / AI 配置已保存。' -ForegroundColor Green
             }
             '2' {
                 if (-not $existing) { Write-Host 'No existing configuration.' -ForegroundColor Yellow; break }
                 Write-Host "Current endpoint: $($existing.endpoint)" -ForegroundColor Gray
-                $newEndpoint = Read-Host 'New endpoint (leave empty to keep)'
+                $newEndpoint = Read-Host 'New endpoint / 新接口地址（留空表示保持不变）'
                 if (-not [string]::IsNullOrWhiteSpace($newEndpoint) -and -not (Test-DiskPulseAIEndpoint $newEndpoint)) {
                     Write-Host 'Invalid endpoint.' -ForegroundColor Red; break
                 }
                 Write-Host "Current model: $($existing.model)" -ForegroundColor Gray
-                $newModel = Read-Host 'New model (leave empty to keep)'
+                $newModel = Read-Host 'New model / 新模型名称（留空表示保持不变）'
                 $protectedKey = [string]$existing.protectedApiKey
-                $updateKey = Read-Host 'Update API Key? (y/N)'
+                $updateKey = Read-Host 'Update API Key? / 是否更新 API 密钥？(y/N)'
                 if ($updateKey -eq 'y' -or $updateKey -eq 'Y') {
-                    $secureKey = Read-Host 'API Key' -AsSecureString
+                    $secureKey = Read-Host 'API Key / API 密钥' -AsSecureString
                     $BSTR = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureKey)
                     try {
                         $plainKey = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($BSTR)
@@ -992,7 +1042,7 @@ function Invoke-DiskPulseAIConfigure {
                     }
                 }
                 $currentTimeout = if ($existing.PSObject.Properties.Name -contains 'timeoutSeconds') { [int]$existing.timeoutSeconds } else { 45 }
-                $timeoutStr = Read-Host "Timeout in seconds (current: $currentTimeout)"
+                $timeoutStr = Read-Host "Timeout in seconds / 超时时间（秒，当前：$currentTimeout）"
                 if (-not [string]::IsNullOrWhiteSpace($timeoutStr)) {
                     $parsed = 0
                     if ([int]::TryParse($timeoutStr, [ref]$parsed) -and $parsed -ge 5 -and $parsed -le 120) { $currentTimeout = $parsed }
@@ -1000,6 +1050,7 @@ function Invoke-DiskPulseAIConfigure {
                 [ordered]@{
                     schemaVersion   = 1
                     enabled         = $true
+                    provider        = if ($existing.PSObject.Properties.Name -contains 'provider') { [string]$existing.provider } else { 'custom' }
                     endpoint        = if (-not [string]::IsNullOrWhiteSpace($newEndpoint)) { $newEndpoint } else { [string]$existing.endpoint }
                     model           = if (-not [string]::IsNullOrWhiteSpace($newModel)) { $newModel } else { [string]$existing.model }
                     protectedApiKey = $protectedKey

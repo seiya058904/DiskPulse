@@ -68,10 +68,18 @@ if ((Get-DirectoryTrendClassification @(
     [pscustomobject]@{state='changed';deltaBytes=-10},[pscustomobject]@{state='changed';deltaBytes=-20},[pscustomobject]@{state='removed';deltaBytes=-30}
 )).label -ne '持续释放') { throw 'Sustained release rule failed.' }
 if ((Get-DirectoryTrendClassification @([pscustomobject]@{state='changed';deltaBytes=10})).label -ne '数据不足') { throw 'Insufficient sample rule failed.' }
+if ((Get-DirectoryTrendClassification @()).comparisonCount -ne 0) { throw 'Empty trend comparisons must be accepted.' }
+$emptyComparisons = $null
+if ((Get-DirectoryTrendClassification $emptyComparisons).comparisonCount -ne 0) { throw 'Null trend comparisons must be accepted.' }
 if ((Get-DirectoryTrendClassification @(
     [pscustomobject]@{state='changed';deltaBytes=10},[pscustomobject]@{state='changed';deltaBytes=-9},[pscustomobject]@{state='changed';deltaBytes=8}
 )).label -ne '波动较大') { throw 'Volatility rule failed.' }
 if ((Get-DirectoryTrendClassification @([pscustomobject]@{state='created';deltaBytes=100})).label -ne '首次出现') { throw 'First appearance rule failed.' }
+$pairRows = New-Object 'Collections.Generic.List[object]'
+$pairRows.Add([pscustomobject]@{state='changed';deltaBytes=10})
+$pairRows.Add([pscustomobject]@{state='changed';deltaBytes=20})
+$pairArray = [array]$pairRows
+if ((Get-DirectoryTrendClassification $pairArray).comparisonCount -ne 2) { throw 'List-backed trend comparisons must be expanded before classification.' }
 if ((Get-DirectoryTrendClassification @(
     [pscustomobject]@{state='changed';deltaBytes=4},[pscustomobject]@{state='changed';deltaBytes=5},[pscustomobject]@{state='changed';deltaBytes=40}
 )).label -ne '本次突增') { throw 'Spike rule failed.' }
