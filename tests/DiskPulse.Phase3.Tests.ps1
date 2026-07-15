@@ -309,10 +309,13 @@ if($sortInput.primaryGrowth[0].path-ne'C:\AAA'){throw "Same deltaBytes must sort
 $prompt=New-DiskPulseAIPrompt '{"test":1}'
 if($prompt.system -notmatch 'breakdown'){throw 'Prompt must mention breakdown dedup rule.'}
 if($prompt.system -notmatch 'UNTRUSTED'){throw 'Prompt must mention untrusted path names.'}
-if($prompt.system -notmatch 'Do NOT claim to have read file contents'){throw 'Prompt must forbid claiming file reads.'}
-if($prompt.system -notmatch 'Do NOT generate PowerShell'){throw 'Prompt must forbid generating commands.'}
+if($prompt.system -notmatch 'claim file contents'){throw 'Prompt must forbid claiming file reads.'}
+if($prompt.system -notmatch 'generate PowerShell'){throw 'Prompt must forbid generating commands.'}
 if($prompt.system.Length -gt 1212){throw "System prompt must shrink by at least 20%, got $($prompt.system.Length) chars."}
-if($prompt.system -notmatch '120'){throw 'Prompt must define concise output limits.'}
+if($prompt.system -notmatch 'exactly one JSON object' -or $prompt.system -notmatch 'summary.*possibleCauses.*confidence.*evidence.*recommendations.*cautions'){throw 'Prompt must define the complete JSON object contract.'}
+if($prompt.system -notmatch 'possibleCauses.*evidence.*recommendations.*cautions.*arrays'){throw 'Prompt must require all list fields to be arrays.'}
+if($prompt.system -notmatch 'confidence must be high, medium, or low'){throw 'Prompt must constrain confidence values.'}
+if($prompt.system -match 'Markdown or extra fields'){ } else { throw 'Prompt must forbid Markdown and extra fields.' }
 if($prompt.user -notmatch '\{.*test.*\}'){throw 'User message must contain the input JSON.'}
 
 # --- No API Key, username, or file content in results ---
@@ -1008,15 +1011,21 @@ function renderAIAnalysis(){ return AI_ANALYSIS.status; }
     $workerLatestProfilePath=Join-Path $workerRuntime 'last-ai-profile.json'
     if(-not(Test-Path -LiteralPath $workerLatestProfilePath)){throw 'Latest profile must be written for the current complete scan.'}
     $workerProfile=Get-Content -Raw -LiteralPath $workerProfilePath -Encoding UTF8|ConvertFrom-Json
-    if($workerProfile.scanId-ne'scan-1' -or $workerProfile.format-ne'structured'){throw 'Per-scan profile must include scanId and final format.'}
+    if($workerProfile.scanId-ne'scan-1' -or $workerProfile.format-ne'structured' -or $workerProfile.workerOutcome-ne'completed'){throw 'Per-scan profile must include scanId, final format, and completed outcome.'}
     foreach($unsafe in 'prompt','path','authorization','apiKey'){
         if($workerProfile.PSObject.Properties.Name -contains $unsafe){throw "Worker profile must not persist $unsafe."}
     }
     # Race: B becomes latest before stale A publishes its own per-scan profile.
-    Publish-DiskPulseAIProfile -RuntimePath $workerRuntime -ScanId 'scan-B' -Data ([pscustomobject]@{scanId='scan-B';status='complete';format='structured';model='m'}) -LatestScanId 'scan-B' -LatestStatus 'complete'
-    Publish-DiskPulseAIProfile -RuntimePath $workerRuntime -ScanId 'scan-A' -Data ([pscustomobject]@{scanId='scan-A';status='success';format='structured';model='m'}) -LatestScanId 'scan-B' -LatestStatus 'complete'
+    Set-Content -LiteralPath $workerEvents -Encoding UTF8 -Value '{"scanId":"scan-B","status":"complete","completedAt":"2026-07-14T10:32:00Z"}'
+    $heldProfileLock=Acquire-DiskPulseAIProfileLock $workerRuntime
+    Release-DiskPulseAIProfileLock $heldProfileLock
+    $bPublish=Publish-DiskPulseAIProfile -RuntimePath $workerRuntime -ScanId 'scan-B' -Data ([pscustomobject]@{scanId='scan-B';status='complete';format='structured';model='m'}) -EventsPath $workerEvents
+    $aPublish=Publish-DiskPulseAIProfile -RuntimePath $workerRuntime -ScanId 'scan-A' -Data ([pscustomobject]@{scanId='scan-A';status='success';format='structured';model='m'}) -EventsPath $workerEvents
+    if($bPublish-ne'completed' -or $aPublish-ne'stale-discarded'){throw 'Profile publication outcomes must distinguish completed from stale-discarded.'}
     $latestAfterRace=Get-Content -Raw -LiteralPath $workerLatestProfilePath -Encoding UTF8|ConvertFrom-Json
     if($latestAfterRace.scanId-ne'scan-B'){throw 'Stale worker must not overwrite latest profile.'}
+    $staleProfile=Get-Content -Raw -LiteralPath (Join-Path (Join-Path $workerRuntime 'ai-profiles') 'scan-A.json') -Encoding UTF8|ConvertFrom-Json
+    if($staleProfile.workerOutcome-ne'stale-discarded'){throw 'Stale profile must record stale-discarded outcome.'}
     if(-not(Test-Path -LiteralPath (Join-Path (Join-Path $workerRuntime 'ai-profiles') 'scan-A.json'))){throw 'Stale worker must retain its per-scan profile.'}
     $saved=Get-Content -Raw -LiteralPath $workerOut -Encoding UTF8 | ConvertFrom-Json
     if($saved.status-ne'success'){throw 'Worker complete must write success result.'}
