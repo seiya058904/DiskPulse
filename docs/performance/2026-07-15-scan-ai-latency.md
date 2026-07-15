@@ -5,7 +5,7 @@
 - Baseline branch: `main`
 - Optimization branch: `perf/scan-ai-latency`
 - Baseline HEAD: `951362c`
-- Final implementation commits: `c9cdd36`, `62d34d6`
+- Final implementation commits: `c9cdd36`, `62d34d6`, `f27ec53`, `b6954f8`
 - Real API calls: 5 total, using the existing configured provider/model; no further real calls were made.
 
 ## Benchmark conditions
@@ -113,5 +113,5 @@ The earlier missing usage values must not be attributed directly to the provider
 - Windows version and physical disk media type were not captured reliably.
 - Cold-cache isolation was not available.
 - Three successful post-change structured API calls were not possible within the five-call authorization budget.
-- Provider token usage comparison was unavailable because the endpoint omitted usage fields.
+- Real usage return behavior was not re-verified after the byte[] decoding fix because no new real API calls were executed.
 - Installer GUI button-click scan was not automated.
