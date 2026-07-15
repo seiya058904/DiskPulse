@@ -887,10 +887,10 @@ function Test-DiskPulseAIEndpoint {
 
 function Get-DiskPulseAIProviders {
     @(
-        [pscustomobject]@{ id='deepseek'; name='DeepSeek / 深度求索'; endpoint='https://api.deepseek.com'; model='deepseek-v4-flash'; models=@('deepseek-v4-flash') }
-        [pscustomobject]@{ id='mimo'; name='Xiaomi MiMo / 小米 MiMo'; endpoint='https://api.xiaomimimo.com/v1'; model='mimo-v2.5-pro'; models=@('mimo-v2.5-pro','mimo-v2.5') }
-        [pscustomobject]@{ id='qwen'; name='Alibaba Qwen / 阿里云百炼'; endpoint='https://dashscope.aliyuncs.com/compatible-mode/v1'; model='qwen3.7-plus'; models=@('qwen3.7-plus') }
-        [pscustomobject]@{ id='openai'; name='OpenAI'; endpoint='https://api.openai.com/v1'; model='gpt-5.4-mini'; models=@('gpt-5.4-mini') }
+        [pscustomobject]@{ id='deepseek'; name='DeepSeek / 深度求索'; endpoint='https://api.deepseek.com/chat/completions'; model='deepseek-v4-flash'; models=@('deepseek-v4-flash') }
+        [pscustomobject]@{ id='mimo'; name='Xiaomi MiMo / 小米 MiMo'; endpoint='https://api.xiaomimimo.com/v1/chat/completions'; model='mimo-v2.5-pro'; models=@('mimo-v2.5-pro','mimo-v2.5') }
+        [pscustomobject]@{ id='qwen'; name='Alibaba Qwen / 阿里云百炼'; endpoint='https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions'; model='qwen3.7-plus'; models=@('qwen3.7-plus') }
+        [pscustomobject]@{ id='openai'; name='OpenAI'; endpoint='https://api.openai.com/v1/chat/completions'; model='gpt-5.4-mini'; models=@('gpt-5.4-mini') }
         [pscustomobject]@{ id='custom'; name='Custom OpenAI-compatible / 自定义兼容接口'; endpoint=''; model=''; models=@() }
     )
 }
@@ -1014,6 +1014,7 @@ function Invoke-DiskPulseAIConfigure {
                     updatedAt       = (Get-Date).ToUniversalTime().ToString('o')
                 } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $configPath -Encoding UTF8
                 Write-Host 'AI configuration saved. / AI 配置已保存。' -ForegroundColor Green
+                Show-DiskPulseAIConnectionResult (Test-DiskPulseAIConnection -Config (Get-DiskPulseAIConfig -ConfigPath $configPath))
             }
             '2' {
                 if (-not $existing) { Write-Host 'No existing configuration.' -ForegroundColor Yellow; break }
@@ -1058,6 +1059,7 @@ function Invoke-DiskPulseAIConfigure {
                     updatedAt       = (Get-Date).ToUniversalTime().ToString('o')
                 } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $configPath -Encoding UTF8
                 Write-Host 'Configuration updated.' -ForegroundColor Green
+                Show-DiskPulseAIConnectionResult (Test-DiskPulseAIConnection -Config (Get-DiskPulseAIConfig -ConfigPath $configPath))
             }
             '3' {
                 if (-not $existing -or -not $existing.enabled) { Write-Host 'AI is not enabled.' -ForegroundColor Yellow; break }
@@ -1073,33 +1075,7 @@ function Invoke-DiskPulseAIConfigure {
             '5' {
                 $cfg = Get-DiskPulseAIConfig
                 if (-not $cfg -or -not $cfg.enabled) { Write-Host 'AI is not configured or not enabled.' -ForegroundColor Yellow; break }
-                $isLocalEp = Test-DiskPulseAILocalEndpoint $cfg.endpoint
-                $hasKey = $false
-                if ($cfg.protectedApiKey) { $dk = Unprotect-DiskPulseSecret $cfg.protectedApiKey; if ($dk) { $hasKey = $true } }
-                if (-not $hasKey -and -not $isLocalEp) { Write-Host 'API Key is invalid or not configured.' -ForegroundColor Red; break }
-                Write-Host "Testing connection to $($cfg.endpoint) ..." -ForegroundColor Gray
-                $testPrompt = [PSCustomObject]@{ system = 'Reply with exactly: ok'; user = 'Say ok' }
-                $reqResult = Invoke-DiskPulseAIRequest -Config $cfg -Prompt $testPrompt
-                if ($reqResult.ok) {
-                    $parsed = ConvertFrom-DiskPulseAIRequestResult $reqResult
-                    Write-Host 'Connection successful.' -ForegroundColor Green
-                    if ($parsed.format -eq 'structured' -and $parsed.analysis) {
-                        Write-Host "Response: $($parsed.analysis.summary)" -ForegroundColor Gray
-                    }
-                    elseif ($parsed.rawText) {
-                        Write-Host "Response: $($parsed.rawText)" -ForegroundColor Gray
-                    }
-                }
-                else {
-                    $msg = switch ($reqResult.error) {
-                        'authentication-failed' { 'API Key or permission invalid.' }
-                        'rate-limited'          { 'Rate limited.' }
-                        'timeout'               { 'Connection timed out.' }
-                        'connection-failed'     { 'Cannot connect to endpoint.' }
-                        default                 { 'Connection failed.' }
-                    }
-                    Write-Host $msg -ForegroundColor Red
-                }
+                Show-DiskPulseAIConnectionResult (Test-DiskPulseAIConnection -Config $cfg)
             }
             '6' { $running = $false }
             default { Write-Host 'Invalid selection.' -ForegroundColor Yellow }
@@ -1414,6 +1390,51 @@ function ConvertFrom-DiskPulseAIRequestResult {
     if (-not $RequestResult.ok) { return ConvertFrom-DiskPulseAIResponse $RequestResult }
     if ($RequestResult.response -is [byte[]]) { return ConvertFrom-DiskPulseAIResponseBytes $RequestResult.response }
     return ConvertFrom-DiskPulseAIResponse $RequestResult
+}
+
+function Get-DiskPulseAIErrorMessage {
+    param([string]$ErrorCode)
+    switch ($ErrorCode) {
+        'authentication-failed' { return 'API Key 无效、权限不足，或服务商拒绝了请求。' }
+        'rate-limited'          { return '请求过于频繁，已被服务商限流，请稍后再试。' }
+        'timeout'               { return '连接超时，请检查网络或稍后再试。' }
+        'connection-failed'     { return '无法连接服务商接口，请检查网络和接口地址。' }
+        'invalid-response'      { return '接口已连接，但返回的数据格式无法识别。' }
+        default                 { return 'API 连接失败，请检查配置或查看日志。' }
+    }
+}
+
+function Test-DiskPulseAIConnection {
+    param($Config, [scriptblock]$Transport)
+    if (-not $Config -or -not $Config.enabled) {
+        return [PSCustomObject]@{ ok = $false; error = 'not-configured'; message = 'AI 尚未配置或未启用。' }
+    }
+    $isLocal = Test-DiskPulseAILocalEndpoint ([string]$Config.endpoint)
+    if (-not $isLocal -and [string]::IsNullOrWhiteSpace([string]$Config.protectedApiKey)) {
+        return [PSCustomObject]@{ ok = $false; error = 'missing-api-key'; message = 'API Key 未配置。' }
+    }
+    $testPrompt = [PSCustomObject]@{ system = 'Reply with exactly: ok'; user = 'Say ok' }
+    $requestResult = Invoke-DiskPulseAIRequest -Config $Config -Prompt $testPrompt -Transport $Transport
+    if (-not $requestResult.ok) {
+        return [PSCustomObject]@{ ok = $false; error = [string]$requestResult.error; message = Get-DiskPulseAIErrorMessage $requestResult.error }
+    }
+    $parsed = ConvertFrom-DiskPulseAIRequestResult $requestResult
+    if ($parsed.status -ne 'success') {
+        return [PSCustomObject]@{ ok = $false; error = 'invalid-response'; message = Get-DiskPulseAIErrorMessage 'invalid-response' }
+    }
+    $responseText = if ($parsed.format -eq 'structured' -and $parsed.analysis) { [string]$parsed.analysis.summary } else { [string]$parsed.rawText }
+    return [PSCustomObject]@{ ok = $true; error = $null; message = 'API 连接成功。'; response = $responseText }
+}
+
+function Show-DiskPulseAIConnectionResult {
+    param($Result)
+    if ($Result.ok) {
+        Write-Host $Result.message -ForegroundColor Green
+        if (-not [string]::IsNullOrWhiteSpace([string]$Result.response)) { Write-Host "服务商回复：$($Result.response)" -ForegroundColor Gray }
+    }
+    else {
+        Write-Host $Result.message -ForegroundColor Red
+    }
 }
 
 function Get-DiskPulseAILatestScanEvent {

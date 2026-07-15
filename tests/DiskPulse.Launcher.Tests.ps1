@@ -7,9 +7,11 @@ function Assert-True {
 
 $root = Split-Path -Parent $PSScriptRoot
 $buildScript = Join-Path $root 'build-release.ps1'
+$launcherSource = Get-Content -Raw -LiteralPath (Join-Path $root 'launcher\DiskPulseLauncher.cs') -Encoding UTF8
 $output = Join-Path $env:TEMP ('DiskPulse-launcher-test-' + [guid]::NewGuid().ToString('N'))
 
 Assert-True (Test-Path -LiteralPath $buildScript) 'build-release.ps1 is missing.'
+Assert-True ($launcherSource -match 'DISKPULSE_NO_OPEN') 'Launcher must suppress script-side browser opening.'
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $buildScript -OutputPath $output
 
 $exe = Join-Path $output 'DiskPulse.exe'

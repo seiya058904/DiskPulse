@@ -136,7 +136,7 @@ internal sealed class MainForm : Form
         statusLabel.Text = "正在扫描磁盘，请稍候...";
         try
         {
-            Process process = Start("wscript.exe", Quote(Path.Combine(root, "DiskPulse.vbs")), true);
+            Process process = Start("wscript.exe", Quote(Path.Combine(root, "DiskPulse.vbs")), true, true);
             Thread thread = new Thread(new ThreadStart(delegate
             {
                 process.WaitForExit();
@@ -191,9 +191,9 @@ internal sealed class MainForm : Form
         Start("cmd.exe", "/c " + Quote(Path.Combine(root, "configure-ai.bat")), false);
     }
 
-    private static Process Start(string fileName, string arguments, bool hidden)
+    private static Process Start(string fileName, string arguments, bool hidden, bool noOpen = false)
     {
-        return Process.Start(new ProcessStartInfo
+        ProcessStartInfo info = new ProcessStartInfo
         {
             FileName = fileName,
             Arguments = arguments,
@@ -201,7 +201,9 @@ internal sealed class MainForm : Form
             UseShellExecute = false,
             CreateNoWindow = hidden,
             WindowStyle = hidden ? ProcessWindowStyle.Hidden : ProcessWindowStyle.Normal
-        });
+        };
+        if (noOpen) info.EnvironmentVariables["DISKPULSE_NO_OPEN"] = "1";
+        return Process.Start(info);
     }
 
     private static string Quote(string value)
