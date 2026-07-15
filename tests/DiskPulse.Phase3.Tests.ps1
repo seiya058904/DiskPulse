@@ -260,8 +260,8 @@ $manyCurrent=[pscustomobject]@{drive='T:';status='complete';rootPath='T:\';usedB
 $manyDir=@([pscustomobject]@{drive='T:';status='complete';baselineScanId='base';changes=[array]$changeRecords;coverage=[pscustomobject]@{actualNetBytes=1000;locatedNetBytes=1000;addedBytes=1000;releasedBytes=0;rate=100;activityPreferred=$false};errors=@();unavailable=@();excluded=@()})
 $manySnap=[pscustomobject]@{scanId='many';completedAt='2026-07-14T11:00:00Z';status='complete'}
 $manyInput=New-DiskPulseAIInput -DirectoryResults $manyDir -HistoryCenter @() -Snapshot $manySnap
-if($manyInput.primaryGrowth.Count-ne15){throw "Growth must be capped at 15, got $($manyInput.primaryGrowth.Count)."}
-if($manyInput.omitted.growthCount-ne5){throw "Omitted growth must be 5, got $($manyInput.omitted.growthCount)."}
+if($manyInput.primaryGrowth.Count-ne10){throw "Growth must be capped at 10, got $($manyInput.primaryGrowth.Count)."}
+if($manyInput.omitted.growthCount-ne10){throw "Omitted growth must be 10, got $($manyInput.omitted.growthCount)."}
 if($manyInput.omitted.growthBytes-le0){throw "Omitted growth bytes must be positive."}
 
 # --- No baseline / no reliable changes / all failed ---
@@ -311,6 +311,8 @@ if($prompt.system -notmatch 'breakdown'){throw 'Prompt must mention breakdown de
 if($prompt.system -notmatch 'UNTRUSTED'){throw 'Prompt must mention untrusted path names.'}
 if($prompt.system -notmatch 'Do NOT claim to have read file contents'){throw 'Prompt must forbid claiming file reads.'}
 if($prompt.system -notmatch 'Do NOT generate PowerShell'){throw 'Prompt must forbid generating commands.'}
+if($prompt.system.Length -gt 1212){throw "System prompt must shrink by at least 20%, got $($prompt.system.Length) chars."}
+if($prompt.system -notmatch '120'){throw 'Prompt must define concise output limits.'}
 if($prompt.user -notmatch '\{.*test.*\}'){throw 'User message must contain the input JSON.'}
 
 # --- No API Key, username, or file content in results ---
@@ -334,10 +336,10 @@ $regDirD=[pscustomobject]@{drive='D:';status='complete';baselineScanId='base';ch
 $regInput=New-DiskPulseAIInput -DirectoryResults @($regDirC,$regDirD) -HistoryCenter @() -Snapshot $regSnap
 $cGrowth=@($regInput.primaryGrowth | Where-Object { $_.drive -eq 'C:' })
 $dGrowth=@($regInput.primaryGrowth | Where-Object { $_.drive -eq 'D:' })
-if($cGrowth.Count-ne15){throw "C: must have 15 growth items, got $($cGrowth.Count)."}
-if($dGrowth.Count-ne15){throw "D: must have 15 growth items, got $($dGrowth.Count)."}
-if($regInput.primaryGrowth.Count-ne30){throw "Total growth must be 30 (15+15), got $($regInput.primaryGrowth.Count)."}
-if($regInput.omitted.growthCount-ne10){throw "Omitted must be 10 (5+5), got $($regInput.omitted.growthCount)."}
+if($cGrowth.Count-ne10){throw "C: must have 10 growth items, got $($cGrowth.Count)."}
+if($dGrowth.Count-ne10){throw "D: must have 10 growth items, got $($dGrowth.Count)."}
+if($regInput.primaryGrowth.Count-ne20){throw "Total growth must be 20 (10+10), got $($regInput.primaryGrowth.Count)."}
+if($regInput.omitted.growthCount-ne20){throw "Omitted must be 20 (10+10), got $($regInput.omitted.growthCount)."}
 
 # One parent with >5 children, confirm only 5 breakdown
 $regParent=[pscustomobject]@{key='c-big';displayPath='C:\BigParent';kind='directory';level=1;sizeBytes=1000;deltaBytes=500;state='changed'}
@@ -348,7 +350,7 @@ for($i=1;$i -le 8;$i++){
 $regDir2=[pscustomobject]@{drive='C:';status='complete';baselineScanId='base';changes=@($regParent)+$regChildren;coverage=[pscustomobject]@{actualNetBytes=500;locatedNetBytes=500;addedBytes=500;releasedBytes=0;rate=100;activityPreferred=$false;unexplainedBytes=0};errors=@();unavailable=@();excluded=@()}
 $regInput2=New-DiskPulseAIInput -DirectoryResults @($regDir2) -HistoryCenter @() -Snapshot $regSnap
 $parentBd=@($regInput2.breakdown | Where-Object { $_.parentPath -eq 'C:\BigParent' })
-if($parentBd.Count-ne5){throw "Breakdown must be capped at 5, got $($parentBd.Count)."}
+if($parentBd.Count-ne3){throw "Breakdown must be capped at 3, got $($parentBd.Count)."}
 
 # Omitted parent's children must NOT appear in breakdown
 $omParent=[pscustomobject]@{key='c-omp';displayPath='C:\OmittedParent';kind='directory';level=1;sizeBytes=1000;deltaBytes=5;state='changed'}
@@ -386,7 +388,7 @@ $manyTrends=@()
 for($i=1;$i -le 12;$i++){$manyTrends+=[pscustomobject]@{key="c-mt$i";displayPath="C:\MT$(($i).ToString('00'))";level=1;label='持续增长';cumulativeBytes=[int64]($i*10);samples=@();growthCount=1;releaseCount=0;occurrenceCount=1;comparisonCount=1;firstSeen='2026-07-13T10:00:00Z';lastSeen='2026-07-14T10:30:00Z'}}
 $manyTrendHC=@([pscustomobject]@{drive='C:';status='complete';selections=[pscustomobject]@{};comparisons=@();trends=[array]$manyTrends})
 $manyTrendInput=New-DiskPulseAIInput -DirectoryResults @($trendsDir) -HistoryCenter $manyTrendHC -Snapshot $regSnap
-if($manyTrendInput.historicalTrends.Count-ne10){throw "historicalTrends must cap at 10, got $($manyTrendInput.historicalTrends.Count)."}
+if($manyTrendInput.historicalTrends.Count-ne8){throw "historicalTrends must cap at 8, got $($manyTrendInput.historicalTrends.Count)."}
 
 Write-Host 'PASS: Phase 2 regression — per-disk Top N, breakdown limits, omitted parent, trend sort.'
 
@@ -418,6 +420,15 @@ $bObj2=[Text.Encoding]::UTF8.GetString($script:tBody2) | ConvertFrom-Json
 if($bObj2.temperature-ne0.1){throw 'Optional temperature must be included when configured.'}
 if($bObj2.max_completion_tokens-ne512){throw 'max_completion_tokens must be used when configured.'}
 if($bObj2.PSObject.Properties.Name -contains 'max_tokens'){throw 'max_tokens must not be sent when max_completion_tokens is selected.'}
+foreach($limit in 768,1024,1536,2048){
+    $limitCfg=[pscustomobject]@{enabled=$true;endpoint='https://api.example.com/v1/chat/completions';model='test-model';protectedApiKey=(Protect-DiskPulseSecret 'test-api-key-12345');timeoutSeconds=10;tokenLimit=$limit;tokenLimitParameter='max_completion_tokens'}
+    $limitMessage=[pscustomobject]@{content='{ "summary":"ok", "possibleCauses":["growth"], "confidence":"high", "evidence":["coverage"], "recommendations":["watch"], "cautions":[] }'}
+    $limitChoice=[pscustomobject]@{message=$limitMessage}
+    $limitResponse=[pscustomobject]@{choices=@($limitChoice)}
+    $limitEnvelope=[pscustomobject]@{ok=$true;response=$limitResponse}
+    $limitParsed=ConvertFrom-DiskPulseAIRequestResult $limitEnvelope
+    if($limitParsed.status-ne'success' -or $limitParsed.format-ne'structured'){throw "Completion limit $limit must preserve structured JSON: $($limitParsed.status)/$($limitParsed.format)."}
+}
 
 # Test: Remote includes Bearer header
 if($script:tHeaders['Authorization']-ne'Bearer test-api-key-12345'){throw 'Remote must include Bearer.'}
@@ -485,15 +496,15 @@ if($ns.analysis.confidence-ne'true'){throw 'Non-string confidence must be string
 if($ns.analysis.possibleCauses.Count-ne0){throw 'Non-array possibleCauses must become empty.'}
 if($ns.analysis.evidence.Count-ne0){throw 'Null evidence must become empty.'}
 
-# Test: Truncation — summary 4000, lists 10 items, item 1000 chars
+# Test: Truncation — concise summary/lists and item lengths
 $causeArr=@(); for($i=0;$i-lt 15;$i++){$causeArr+=('item'+$i)}
 $causeJson=($causeArr | ForEach-Object { '"' + $_ + '"' }) -join ','
 $longEv='B'*2000
 $tTrunc={ param($u,$h,$b,$t) $jsonStr=('{ "summary":"' + ('A'*5000) + '", "possibleCauses":[' + $causeJson + '], "confidence":"low", "evidence":["' + $longEv + '"], "recommendations":[], "cautions":[] }'); $msg=[pscustomobject]@{content=$jsonStr}; $ch=[pscustomobject]@{message=$msg}; return [pscustomobject]@{choices=@($ch)} }
 $tr=ConvertFrom-DiskPulseAIResponse (Invoke-DiskPulseAIRequest -Config $remoteCfg -Prompt $tp -Transport $tTrunc)
-if($tr.analysis.summary.Length-gt4000){throw 'Summary capped at 4000.'}
-if($tr.analysis.possibleCauses.Count-gt10){throw 'List capped at 10.'}
-if($tr.analysis.evidence[0].Length-gt1000){throw 'Item capped at 1000.'}
+if($tr.analysis.summary.Length-gt120){throw 'Summary capped at 120.'}
+if($tr.analysis.possibleCauses.Count-gt3 -or $tr.analysis.evidence.Count-gt3 -or $tr.analysis.recommendations.Count-gt3 -or $tr.analysis.cautions.Count-gt2){throw 'AI lists must be capped at 3/3/3/2.'}
+if($tr.analysis.evidence[0].Length-gt80){throw 'Item capped at 80.'}
 
 # Test: Raw text truncation
 $longPlain='X'*20000
