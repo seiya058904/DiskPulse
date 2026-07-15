@@ -51,6 +51,7 @@ Write-Host ($counts|ConvertTo-Json -Compress);Write-Host 'PASS: Phase 3 comparis
 foreach($name in 'Get-DiskPulseAIConfig','Protect-DiskPulseSecret','Unprotect-DiskPulseSecret','Test-DiskPulseAIEndpoint','Invoke-DiskPulseAIConfigure','ConvertTo-DiskPulseSafeJSON'){
     if(-not(Get-Command $name -ErrorAction SilentlyContinue)){throw "Missing AI function: $name"}
 }
+if(-not(Get-Command ConvertFrom-DiskPulseAIRequestResult -ErrorAction SilentlyContinue)){throw 'Missing unified AI response parser.'}
 $aiCfgNullPath=Join-Path ([IO.Path]::GetTempPath()) 'ai-test-nonexistent.json'
 $aiCfgNull = Get-DiskPulseAIConfig -ConfigPath $aiCfgNullPath
 if($null-ne$aiCfgNull){throw 'AI config must be null when no config file exists.'}
@@ -389,7 +390,16 @@ if($bObj.model-ne'test-model'){throw 'Model mismatch.'}
 if($bObj.messages.Count-ne2){throw 'Must have 2 messages.'}
 if($bObj.messages[0].role-ne'system'){throw 'First msg must be system.'}
 if($bObj.messages[1].role-ne'user'){throw 'Second msg must be user.'}
-if($bObj.temperature-ne0.2){throw 'Temperature must be 0.2.'}
+if($bObj.PSObject.Properties.Name -contains 'temperature'){throw 'Default request must not include temperature.'}
+if($bObj.PSObject.Properties.Name -contains 'max_tokens'){throw 'Default request must not include max_tokens.'}
+if($bObj.PSObject.Properties.Name -contains 'max_completion_tokens'){throw 'Default request must not include max_completion_tokens.'}
+
+$tokenCfg=[pscustomobject]@{enabled=$true;endpoint='https://api.example.com/v1/chat/completions';model='test-model';protectedApiKey=(Protect-DiskPulseSecret 'test-api-key-12345');timeoutSeconds=10;tokenLimit=512;tokenLimitParameter='max_completion_tokens';temperature=0.1}
+$req2=Invoke-DiskPulseAIRequest -Config $tokenCfg -Prompt $tp -Transport { param($u,$h,$b,$t) $script:tBody2=$b; $m=[pscustomobject]@{content='ok'}; $c=[pscustomobject]@{message=$m}; return [pscustomobject]@{choices=@($c)} }
+$bObj2=[Text.Encoding]::UTF8.GetString($script:tBody2) | ConvertFrom-Json
+if($bObj2.temperature-ne0.1){throw 'Optional temperature must be included when configured.'}
+if($bObj2.max_completion_tokens-ne512){throw 'max_completion_tokens must be used when configured.'}
+if($bObj2.PSObject.Properties.Name -contains 'max_tokens'){throw 'max_tokens must not be sent when max_completion_tokens is selected.'}
 
 # Test: Remote includes Bearer header
 if($script:tHeaders['Authorization']-ne'Bearer test-api-key-12345'){throw 'Remote must include Bearer.'}
@@ -421,6 +431,18 @@ $plain=ConvertFrom-DiskPulseAIResponse (Invoke-DiskPulseAIRequest -Config $remot
 if($plain.status-ne'success'){throw 'Plain text must succeed.'}
 if($plain.format-ne'text'){throw 'Format must be text.'}
 if($plain.rawText-ne'Just text.'){throw 'rawText must match.'}
+
+# Test: UTF-8 Chinese + emoji structured response
+$tUtf8={ param($u,$h,$b,$t) $msg=[pscustomobject]@{content='{ "summary":"中文😀", "possibleCauses":["原因😀"], "confidence":"medium", "evidence":["证据"], "recommendations":["建议"], "cautions":["注意"] }'}; $ch=[pscustomobject]@{message=$msg}; return [pscustomobject]@{choices=@($ch)} }
+$utf8=ConvertFrom-DiskPulseAIResponse (Invoke-DiskPulseAIRequest -Config $remoteCfg -Prompt $tp -Transport $tUtf8)
+if($utf8.status-ne'success'){throw 'UTF-8 structured response must succeed.'}
+if($utf8.analysis.summary-ne'中文😀'){throw 'UTF-8 summary mismatch.'}
+if($utf8.analysis.possibleCauses[0]-ne'原因😀'){throw 'UTF-8 possibleCauses mismatch.'}
+
+# Test: Invalid JSON
+$tBadJson={ param($u,$h,$b,$t) $msg=[pscustomobject]@{content='{ "summary":"broken" '}; $ch=[pscustomobject]@{message=$msg}; return [pscustomobject]@{choices=@($ch)} }
+$bad=ConvertFrom-DiskPulseAIResponse (Invoke-DiskPulseAIRequest -Config $remoteCfg -Prompt $tp -Transport $tBadJson)
+if($bad.status-ne'invalid-response'){throw 'Invalid JSON must be invalid-response.'}
 
 # Test: Empty content
 $tEmpty={ param($u,$h,$b,$t) $msg=[pscustomobject]@{content=''}; $ch=[pscustomobject]@{message=$msg}; return [pscustomobject]@{choices=@($ch)} }
@@ -460,6 +482,29 @@ $longPlain='X'*20000
 $tRaw={ param($u,$h,$b,$t) $msg=[pscustomobject]@{content=$longPlain}; $ch=[pscustomobject]@{message=$msg}; return [pscustomobject]@{choices=@($ch)} }
 $rt=ConvertFrom-DiskPulseAIResponse (Invoke-DiskPulseAIRequest -Config $remoteCfg -Prompt $tp -Transport $tRaw)
 if($rt.rawText.Length-gt16000){throw 'RawText capped at 16000.'}
+
+# Test: UTF-8 byte decoding helper uses the complete API response envelope
+$bUtf8=[Text.Encoding]::UTF8.GetBytes('{"choices":[{"message":{"content":"{\"summary\":\"中文😀\",\"possibleCauses\":[],\"confidence\":\"high\",\"evidence\":[],\"recommendations\":[],\"cautions\":[]}"}}]}')
+$byteParsed=ConvertFrom-DiskPulseAIResponseBytes $bUtf8
+if($byteParsed.status-ne'success'){throw 'UTF-8 byte response must succeed.'}
+if($byteParsed.analysis.summary-ne'中文😀'){throw 'UTF-8 byte summary mismatch.'}
+$bom=[byte[]](0xEF,0xBB,0xBF)+[Text.Encoding]::UTF8.GetBytes('{"choices":[{"message":{"content":"{\"summary\":\"BOM\",\"possibleCauses\":[],\"confidence\":\"high\",\"evidence\":[],\"recommendations\":[],\"cautions\":[]}"}}]}')
+$bomParsed=ConvertFrom-DiskPulseAIResponseBytes $bom
+if($bomParsed.analysis.summary-ne'BOM'){throw 'UTF-8 BOM response must succeed.'}
+$badUtf8=[byte[]](0xFF,0xFE,0xFD)
+$badParsed=ConvertFrom-DiskPulseAIResponseBytes $badUtf8
+if($badParsed.status-ne'invalid-response'){throw 'Invalid UTF-8 must be invalid-response.'}
+$badOuter=ConvertFrom-DiskPulseAIResponseBytes ([Text.Encoding]::UTF8.GetBytes('{"choices":'))
+if($badOuter.status-ne'invalid-response'){throw 'Invalid outer JSON must be invalid-response.'}
+$missingOuter=ConvertFrom-DiskPulseAIResponseBytes ([Text.Encoding]::UTF8.GetBytes('{"id":"x"}'))
+if($missingOuter.status-ne'invalid-response'){throw 'Missing choices in outer JSON must be invalid-response.'}
+$badContent=ConvertFrom-DiskPulseAIResponseBytes ([Text.Encoding]::UTF8.GetBytes('{"choices":[{"message":{"content":"{broken"}}]}'))
+if($badContent.status-ne'invalid-response'){throw 'Invalid structured content must be invalid-response.'}
+$envelopeObj=[pscustomobject]@{choices=@([pscustomobject]@{message=[pscustomobject]@{content='plain response'}})}
+if((ConvertFrom-DiskPulseAIRequestResult ([pscustomobject]@{ok=$true;response=$envelopeObj})).format-ne'text'){throw 'Unified parser object response failed.'}
+$envelopeBytes=[Text.Encoding]::UTF8.GetBytes('{"choices":[{"message":{"content":"plain bytes"}}]}')
+if((ConvertFrom-DiskPulseAIRequestResult ([pscustomobject]@{ok=$true;response=$envelopeBytes})).format-ne'text'){throw 'Unified parser byte response failed.'}
+if((ConvertFrom-DiskPulseAIRequestResult ([pscustomobject]@{ok=$false;error='timeout'})).status-ne'timeout'){throw 'Unified parser request error failed.'}
 
 # Test: Error classification
 $e401=Invoke-DiskPulseAIRequest -Config $remoteCfg -Prompt $tp -Transport { param($u,$h,$b,$t) throw (New-Object System.Net.WebException('401')) }
@@ -845,6 +890,181 @@ try{
 
 }finally{
     if(Test-Path -LiteralPath $orcTempRoot){Remove-Item -LiteralPath $orcTempRoot -Recurse -Force -ErrorAction SilentlyContinue}
+}
+
+# === Worker lifecycle and request construction guards ===
+foreach($name in 'Get-DiskPulseAIAnalysisState','Get-DiskPulseAILatestScanEvent','New-DiskPulseAIWorkerCommand','Start-DiskPulseAIWorker','Invoke-DiskPulseAIWorker'){
+    if(-not(Get-Command $name -ErrorAction SilentlyContinue)){throw "Missing worker helper: $name"}
+}
+$src=Get-Content -Raw -LiteralPath (Join-Path $root 'check.bat') -Encoding UTF8
+$workerStart=$src.IndexOf('function Invoke-DiskPulseAIWorker')
+$workerEnd=$src.IndexOf('function ConvertFrom-DiskPulseAIResponse')
+$workerBody=if($workerStart -ge 0 -and $workerEnd -gt $workerStart){$src.Substring($workerStart,$workerEnd-$workerStart)}else{''}
+if($workerBody -match 'Acquire-DiskPulseLock'){throw 'AI worker must not acquire the main scan lock.'}
+if($workerBody -match 'Get-CimInstance'){throw 'AI worker must not rescan disks.'}
+if($workerBody -match 'aiPlan\.input|directoryResults|historyCenter|snapshot'){throw 'Worker must consume the persisted aiInput contract.'}
+if($src -match '(?s)\$aiInputPayload\s*=.*?aiPlan\s*='){throw 'Production worker input must not persist aiPlan.'}
+if($src -match 'function Write-DiskPulseAIHtmlResult'){throw 'Obsolete HTML writer must be removed.'}
+if($src -match '(?s)function Update-DiskPulseAIHtmlResult.*?node\s+--check'){throw 'Production HTML update must not invoke Node.js.'}
+if($src -match '\[IO\.Path\]::GetTempFileName\(\)'){throw 'HTML replacement must not use system TEMP files.'}
+if($src -match '\$jsPath\s*=|WriteAllText\(\$jsPath|Test-Path -LiteralPath \$jsPath'){throw 'Production HTML update must not create a temporary JS file.'}
+if($src -notmatch '(?s)if \(\$aiPlan\.ready\).*?Write-DiskPulseAIResult -ScanId \$scanId -Status \$aiAnalysisResult\.status'){throw 'Ready scans must persist analyzing before worker startup.'}
+if($src -notmatch '(?s)function Invoke-DiskPulseAIConfigure.*?ConvertFrom-DiskPulseAIRequestResult \$reqResult'){throw 'Configure connection test must use unified parser.'}
+$workerCmd=New-DiskPulseAIWorkerCommand -ScriptPath 'C:\DiskPulse\check.bat' -RootPath 'C:\DiskPulse' -ScanId 'scan-1' -InputPath 'C:\DiskPulse\runtime\ai-input.json' -OutputPath 'C:\DiskPulse\runtime\last-ai-analysis.json' -HtmlPath 'C:\DiskPulse\runtime\DiskPulse.html'
+if($workerCmd -notmatch '\$env:DISKPULSE_AI_WORKER=''1'''){throw 'Worker command must set worker mode.'}
+if($workerCmd -match 'test-api-key'){throw 'Worker command must not contain API key.'}
+    if(Update-DiskPulseAIHtmlResult -HtmlPath 'C:\nope.html' -ExpectedScanId 'x' -AnalysisResult ([pscustomobject]@{status='success'})){throw 'Missing HTML must not update.'}
+
+# --- Worker behavior tests (offline fixture, temp HTML/events/output/config) ---
+$workerRoot=Join-Path ([IO.Path]::GetTempPath()) ('DiskPulse-Worker-' + [guid]::NewGuid().ToString('N'))
+[IO.Directory]::CreateDirectory($workerRoot)|Out-Null
+try{
+    $workerRuntime=Join-Path $workerRoot 'runtime'
+    [IO.Directory]::CreateDirectory($workerRuntime)|Out-Null
+    $workerHtml=Join-Path $workerRuntime 'DiskPulse.html'
+    $workerEvents=Join-Path $workerRuntime 'scans.jsonl'
+    $workerOut=Join-Path $workerRuntime 'last-ai-analysis.json'
+    $workerCfg=Join-Path $workerRuntime 'ai-config.local.json'
+    $workerInput=Join-Path $workerRuntime 'ai-input-scan-1.json'
+    $htmlTemplate=@"
+<!DOCTYPE html><html><body>
+<script>
+const RAW_SCAN_META = {"scanId":"scan-1","status":"complete"};
+/* DISKPULSE_AI_RESULT_START */
+const RAW_AI_ANALYSIS = INJECT_AI_ANALYSIS;
+/* DISKPULSE_AI_RESULT_END */
+const AI_ANALYSIS = RAW_AI_ANALYSIS || {};
+function renderAIAnalysis(){ return AI_ANALYSIS.status; }
+</script>
+</body></html>
+"@
+    [IO.File]::WriteAllText($workerHtml,$htmlTemplate,[Text.UTF8Encoding]::new($false))
+    @{schemaVersion=1;enabled=$true;endpoint='https://api.example.com/v1/chat/completions';model='test-model';protectedApiKey=(Protect-DiskPulseSecret 'worker-key');timeoutSeconds=10}|ConvertTo-Json -Depth 4|Set-Content -LiteralPath $workerCfg -Encoding UTF8
+    $realWorkerInput=New-DiskPulseAIInput -DirectoryResults @([pscustomobject]@{drive='C:';status='complete';baselineScanId='base';changes=@([pscustomobject]@{state='changed';level=1;displayPath='C:\A';deltaBytes=1;sizeBytes=1;key='a'});coverage=[pscustomobject]@{actualNetBytes=1;locatedNetBytes=1;rate=100};errors=@();unavailable=@();excluded=@()}) -HistoryCenter @() -Snapshot ([pscustomobject]@{scanId='scan-1';status='complete';completedAt='2026-07-14T10:30:00Z'})
+    $workerInputObj=[pscustomobject]@{
+        scanId='scan-1'
+        outputPath=$workerOut
+        tempOutputPath=($workerOut + '.scan-1.tmp')
+        model='test-model'
+        aiInput=$realWorkerInput
+    }
+    $workerInputObj | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $workerInput -Encoding UTF8
+    $env:DISKPULSE_ROOT=$workerRoot
+    $env:DISKPULSE_AI_WORKER_SCANID='scan-1'
+    $env:DISKPULSE_AI_WORKER_INPUT=$workerInput
+    $env:DISKPULSE_AI_WORKER_HTML=$workerHtml
+    $workerPaths=[pscustomobject]@{Runtime=$workerRuntime;Events=$workerEvents;Lock=(Join-Path $workerRuntime 'DiskPulse.lock')}
+    $workerLock=Acquire-DiskPulseLock $workerPaths 'lock-test'
+    $script:workerCalls=0
+    function Invoke-DiskPulseAIRequest {
+        param($Config,$Prompt,[scriptblock]$Transport)
+        $script:workerCalls++
+        return [pscustomobject]@{ ok=$true; response=[pscustomobject]@{ choices=@([pscustomobject]@{ message=[pscustomobject]@{ content='{ "summary":"Worker ok", "possibleCauses":["cause"], "confidence":"high", "evidence":["e"], "recommendations":["r"], "cautions":[] }' } }) } }
+    }
+    Set-Content -LiteralPath $workerEvents -Encoding UTF8 -Value (@(
+        '{"scanId":"scan-1","status":"running","completedAt":"2026-07-14T10:30:00Z"}'
+        '{"scanId":"scan-1","status":"complete","completedAt":"2026-07-14T10:31:00Z"}'
+    ))
+    Invoke-DiskPulseAIWorker
+    if($script:workerCalls-ne1){throw 'Worker should call AI exactly once for complete event.'}
+    $saved=Get-Content -Raw -LiteralPath $workerOut -Encoding UTF8 | ConvertFrom-Json
+    if($saved.status-ne'success'){throw 'Worker complete must write success result.'}
+    $html=Get-Content -Raw -LiteralPath $workerHtml -Encoding UTF8
+    if($html-notmatch'Worker ok'){throw 'Worker complete must update HTML.'}
+    $workerJsPath=Join-Path $workerRuntime 'worker-updated.js'
+    $workerJs=[regex]::Match($html,'(?s)<script>\s*(.*?)\s*</script>').Groups[1].Value
+    [IO.File]::WriteAllText($workerJsPath,$workerJs,[Text.UTF8Encoding]::new($false))
+    & node --check $workerJsPath
+    if($LASTEXITCODE-ne0){throw 'Updated worker HTML JavaScript must pass node --check.'}
+    Remove-Item -LiteralPath $workerJsPath -Force
+    if(Test-Path -LiteralPath $workerInput){throw 'Worker input must be deleted after completion.'}
+
+    # partial event should also update
+    [IO.File]::WriteAllText($workerHtml,$htmlTemplate,[Text.UTF8Encoding]::new($false))
+    $workerInputObj | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $workerInput -Encoding UTF8
+    Set-Content -LiteralPath $workerEvents -Encoding UTF8 -Value '{"scanId":"scan-1","status":"partial","completedAt":"2026-07-14T10:31:00Z"}'
+    Invoke-DiskPulseAIWorker
+    if((Get-Content -Raw -LiteralPath $workerHtml -Encoding UTF8)-notmatch'Worker ok'){throw 'Worker partial must update HTML.'}
+
+    # running/failed must not update
+    [IO.File]::WriteAllText($workerHtml,$htmlTemplate,[Text.UTF8Encoding]::new($false))
+    $workerInputObj | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $workerInput -Encoding UTF8
+    Set-Content -LiteralPath $workerEvents -Encoding UTF8 -Value '{"scanId":"scan-1","status":"running","completedAt":"2026-07-14T10:31:00Z"}'
+    Invoke-DiskPulseAIWorker
+    if((Get-Content -Raw -LiteralPath $workerHtml -Encoding UTF8)-match'Worker ok'){throw 'Running event must not update HTML.'}
+    Set-Content -LiteralPath $workerEvents -Encoding UTF8 -Value '{"scanId":"scan-1","status":"failed","completedAt":"2026-07-14T10:31:00Z"}'
+    Invoke-DiskPulseAIWorker
+    if((Get-Content -Raw -LiteralPath $workerHtml -Encoding UTF8)-match'Worker ok'){throw 'Failed event must not update HTML.'}
+
+    # stale worker must not overwrite newer scan
+    [IO.File]::WriteAllText($workerHtml,$htmlTemplate,[Text.UTF8Encoding]::new($false))
+    Set-Content -LiteralPath $workerInput -Encoding UTF8 -Value ($workerInputObj | ConvertTo-Json -Depth 12)
+    Set-Content -LiteralPath $workerEvents -Encoding UTF8 -Value '{"scanId":"scan-2","status":"complete","completedAt":"2026-07-14T10:32:00Z"}'
+    $script:workerCalls=0
+    Invoke-DiskPulseAIWorker
+    if($script:workerCalls-ne0){throw 'Stale worker must not call AI.'}
+    if((Get-Content -Raw -LiteralPath $workerHtml -Encoding UTF8)-match'Worker ok'){throw 'Stale worker must not update HTML.'}
+
+    # request-period TOCTOU: scan changes while A is waiting for the response
+    [IO.File]::WriteAllText($workerHtml,$htmlTemplate,[Text.UTF8Encoding]::new($false))
+    $oldOutput=Get-Content -Raw -LiteralPath $workerOut -Encoding UTF8
+    Set-Content -LiteralPath $workerInput -Encoding UTF8 -Value ($workerInputObj | ConvertTo-Json -Depth 12)
+    Set-Content -LiteralPath $workerEvents -Encoding UTF8 -Value '{"scanId":"scan-1","status":"complete"}'
+    $script:workerCalls=0
+    function Invoke-DiskPulseAIRequest {
+        param($Config,$Prompt,[scriptblock]$Transport)
+        Set-Content -LiteralPath $workerEvents -Encoding UTF8 -Value '{"scanId":"scan-2","status":"complete"}'
+        return [pscustomobject]@{ ok=$true; response=[pscustomobject]@{ choices=@([pscustomobject]@{ message=[pscustomobject]@{ content='{ "summary":"late A" }' } }) } }
+    }
+    Invoke-DiskPulseAIWorker
+    if((Get-Content -Raw -LiteralPath $workerHtml -Encoding UTF8)-match'late A'){throw 'Request-period stale worker must not update HTML.'}
+    if((Get-Content -Raw -LiteralPath $workerOut -Encoding UTF8)-ne$oldOutput){throw 'Request-period stale worker must not update last result.'}
+
+    # worker exception writes safe unknown-error only while the scan is current
+    [IO.File]::WriteAllText($workerHtml,$htmlTemplate,[Text.UTF8Encoding]::new($false))
+    Set-Content -LiteralPath $workerInput -Encoding UTF8 -Value ($workerInputObj | ConvertTo-Json -Depth 12)
+    Set-Content -LiteralPath $workerEvents -Encoding UTF8 -Value '{"scanId":"scan-1","status":"complete"}'
+    function Invoke-DiskPulseAIRequest { param($Config,$Prompt,[scriptblock]$Transport) throw 'secret exception text' }
+    Invoke-DiskPulseAIWorker
+    $exceptionResult=Get-Content -Raw -LiteralPath $workerOut -Encoding UTF8|ConvertFrom-Json
+    if($exceptionResult.status-ne'unknown-error'){throw 'Current worker exception must write unknown-error.'}
+    if(($exceptionResult|ConvertTo-Json -Compress -Depth 8)-match 'secret exception text'){throw 'Worker exception text must not be persisted.'}
+    if((Get-Content -Raw -LiteralPath $workerHtml -Encoding UTF8)-notmatch 'unknown-error'){throw 'Current worker exception must update HTML.'}
+    if(Test-Path -LiteralPath $workerInput){throw 'Worker input must be deleted after exception.'}
+
+    [IO.File]::WriteAllText($workerHtml,$htmlTemplate,[Text.UTF8Encoding]::new($false))
+    $staleOutput=Get-Content -Raw -LiteralPath $workerOut -Encoding UTF8
+    Set-Content -LiteralPath $workerInput -Encoding UTF8 -Value ($workerInputObj | ConvertTo-Json -Depth 12)
+    Set-Content -LiteralPath $workerEvents -Encoding UTF8 -Value '{"scanId":"scan-1","status":"complete"}'
+    function Invoke-DiskPulseAIRequest { param($Config,$Prompt,[scriptblock]$Transport) Set-Content -LiteralPath $workerEvents -Encoding UTF8 -Value '{"scanId":"scan-2","status":"complete"}'; throw 'stale secret' }
+    Invoke-DiskPulseAIWorker
+    if((Get-Content -Raw -LiteralPath $workerOut -Encoding UTF8)-ne$staleOutput){throw 'Stale worker exception must not update result.'}
+    if((Get-Content -Raw -LiteralPath $workerHtml -Encoding UTF8)-match 'unknown-error'){throw 'Stale worker exception must not update HTML.'}
+    if(Test-Path -LiteralPath $workerInput){throw 'Stale worker input must be deleted.'}
+
+    # ready scan replaces the previous result before any worker runs
+    Write-DiskPulseAIResult -ScanId 'scan-A' -Status 'success' -Model 'test-model' -Format 'structured' -Analysis ([pscustomobject]@{summary='old'}) -RawText $null -OutputPath $workerOut
+    $readyState=Get-DiskPulseAIAnalysisState -DirectoryResults $orcDir -HistoryCenter @() -Snapshot ([pscustomobject]@{scanId='scan-B';status='complete'})
+    if(-not $readyState.ready){throw 'Ready fixture must be ready.'}
+    $analyzing=New-DiskPulseAIStatus -ScanId 'scan-B' -Status 'analyzing' -Model 'test-model' -Analysis $null -RawText $null -Format 'none'
+    Write-DiskPulseAIResult -ScanId 'scan-B' -Status $analyzing.status -Model $analyzing.model -Format $analyzing.format -Analysis $analyzing.analysis -RawText $analyzing.rawText -OutputPath $workerOut
+    $savedAnalyzing=Get-Content -Raw -LiteralPath $workerOut -Encoding UTF8|ConvertFrom-Json
+    if($savedAnalyzing.scanId-ne'scan-B' -or $savedAnalyzing.status-ne'analyzing' -or $null-ne$savedAnalyzing.analysis -or $null-ne$savedAnalyzing.rawText){throw 'Ready scan must persist a clean analyzing result.'}
+
+    # non-ready states overwrite old result
+    @{schemaVersion=1;enabled=$false;endpoint='https://api.example.com/v1/chat/completions';model='test-model'}|ConvertTo-Json|Set-Content -LiteralPath $workerCfg -Encoding UTF8
+    Write-DiskPulseAIResult -ScanId 'scan-1' -Status 'success' -Model 'test-model' -Format 'structured' -Analysis ([pscustomobject]@{summary='old'}) -RawText $null -OutputPath $workerOut
+    $aiState=Get-DiskPulseAIAnalysisState -DirectoryResults @([pscustomobject]@{baselineScanId='base';status='complete';changes=@([pscustomobject]@{state='changed'})}) -HistoryCenter @() -Snapshot ([pscustomobject]@{scanId='scan-1';status='complete'})
+    if($aiState.status-ne'disabled'){throw 'Disabled config must be disabled state.'}
+    Write-DiskPulseAIResult -ScanId 'scan-1' -Status $aiState.status -Model $aiState.model -Format 'none' -Analysis $null -RawText $null -OutputPath $workerOut
+    if((Get-Content -Raw -LiteralPath $workerOut -Encoding UTF8|ConvertFrom-Json).analysis){throw 'Non-ready state must overwrite old result.'}
+}finally{
+    if($workerLock){Release-DiskPulseLock $workerPaths $workerLock}
+    if($env:DISKPULSE_ROOT){Remove-Item Env:DISKPULSE_ROOT -ErrorAction SilentlyContinue}
+    if($env:DISKPULSE_AI_WORKER_SCANID){Remove-Item Env:DISKPULSE_AI_WORKER_SCANID -ErrorAction SilentlyContinue}
+    if($env:DISKPULSE_AI_WORKER_INPUT){Remove-Item Env:DISKPULSE_AI_WORKER_INPUT -ErrorAction SilentlyContinue}
+    if($env:DISKPULSE_AI_WORKER_HTML){Remove-Item Env:DISKPULSE_AI_WORKER_HTML -ErrorAction SilentlyContinue}
+    if(Test-Path -LiteralPath $workerRoot){Remove-Item -LiteralPath $workerRoot -Recurse -Force -ErrorAction SilentlyContinue}
 }
 
 # --- Verify original runtime/ai-config.local.json was NOT modified ---

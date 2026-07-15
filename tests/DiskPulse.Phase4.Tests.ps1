@@ -264,6 +264,15 @@ var document = {
 };
 
 function formatLocalDate(d) { return "stub-date"; }
+var sessionStorage = {
+  _data: Object.create(null),
+  getItem: function(key) { return Object.prototype.hasOwnProperty.call(this._data, key) ? this._data[key] : null; },
+  setItem: function(key, value) { this._data[key] = String(value); },
+  removeItem: function(key) { delete this._data[key]; }
+};
+var reloadCount = 0;
+var location = { reload: function() { reloadCount++; } };
+function setTimeout(fn) { fn(); return 1; }
 
 var AI_ANALYSIS = {};
 
@@ -359,6 +368,15 @@ for (var f = 0; f < fixtures.length; f++) {
     assert.ok(text.indexOf(expected[i]) !== -1, "\"" + name + "\" should contain \"" + expected[i] + "\" in \"" + text + "\"");
   }
 }
+
+// analyzing must auto-refresh with an upper bound
+allElements.length = 0;
+AI_ANALYSIS = {status:"analyzing",scanId:"scan-1"};
+for (var i = 0; i < 13; i++) {
+  renderAIAnalysis();
+}
+assert.equal(reloadCount, 12, "analyzing must schedule at most 12 reloads");
+assert.ok(collectText(getRoot()).indexOf("AI 分析仍在进行或已中断，请手动刷新") !== -1, "analyzing cap message missing");
 
 // --- XSS tests ---
 var xssPayloads = [
