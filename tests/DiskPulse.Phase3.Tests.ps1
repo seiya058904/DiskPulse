@@ -51,6 +51,7 @@ Write-Host ($counts|ConvertTo-Json -Compress);Write-Host 'PASS: Phase 3 comparis
 foreach($name in 'Get-DiskPulseAIConfig','Protect-DiskPulseSecret','Unprotect-DiskPulseSecret','Test-DiskPulseAIEndpoint','Invoke-DiskPulseAIConfigure','ConvertTo-DiskPulseSafeJSON'){
     if(-not(Get-Command $name -ErrorAction SilentlyContinue)){throw "Missing AI function: $name"}
 }
+if(-not(Get-Command ConvertFrom-DiskPulseAIRequestResult -ErrorAction SilentlyContinue)){throw 'Missing unified AI response parser.'}
 $aiCfgNullPath=Join-Path ([IO.Path]::GetTempPath()) 'ai-test-nonexistent.json'
 $aiCfgNull = Get-DiskPulseAIConfig -ConfigPath $aiCfgNullPath
 if($null-ne$aiCfgNull){throw 'AI config must be null when no config file exists.'}
@@ -499,6 +500,11 @@ $missingOuter=ConvertFrom-DiskPulseAIResponseBytes ([Text.Encoding]::UTF8.GetByt
 if($missingOuter.status-ne'invalid-response'){throw 'Missing choices in outer JSON must be invalid-response.'}
 $badContent=ConvertFrom-DiskPulseAIResponseBytes ([Text.Encoding]::UTF8.GetBytes('{"choices":[{"message":{"content":"{broken"}}]}'))
 if($badContent.status-ne'invalid-response'){throw 'Invalid structured content must be invalid-response.'}
+$envelopeObj=[pscustomobject]@{choices=@([pscustomobject]@{message=[pscustomobject]@{content='plain response'}})}
+if((ConvertFrom-DiskPulseAIRequestResult ([pscustomobject]@{ok=$true;response=$envelopeObj})).format-ne'text'){throw 'Unified parser object response failed.'}
+$envelopeBytes=[Text.Encoding]::UTF8.GetBytes('{"choices":[{"message":{"content":"plain bytes"}}]}')
+if((ConvertFrom-DiskPulseAIRequestResult ([pscustomobject]@{ok=$true;response=$envelopeBytes})).format-ne'text'){throw 'Unified parser byte response failed.'}
+if((ConvertFrom-DiskPulseAIRequestResult ([pscustomobject]@{ok=$false;error='timeout'})).status-ne'timeout'){throw 'Unified parser request error failed.'}
 
 # Test: Error classification
 $e401=Invoke-DiskPulseAIRequest -Config $remoteCfg -Prompt $tp -Transport { param($u,$h,$b,$t) throw (New-Object System.Net.WebException('401')) }
@@ -901,6 +907,9 @@ if($src -match '(?s)\$aiInputPayload\s*=.*?aiPlan\s*='){throw 'Production worker
 if($src -match 'function Write-DiskPulseAIHtmlResult'){throw 'Obsolete HTML writer must be removed.'}
 if($src -match '(?s)function Update-DiskPulseAIHtmlResult.*?node\s+--check'){throw 'Production HTML update must not invoke Node.js.'}
 if($src -match '\[IO\.Path\]::GetTempFileName\(\)'){throw 'HTML replacement must not use system TEMP files.'}
+if($src -match '\$jsPath\s*=|WriteAllText\(\$jsPath|Test-Path -LiteralPath \$jsPath'){throw 'Production HTML update must not create a temporary JS file.'}
+if($src -notmatch '(?s)if \(\$aiPlan\.ready\).*?Write-DiskPulseAIResult -ScanId \$scanId -Status \$aiAnalysisResult\.status'){throw 'Ready scans must persist analyzing before worker startup.'}
+if($src -notmatch '(?s)function Invoke-DiskPulseAIConfigure.*?ConvertFrom-DiskPulseAIRequestResult \$reqResult'){throw 'Configure connection test must use unified parser.'}
 $workerCmd=New-DiskPulseAIWorkerCommand -ScriptPath 'C:\DiskPulse\check.bat' -RootPath 'C:\DiskPulse' -ScanId 'scan-1' -InputPath 'C:\DiskPulse\runtime\ai-input.json' -OutputPath 'C:\DiskPulse\runtime\last-ai-analysis.json' -HtmlPath 'C:\DiskPulse\runtime\DiskPulse.html'
 if($workerCmd -notmatch '\$env:DISKPULSE_AI_WORKER=''1'''){throw 'Worker command must set worker mode.'}
 if($workerCmd -match 'test-api-key'){throw 'Worker command must not contain API key.'}
@@ -1010,6 +1019,37 @@ function renderAIAnalysis(){ return AI_ANALYSIS.status; }
     Invoke-DiskPulseAIWorker
     if((Get-Content -Raw -LiteralPath $workerHtml -Encoding UTF8)-match'late A'){throw 'Request-period stale worker must not update HTML.'}
     if((Get-Content -Raw -LiteralPath $workerOut -Encoding UTF8)-ne$oldOutput){throw 'Request-period stale worker must not update last result.'}
+
+    # worker exception writes safe unknown-error only while the scan is current
+    [IO.File]::WriteAllText($workerHtml,$htmlTemplate,[Text.UTF8Encoding]::new($false))
+    Set-Content -LiteralPath $workerInput -Encoding UTF8 -Value ($workerInputObj | ConvertTo-Json -Depth 12)
+    Set-Content -LiteralPath $workerEvents -Encoding UTF8 -Value '{"scanId":"scan-1","status":"complete"}'
+    function Invoke-DiskPulseAIRequest { param($Config,$Prompt,[scriptblock]$Transport) throw 'secret exception text' }
+    Invoke-DiskPulseAIWorker
+    $exceptionResult=Get-Content -Raw -LiteralPath $workerOut -Encoding UTF8|ConvertFrom-Json
+    if($exceptionResult.status-ne'unknown-error'){throw 'Current worker exception must write unknown-error.'}
+    if(($exceptionResult|ConvertTo-Json -Compress -Depth 8)-match 'secret exception text'){throw 'Worker exception text must not be persisted.'}
+    if((Get-Content -Raw -LiteralPath $workerHtml -Encoding UTF8)-notmatch 'unknown-error'){throw 'Current worker exception must update HTML.'}
+    if(Test-Path -LiteralPath $workerInput){throw 'Worker input must be deleted after exception.'}
+
+    [IO.File]::WriteAllText($workerHtml,$htmlTemplate,[Text.UTF8Encoding]::new($false))
+    $staleOutput=Get-Content -Raw -LiteralPath $workerOut -Encoding UTF8
+    Set-Content -LiteralPath $workerInput -Encoding UTF8 -Value ($workerInputObj | ConvertTo-Json -Depth 12)
+    Set-Content -LiteralPath $workerEvents -Encoding UTF8 -Value '{"scanId":"scan-1","status":"complete"}'
+    function Invoke-DiskPulseAIRequest { param($Config,$Prompt,[scriptblock]$Transport) Set-Content -LiteralPath $workerEvents -Encoding UTF8 -Value '{"scanId":"scan-2","status":"complete"}'; throw 'stale secret' }
+    Invoke-DiskPulseAIWorker
+    if((Get-Content -Raw -LiteralPath $workerOut -Encoding UTF8)-ne$staleOutput){throw 'Stale worker exception must not update result.'}
+    if((Get-Content -Raw -LiteralPath $workerHtml -Encoding UTF8)-match 'unknown-error'){throw 'Stale worker exception must not update HTML.'}
+    if(Test-Path -LiteralPath $workerInput){throw 'Stale worker input must be deleted.'}
+
+    # ready scan replaces the previous result before any worker runs
+    Write-DiskPulseAIResult -ScanId 'scan-A' -Status 'success' -Model 'test-model' -Format 'structured' -Analysis ([pscustomobject]@{summary='old'}) -RawText $null -OutputPath $workerOut
+    $readyState=Get-DiskPulseAIAnalysisState -DirectoryResults $orcDir -HistoryCenter @() -Snapshot ([pscustomobject]@{scanId='scan-B';status='complete'})
+    if(-not $readyState.ready){throw 'Ready fixture must be ready.'}
+    $analyzing=New-DiskPulseAIStatus -ScanId 'scan-B' -Status 'analyzing' -Model 'test-model' -Analysis $null -RawText $null -Format 'none'
+    Write-DiskPulseAIResult -ScanId 'scan-B' -Status $analyzing.status -Model $analyzing.model -Format $analyzing.format -Analysis $analyzing.analysis -RawText $analyzing.rawText -OutputPath $workerOut
+    $savedAnalyzing=Get-Content -Raw -LiteralPath $workerOut -Encoding UTF8|ConvertFrom-Json
+    if($savedAnalyzing.scanId-ne'scan-B' -or $savedAnalyzing.status-ne'analyzing' -or $null-ne$savedAnalyzing.analysis -or $null-ne$savedAnalyzing.rawText){throw 'Ready scan must persist a clean analyzing result.'}
 
     # non-ready states overwrite old result
     @{schemaVersion=1;enabled=$false;endpoint='https://api.example.com/v1/chat/completions';model='test-model'}|ConvertTo-Json|Set-Content -LiteralPath $workerCfg -Encoding UTF8
