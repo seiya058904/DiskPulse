@@ -309,8 +309,13 @@ if($sortInput.primaryGrowth[0].path-ne'C:\AAA'){throw "Same deltaBytes must sort
 $prompt=New-DiskPulseAIPrompt '{"test":1}'
 if($prompt.system -notmatch 'breakdown'){throw 'Prompt must mention breakdown dedup rule.'}
 if($prompt.system -notmatch 'UNTRUSTED'){throw 'Prompt must mention untrusted path names.'}
-if($prompt.system -notmatch 'Do NOT claim to have read file contents'){throw 'Prompt must forbid claiming file reads.'}
-if($prompt.system -notmatch 'Do NOT generate PowerShell'){throw 'Prompt must forbid generating commands.'}
+if($prompt.system -notmatch 'claim file contents'){throw 'Prompt must forbid claiming file reads.'}
+if($prompt.system -notmatch 'generate PowerShell'){throw 'Prompt must forbid generating commands.'}
+if($prompt.system.Length -gt 1212){throw "System prompt must shrink by at least 20%, got $($prompt.system.Length) chars."}
+if($prompt.system -notmatch 'exactly one JSON object' -or $prompt.system -notmatch 'summary.*possibleCauses.*confidence.*evidence.*recommendations.*cautions'){throw 'Prompt must define the complete JSON object contract.'}
+if($prompt.system -notmatch 'possibleCauses.*evidence.*recommendations.*cautions.*arrays'){throw 'Prompt must require all list fields to be arrays.'}
+if($prompt.system -notmatch 'confidence must be high, medium, or low'){throw 'Prompt must constrain confidence values.'}
+if($prompt.system -match 'Markdown or extra fields'){ } else { throw 'Prompt must forbid Markdown and extra fields.' }
 if($prompt.user -notmatch '\{.*test.*\}'){throw 'User message must contain the input JSON.'}
 
 # --- No API Key, username, or file content in results ---
@@ -418,6 +423,15 @@ $bObj2=[Text.Encoding]::UTF8.GetString($script:tBody2) | ConvertFrom-Json
 if($bObj2.temperature-ne0.1){throw 'Optional temperature must be included when configured.'}
 if($bObj2.max_completion_tokens-ne512){throw 'max_completion_tokens must be used when configured.'}
 if($bObj2.PSObject.Properties.Name -contains 'max_tokens'){throw 'max_tokens must not be sent when max_completion_tokens is selected.'}
+foreach($limit in 768,1024,1536,2048){
+    $limitCfg=[pscustomobject]@{enabled=$true;endpoint='https://api.example.com/v1/chat/completions';model='test-model';protectedApiKey=(Protect-DiskPulseSecret 'test-api-key-12345');timeoutSeconds=10;tokenLimit=$limit;tokenLimitParameter='max_completion_tokens'}
+    $limitMessage=[pscustomobject]@{content='{ "summary":"ok", "possibleCauses":["growth"], "confidence":"high", "evidence":["coverage"], "recommendations":["watch"], "cautions":[] }'}
+    $limitChoice=[pscustomobject]@{message=$limitMessage}
+    $limitResponse=[pscustomobject]@{choices=@($limitChoice)}
+    $limitEnvelope=[pscustomobject]@{ok=$true;response=$limitResponse}
+    $limitParsed=ConvertFrom-DiskPulseAIRequestResult $limitEnvelope
+    if($limitParsed.status-ne'success' -or $limitParsed.format-ne'structured'){throw "Completion limit $limit must preserve structured JSON: $($limitParsed.status)/$($limitParsed.format)."}
+}
 
 # Test: Remote includes Bearer header
 if($script:tHeaders['Authorization']-ne'Bearer test-api-key-12345'){throw 'Remote must include Bearer.'}
@@ -485,14 +499,14 @@ if($ns.analysis.confidence-ne'true'){throw 'Non-string confidence must be string
 if($ns.analysis.possibleCauses.Count-ne0){throw 'Non-array possibleCauses must become empty.'}
 if($ns.analysis.evidence.Count-ne0){throw 'Null evidence must become empty.'}
 
-# Test: Truncation — summary 4000, lists 10 items, item 1000 chars
+# Test: Truncation — concise summary/lists and item lengths
 $causeArr=@(); for($i=0;$i-lt 15;$i++){$causeArr+=('item'+$i)}
 $causeJson=($causeArr | ForEach-Object { '"' + $_ + '"' }) -join ','
 $longEv='B'*2000
 $tTrunc={ param($u,$h,$b,$t) $jsonStr=('{ "summary":"' + ('A'*5000) + '", "possibleCauses":[' + $causeJson + '], "confidence":"low", "evidence":["' + $longEv + '"], "recommendations":[], "cautions":[] }'); $msg=[pscustomobject]@{content=$jsonStr}; $ch=[pscustomobject]@{message=$msg}; return [pscustomobject]@{choices=@($ch)} }
 $tr=ConvertFrom-DiskPulseAIResponse (Invoke-DiskPulseAIRequest -Config $remoteCfg -Prompt $tp -Transport $tTrunc)
 if($tr.analysis.summary.Length-gt4000){throw 'Summary capped at 4000.'}
-if($tr.analysis.possibleCauses.Count-gt10){throw 'List capped at 10.'}
+if($tr.analysis.possibleCauses.Count-gt10 -or $tr.analysis.evidence.Count-gt10 -or $tr.analysis.recommendations.Count-gt10 -or $tr.analysis.cautions.Count-gt10){throw 'AI lists must be capped at 10.'}
 if($tr.analysis.evidence[0].Length-gt1000){throw 'Item capped at 1000.'}
 
 # Test: Raw text truncation
@@ -523,6 +537,12 @@ if((ConvertFrom-DiskPulseAIRequestResult ([pscustomobject]@{ok=$true;response=$e
 $envelopeBytes=[Text.Encoding]::UTF8.GetBytes('{"choices":[{"message":{"content":"plain bytes"}}]}')
 if((ConvertFrom-DiskPulseAIRequestResult ([pscustomobject]@{ok=$true;response=$envelopeBytes})).format-ne'text'){throw 'Unified parser byte response failed.'}
 if((ConvertFrom-DiskPulseAIRequestResult ([pscustomobject]@{ok=$false;error='timeout'})).status-ne'timeout'){throw 'Unified parser request error failed.'}
+$usageEnvelopeJson='{"choices":[{"message":{"content":"{\"summary\":\"ok\",\"possibleCauses\":[],\"confidence\":\"high\",\"evidence\":[],\"recommendations\":[],\"cautions\":[]}"}}],"usage":{"prompt_tokens":1811,"completion_tokens":2217,"total_tokens":4028,"completion_tokens_details":{"reasoning_tokens":1576}}}'
+$usageParsed=ConvertFrom-DiskPulseAIRequestResult ([pscustomobject]@{ok=$true;response=[Text.Encoding]::UTF8.GetBytes($usageEnvelopeJson)})
+if($usageParsed.status-ne'success' -or $usageParsed.format-ne'structured'){throw 'Byte[] envelope structured response must succeed.'}
+if($usageParsed.analysis.summary-ne'ok'){throw 'Byte[] envelope summary must parse.'}
+if($usageParsed.usage.inputTokens-ne1811 -or $usageParsed.usage.outputTokens-ne2217 -or $usageParsed.usage.reasoningTokens-ne1576 -or $usageParsed.usage.totalTokens-ne4028){throw "Byte[] usage mismatch: $($usageParsed.usage | ConvertTo-Json -Compress)."}
+if($usageParsed.usage.completionTokens-ne2217){throw 'Completion tokens must not double count reasoning tokens.'}
 
 # Test: Error classification
 $e401=Invoke-DiskPulseAIRequest -Config $remoteCfg -Prompt $tp -Transport { param($u,$h,$b,$t) throw (New-Object System.Net.WebException('401')) }
@@ -911,6 +931,7 @@ try{
 }
 
 # === Worker lifecycle and request construction guards ===
+$script:profileMode=$true
 foreach($name in 'Get-DiskPulseAIAnalysisState','Get-DiskPulseAILatestScanEvent','New-DiskPulseAIWorkerCommand','Start-DiskPulseAIWorker','Invoke-DiskPulseAIWorker'){
     if(-not(Get-Command $name -ErrorAction SilentlyContinue)){throw "Missing worker helper: $name"}
 }
@@ -972,6 +993,16 @@ function renderAIAnalysis(){ return AI_ANALYSIS.status; }
     $env:DISKPULSE_AI_WORKER_INPUT=$workerInput
     $env:DISKPULSE_AI_WORKER_HTML=$workerHtml
     $workerPaths=[pscustomobject]@{Runtime=$workerRuntime;Events=$workerEvents;Lock=(Join-Path $workerRuntime 'DiskPulse.lock')}
+    $profileLockPath=Join-Path $workerRuntime 'ai-profile.lock'
+    [IO.File]::WriteAllText($profileLockPath,'')
+    $freeProfileLock=Acquire-DiskPulseAIProfileLock $workerRuntime
+    Release-DiskPulseAIProfileLock $freeProfileLock
+    $heldProfileLock=Acquire-DiskPulseAIProfileLock $workerRuntime
+    try {
+        try { $blockedStream=[IO.File]::Open($profileLockPath,[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None); throw 'Second profile lock entered while first was held.' } catch [IO.IOException] { }
+    } finally { Release-DiskPulseAIProfileLock $heldProfileLock }
+    $releasedProfileLock=Acquire-DiskPulseAIProfileLock $workerRuntime
+    Release-DiskPulseAIProfileLock $releasedProfileLock
     $workerLock=Acquire-DiskPulseLock $workerPaths 'lock-test'
     $script:workerCalls=0
     function Invoke-DiskPulseAIRequest {
@@ -985,6 +1016,34 @@ function renderAIAnalysis(){ return AI_ANALYSIS.status; }
     ))
     Invoke-DiskPulseAIWorker
     if($script:workerCalls-ne1){throw 'Worker should call AI exactly once for complete event.'}
+    $workerProfilePath=Join-Path (Join-Path $workerRuntime 'ai-profiles') 'scan-1.json'
+    if(-not(Test-Path -LiteralPath $workerProfilePath)){throw 'Profile mode worker must write a per-scan profile.'}
+    $workerLatestProfilePath=Join-Path $workerRuntime 'last-ai-profile.json'
+    if(-not(Test-Path -LiteralPath $workerLatestProfilePath)){throw 'Latest profile must be written for the current complete scan.'}
+    $workerProfile=Get-Content -Raw -LiteralPath $workerProfilePath -Encoding UTF8|ConvertFrom-Json
+    if($workerProfile.scanId-ne'scan-1' -or $workerProfile.format-ne'structured' -or $workerProfile.workerOutcome-ne'completed'){throw 'Per-scan profile must include scanId, final format, and completed outcome.'}
+    foreach($unsafe in 'prompt','path','authorization','apiKey'){
+        if($workerProfile.PSObject.Properties.Name -contains $unsafe){throw "Worker profile must not persist $unsafe."}
+    }
+    # Race: B becomes latest before stale A publishes its own per-scan profile.
+    Set-Content -LiteralPath $workerEvents -Encoding UTF8 -Value '{"scanId":"scan-B","status":"complete","completedAt":"2026-07-14T10:32:00Z"}'
+    $heldProfileLock=Acquire-DiskPulseAIProfileLock $workerRuntime
+    Release-DiskPulseAIProfileLock $heldProfileLock
+    $bPublish=Publish-DiskPulseAIProfile -RuntimePath $workerRuntime -ScanId 'scan-B' -Data ([pscustomobject]@{scanId='scan-B';status='complete';format='structured';workerOutcome='completed';model='m'}) -EventsPath $workerEvents
+    $aPublish=Publish-DiskPulseAIProfile -RuntimePath $workerRuntime -ScanId 'scan-A' -Data ([pscustomobject]@{scanId='scan-A';status='success';format='structured';model='m'}) -EventsPath $workerEvents
+    if($bPublish-ne'completed' -or $aPublish-ne'stale-discarded'){throw 'Profile publication outcomes must distinguish completed from stale-discarded.'}
+    $latestAfterRace=Get-Content -Raw -LiteralPath $workerLatestProfilePath -Encoding UTF8|ConvertFrom-Json
+    if($latestAfterRace.scanId-ne'scan-B'){throw 'Stale worker must not overwrite latest profile.'}
+    $staleProfile=Get-Content -Raw -LiteralPath (Join-Path (Join-Path $workerRuntime 'ai-profiles') 'scan-A.json') -Encoding UTF8|ConvertFrom-Json
+    if($staleProfile.workerOutcome-ne'stale-discarded'){throw 'Stale profile must record stale-discarded outcome.'}
+    if(-not(Test-Path -LiteralPath (Join-Path (Join-Path $workerRuntime 'ai-profiles') 'scan-A.json'))){throw 'Stale worker must retain its per-scan profile.'}
+    Set-Content -LiteralPath $workerEvents -Encoding UTF8 -Value '{"scanId":"scan-C","status":"complete","completedAt":"2026-07-14T10:33:00Z"}'
+    $errorPublish=Publish-DiskPulseAIProfile -RuntimePath $workerRuntime -ScanId 'scan-C' -Data ([pscustomobject]@{scanId='scan-C';status='unknown-error';format='none';workerOutcome='error'}) -EventsPath $workerEvents
+    $errorProfile=Get-Content -Raw -LiteralPath (Join-Path (Join-Path $workerRuntime 'ai-profiles') 'scan-C.json') -Encoding UTF8|ConvertFrom-Json
+    if($errorPublish-ne'error' -or $errorProfile.workerOutcome-ne'error'){throw 'Error outcome must be preserved by profile publishing.'}
+    $skipPublish=Publish-DiskPulseAIProfile -RuntimePath $workerRuntime -ScanId 'scan-C' -Data ([pscustomobject]@{scanId='scan-C';status='skipped';format='none';workerOutcome='skipped'}) -EventsPath $workerEvents
+    $skipProfile=Get-Content -Raw -LiteralPath (Join-Path (Join-Path $workerRuntime 'ai-profiles') 'scan-C.json') -Encoding UTF8|ConvertFrom-Json
+    if($skipPublish-ne'skipped' -or $skipProfile.workerOutcome-ne'skipped'){throw 'Skipped outcome must be preserved by profile publishing.'}
     $saved=Get-Content -Raw -LiteralPath $workerOut -Encoding UTF8 | ConvertFrom-Json
     if($saved.status-ne'success'){throw 'Worker complete must write success result.'}
     $html=Get-Content -Raw -LiteralPath $workerHtml -Encoding UTF8
@@ -1010,9 +1069,13 @@ function renderAIAnalysis(){ return AI_ANALYSIS.status; }
     Set-Content -LiteralPath $workerEvents -Encoding UTF8 -Value '{"scanId":"scan-1","status":"running","completedAt":"2026-07-14T10:31:00Z"}'
     Invoke-DiskPulseAIWorker
     if((Get-Content -Raw -LiteralPath $workerHtml -Encoding UTF8)-match'Worker ok'){throw 'Running event must not update HTML.'}
+    $runningProfile=Get-Content -Raw -LiteralPath $workerProfilePath -Encoding UTF8|ConvertFrom-Json
+    if($runningProfile.workerOutcome-ne'skipped'){throw 'Running scan with no request must record skipped outcome.'}
     Set-Content -LiteralPath $workerEvents -Encoding UTF8 -Value '{"scanId":"scan-1","status":"failed","completedAt":"2026-07-14T10:31:00Z"}'
     Invoke-DiskPulseAIWorker
     if((Get-Content -Raw -LiteralPath $workerHtml -Encoding UTF8)-match'Worker ok'){throw 'Failed event must not update HTML.'}
+    $failedProfile=Get-Content -Raw -LiteralPath $workerProfilePath -Encoding UTF8|ConvertFrom-Json
+    if($failedProfile.workerOutcome-ne'skipped'){throw 'Failed scan with no request must record skipped outcome.'}
 
     # stale worker must not overwrite newer scan
     [IO.File]::WriteAllText($workerHtml,$htmlTemplate,[Text.UTF8Encoding]::new($false))
@@ -1094,3 +1157,27 @@ if($origCfgExists){
 }
 
 Write-Host 'PASS: AI analysis orchestration — 17 states (skip + request), transport counts, saved JSON security, config integrity.'
+
+# --- Profile output must contain only safe diagnostic metadata ---
+if(-not(Get-Command Write-DiskPulseAIProfile -ErrorAction SilentlyContinue)){throw 'Missing profile writer.'}
+$profileTestPath=Join-Path ([IO.Path]::GetTempPath()) ('DiskPulse-profile-'+[guid]::NewGuid().ToString('N')+'.json')
+try{
+    $script:profileMode=$true
+    Write-DiskPulseAIProfile -Path $profileTestPath -Data ([pscustomobject]@{
+        model='test-model'; provider='test'; inputChars=10; inputBytes=20; promptChars=30; requestBytes=40; totalTokens=50
+        prompt='secret prompt'; path='C:\Users\admin\secret'; authorization='Bearer secret'; apiKey='secret'
+    })
+    $profileJson=Get-Content -Raw -LiteralPath $profileTestPath -Encoding UTF8
+    $profile=$profileJson|ConvertFrom-Json
+    foreach($unsafe in 'prompt','path','authorization','apiKey'){
+        if($profile.PSObject.Properties.Name -contains $unsafe){throw "Profile must not persist $unsafe."}
+    }
+    if($profile.inputChars-ne10 -or $profile.inputBytes-ne20 -or $profile.totalTokens-ne50){throw 'Profile must retain safe size and token metadata.'}
+}finally{if(Test-Path -LiteralPath $profileTestPath){Remove-Item -LiteralPath $profileTestPath -Force}}
+Write-Host 'PASS: profile output redaction.'
+if(-not(Get-Command Get-DiskPulseAIUsage -ErrorAction SilentlyContinue)){throw 'Missing AI usage reader.'}
+$usage=Get-DiskPulseAIUsage ([pscustomobject]@{usage=[pscustomobject]@{prompt_tokens=11;completion_tokens=22;total_tokens=33;completion_tokens_details=[pscustomobject]@{reasoning_tokens=7}}})
+if($usage.inputTokens-ne11 -or $usage.outputTokens-ne22 -or $usage.totalTokens-ne33 -or $usage.reasoningTokens-ne7){throw 'AI usage fields must be normalized without double counting.'}
+$aliasUsage=Get-DiskPulseAIUsage ([pscustomobject]@{usage=[pscustomobject]@{input_tokens=13;output_tokens=23;total_tokens=36;input_tokens_details=[pscustomobject]@{cached_tokens=3};output_tokens_details=[pscustomobject]@{reasoning_tokens=9}}})
+if($aliasUsage.inputTokens-ne13 -or $aliasUsage.outputTokens-ne23 -or $aliasUsage.cachedTokens-ne3 -or $aliasUsage.reasoningTokens-ne9){throw 'AI usage aliases and nested details must be normalized.'}
+Write-Host 'PASS: AI usage normalization.'
