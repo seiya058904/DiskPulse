@@ -14,6 +14,8 @@ Assert-True (Test-Path -LiteralPath $installerScript) 'installer/DiskPulse.nsi i
 $installerSource = Get-Content -Raw -LiteralPath $installerScript -Encoding UTF8
 Assert-True ($installerSource -match 'InstallDir "\$LOCALAPPDATA\\DiskPulse"') 'Installer must use the DiskPulse folder as the application directory.'
 Assert-True ($installerSource -notmatch 'InstallDir "\$LOCALAPPDATA\\DiskPulse\\app"') 'Installer must not use a generic app folder.'
+Assert-True ($installerSource -match '!include "MUI2\.nsh"') 'Installer must use the NSIS Modern UI.'
+Assert-True ($installerSource -match 'MUI_PAGE_WELCOME' -and $installerSource -match 'MUI_PAGE_FINISH') 'Installer must include welcome and finish pages.'
 Assert-True (Test-Path -LiteralPath (Join-Path $root 'assets\DiskPulse.png')) 'assets/DiskPulse.png is missing.'
 Assert-True (Test-Path -LiteralPath (Join-Path $root 'assets\DiskPulse.ico')) 'assets/DiskPulse.ico is missing.'
 Assert-True ((Get-Content -Raw -LiteralPath (Join-Path $root 'check.bat') -Encoding UTF8) -match 'DISKPULSE_DATA_ROOT') 'check.bat does not support a separate data root.'

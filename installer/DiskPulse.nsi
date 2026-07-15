@@ -7,7 +7,7 @@ RequestExecutionLevel user
 !define OUTPUT_PATH "${PROJECT_ROOT}\dist"
 !endif
 Name "DiskPulse"
-Caption "DiskPulse 安装程序"
+Caption "DiskPulse Setup"
 OutFile "${OUTPUT_PATH}\DiskPulse-Setup.exe"
 Icon "${PROJECT_ROOT}\assets\DiskPulse.ico"
 UninstallIcon "${PROJECT_ROOT}\assets\DiskPulse.ico"
@@ -16,18 +16,29 @@ ShowInstDetails show
 ShowUninstDetails show
 
 !include "LogicLib.nsh"
+!include "MUI2.nsh"
+
+!define MUI_ABORTWARNING
+!define MUI_ICON "${PROJECT_ROOT}\assets\DiskPulse.ico"
+!define MUI_UNICON "${PROJECT_ROOT}\assets\DiskPulse.ico"
+!define MUI_WELCOMEPAGE_TITLE "Welcome to DiskPulse"
+!define MUI_FINISHPAGE_RUN "$INSTDIR\DiskPulse.exe"
+!define MUI_FINISHPAGE_RUN_TEXT "Launch DiskPulse"
+
+!insertmacro MUI_PAGE_WELCOME
+!insertmacro MUI_PAGE_DIRECTORY
+!insertmacro MUI_PAGE_INSTFILES
+!insertmacro MUI_PAGE_FINISH
+
+!insertmacro MUI_UNPAGE_CONFIRM
+!insertmacro MUI_UNPAGE_INSTFILES
+!insertmacro MUI_LANGUAGE "SimpChinese"
 
 VIProductVersion "1.0.0.0"
 VIAddVersionKey "ProductName" "DiskPulse"
-VIAddVersionKey "FileDescription" "DiskPulse 磁盘看板"
+VIAddVersionKey "FileDescription" "DiskPulse Disk Dashboard"
 VIAddVersionKey "FileVersion" "1.0.0"
 VIAddVersionKey "LegalCopyright" "DiskPulse"
-
-PageEx directory
-PageExEnd
-Page instfiles
-UninstPage uninstConfirm
-UninstPage instfiles
 
 Section "DiskPulse"
     SetShellVarContext current
