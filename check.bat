@@ -3665,7 +3665,7 @@ catch {
 if ($aiAnalysisResult.status -ne 'analyzing') {
     try {
         $aiJsonNew = ConvertTo-DiskPulseSafeJSON $aiAnalysisResult
-        $html = [regex]::Replace($html, 'AI_ANALYSIS\s*=\s*\{[^;]*\}', 'AI_ANALYSIS = ' + $aiJsonNew)
+        $html = [regex]::Replace($html, 'const RAW_AI_ANALYSIS = INJECT_AI_ANALYSIS;', 'const RAW_AI_ANALYSIS = ' + $aiJsonNew + ';')
         [System.IO.File]::WriteAllText($htmlFile, $html, (New-Object System.Text.UTF8Encoding $false))
     }
     catch {}
