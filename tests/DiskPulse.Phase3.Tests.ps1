@@ -911,6 +911,7 @@ try{
 }
 
 # === Worker lifecycle and request construction guards ===
+$script:profileMode=$true
 foreach($name in 'Get-DiskPulseAIAnalysisState','Get-DiskPulseAILatestScanEvent','New-DiskPulseAIWorkerCommand','Start-DiskPulseAIWorker','Invoke-DiskPulseAIWorker'){
     if(-not(Get-Command $name -ErrorAction SilentlyContinue)){throw "Missing worker helper: $name"}
 }
@@ -985,6 +986,12 @@ function renderAIAnalysis(){ return AI_ANALYSIS.status; }
     ))
     Invoke-DiskPulseAIWorker
     if($script:workerCalls-ne1){throw 'Worker should call AI exactly once for complete event.'}
+    $workerProfilePath=Join-Path $workerRuntime 'last-ai-profile.json'
+    if(-not(Test-Path -LiteralPath $workerProfilePath)){throw 'Profile mode worker must write last-ai-profile.json.'}
+    $workerProfile=Get-Content -Raw -LiteralPath $workerProfilePath -Encoding UTF8|ConvertFrom-Json
+    foreach($unsafe in 'prompt','path','authorization','apiKey'){
+        if($workerProfile.PSObject.Properties.Name -contains $unsafe){throw "Worker profile must not persist $unsafe."}
+    }
     $saved=Get-Content -Raw -LiteralPath $workerOut -Encoding UTF8 | ConvertFrom-Json
     if($saved.status-ne'success'){throw 'Worker complete must write success result.'}
     $html=Get-Content -Raw -LiteralPath $workerHtml -Encoding UTF8
@@ -1094,3 +1101,25 @@ if($origCfgExists){
 }
 
 Write-Host 'PASS: AI analysis orchestration — 17 states (skip + request), transport counts, saved JSON security, config integrity.'
+
+# --- Profile output must contain only safe diagnostic metadata ---
+if(-not(Get-Command Write-DiskPulseAIProfile -ErrorAction SilentlyContinue)){throw 'Missing profile writer.'}
+$profileTestPath=Join-Path ([IO.Path]::GetTempPath()) ('DiskPulse-profile-'+[guid]::NewGuid().ToString('N')+'.json')
+try{
+    $script:profileMode=$true
+    Write-DiskPulseAIProfile -Path $profileTestPath -Data ([pscustomobject]@{
+        model='test-model'; provider='test'; inputChars=10; inputBytes=20; promptChars=30; requestBytes=40; totalTokens=50
+        prompt='secret prompt'; path='C:\Users\admin\secret'; authorization='Bearer secret'; apiKey='secret'
+    })
+    $profileJson=Get-Content -Raw -LiteralPath $profileTestPath -Encoding UTF8
+    $profile=$profileJson|ConvertFrom-Json
+    foreach($unsafe in 'prompt','path','authorization','apiKey'){
+        if($profile.PSObject.Properties.Name -contains $unsafe){throw "Profile must not persist $unsafe."}
+    }
+    if($profile.inputChars-ne10 -or $profile.inputBytes-ne20 -or $profile.totalTokens-ne50){throw 'Profile must retain safe size and token metadata.'}
+}finally{if(Test-Path -LiteralPath $profileTestPath){Remove-Item -LiteralPath $profileTestPath -Force}}
+Write-Host 'PASS: profile output redaction.'
+if(-not(Get-Command Get-DiskPulseAIUsage -ErrorAction SilentlyContinue)){throw 'Missing AI usage reader.'}
+$usage=Get-DiskPulseAIUsage ([pscustomobject]@{usage=[pscustomobject]@{prompt_tokens=11;completion_tokens=22;total_tokens=33;completion_tokens_details=[pscustomobject]@{reasoning_tokens=7}}})
+if($usage.inputTokens-ne11 -or $usage.outputTokens-ne22 -or $usage.totalTokens-ne33 -or $usage.reasoningTokens-ne7){throw 'AI usage fields must be normalized without double counting.'}
+Write-Host 'PASS: AI usage normalization.'

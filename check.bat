@@ -20,6 +20,21 @@ function Profile-Mark([string]$Key) {
     if (-not $profileMode) { return }
     $script:profileMarks.Add([PSCustomObject]@{ key = $Key; ms = $script:profileStopwatch.ElapsedMilliseconds })
 }
+function Write-DiskPulseAIProfile {
+    param([string]$Path, $Data)
+    if (-not $profileMode -or [string]::IsNullOrWhiteSpace($Path)) { return }
+    $allowed = @(
+        'provider','model','inputChars','inputBytes','systemChars','userChars','requestBytes',
+        'processStartMs','scriptReadyMs','contractReadMs','promptReadyMs','requestStartMs',
+        'requestEndMs','responseParseMs','htmlUpdateMs','resultWriteMs','totalMs',
+        'inputTokens','outputTokens','completionTokens','reasoningTokens','cachedTokens','totalTokens'
+    )
+    $safe = [ordered]@{}
+    foreach ($name in $allowed) {
+        if ($Data -and $Data.PSObject.Properties.Name -contains $name) { $safe[$name] = $Data.$name }
+    }
+    [IO.File]::WriteAllText($Path, (ConvertTo-Json -InputObject ([PSCustomObject]$safe) -Depth 4), (New-Object Text.UTF8Encoding $false))
+}
 
 function Get-DiskPulsePaths {
     $root = [IO.Path]::GetFullPath([string]$env:DISKPULSE_ROOT)
@@ -1329,6 +1344,7 @@ function Invoke-DiskPulseAIRequest {
         }
         $bodyJson = ConvertTo-Json -InputObject $bodyObj -Depth 8 -Compress
         $bodyBytes = [Text.Encoding]::UTF8.GetBytes($bodyJson)
+        if ($profileMode) { $script:aiProfileRequestBytes = $bodyBytes.Length }
         $timeout = if ($Config.PSObject.Properties.Name -contains 'timeoutSeconds' -and $Config.timeoutSeconds) { [int]$Config.timeoutSeconds } else { 45 }
 
         try {
@@ -1526,6 +1542,7 @@ function New-DiskPulseAIWorkerCommand {
         ('$env:DISKPULSE_ROOT=' + (Quote-AIArg $RootPath))
         ('$env:DISKPULSE_SCRIPT_PATH=' + (Quote-AIArg $ScriptPath))
         '$env:DISKPULSE_AI_WORKER=''1'''
+        ('$env:DISKPULSE_AI_WORKER_LAUNCHED_AT=' + [DateTime]::UtcNow.Ticks)
         ('$env:DISKPULSE_AI_WORKER_SCANID=' + (Quote-AIArg $ScanId))
         ('$env:DISKPULSE_AI_WORKER_INPUT=' + (Quote-AIArg $InputPath))
         ('$env:DISKPULSE_AI_WORKER_OUTPUT=' + (Quote-AIArg $OutputPath))
@@ -1549,6 +1566,21 @@ function Start-DiskPulseAIWorker {
 
 function Invoke-DiskPulseAIWorker {
     $paths = Get-DiskPulsePaths
+    $workerWatch = [Diagnostics.Stopwatch]::StartNew()
+    $workerProcessStartMs = if ($env:DISKPULSE_AI_WORKER_LAUNCHED_AT) { [math]::Max(0, ([DateTime]::UtcNow.Ticks - [int64]$env:DISKPULSE_AI_WORKER_LAUNCHED_AT) / [TimeSpan]::TicksPerMillisecond) } else { 0 }
+    $workerMarks = [ordered]@{ scriptReady = 0 }
+    $workerProfilePath = Join-Path $paths.Runtime 'last-ai-profile.json'
+    $workerProfileData = [ordered]@{}
+    $config = $null
+    $resultModel = ''
+    $aiInputJson = ''
+    $prompt = $null
+    $usage = $null
+    $script:aiProfileRequestBytes = 0
+    $workerMark = {
+        param([string]$Name)
+        if ($profileMode) { $workerMarks[$Name] = $workerWatch.ElapsedMilliseconds }
+    }
     $scanId = [string]$env:DISKPULSE_AI_WORKER_SCANID
     $inputPath = [string]$env:DISKPULSE_AI_WORKER_INPUT
     $htmlPath = [string]$env:DISKPULSE_AI_WORKER_HTML
@@ -1559,17 +1591,24 @@ function Invoke-DiskPulseAIWorker {
         $latest = Get-DiskPulseAILatestScanEvent $paths.Events
         if (-not $latest -or [string]$latest.scanId -ne $scanId -or [string]$latest.status -notin @('complete','partial')) { return }
         $workerInput = Get-Content -Raw -LiteralPath $inputPath -Encoding UTF8 | ConvertFrom-Json
+        & $workerMark 'contractRead'
         $tempOutputPath = [string]$workerInput.tempOutputPath
         $aiInputJson = ConvertTo-Json -InputObject $workerInput.aiInput -Depth 12 -Compress
         $prompt = New-DiskPulseAIPrompt -AIInputJSON $aiInputJson
+        & $workerMark 'promptReady'
         $config = Get-DiskPulseAIConfig
         $resultModel = if ($config -and $config.PSObject.Properties.Name -contains 'model') { [string]$config.model } else { [string]$workerInput.model }
+        & $workerMark 'requestStart'
         $reqResult = if ($config) { Invoke-DiskPulseAIRequest -Config $config -Prompt $prompt } else { [PSCustomObject]@{ ok = $false; error = 'not-configured' } }
+        & $workerMark 'requestEnd'
+        $usage = Get-DiskPulseAIUsage $reqResult.response
         $parsed = ConvertFrom-DiskPulseAIRequestResult $reqResult
+        & $workerMark 'responseParse'
         $result = New-DiskPulseAIStatus -ScanId $scanId -Status $parsed.status -Model $resultModel -Analysis $parsed.analysis -RawText $parsed.rawText -Format $parsed.format
         $latest = Get-DiskPulseAILatestScanEvent $paths.Events
         if (-not $latest -or [string]$latest.scanId -ne $scanId -or [string]$latest.status -notin @('complete','partial')) { return }
         if (-not (Update-DiskPulseAIHtmlResult -HtmlPath $htmlPath -ExpectedScanId $scanId -AnalysisResult $result)) { return }
+        & $workerMark 'htmlUpdate'
         $latest = Get-DiskPulseAILatestScanEvent $paths.Events
         if (-not $latest -or [string]$latest.scanId -ne $scanId -or [string]$latest.status -notin @('complete','partial')) { return }
         Write-DiskPulseAIResult -ScanId $scanId -Status $result.status -Model $result.model -Format $result.format -Analysis $result.analysis -RawText $result.rawText -OutputPath $tempOutputPath
@@ -1579,6 +1618,7 @@ function Invoke-DiskPulseAIWorker {
         } else {
             Write-DiskPulseAIResult -ScanId $scanId -Status $result.status -Model $result.model -Format $result.format -Analysis $result.analysis -RawText $result.rawText -OutputPath ([string]$workerInput.outputPath)
         }
+        & $workerMark 'resultWrite'
     }
     catch {
         try {
@@ -1596,6 +1636,47 @@ function Invoke-DiskPulseAIWorker {
     finally {
         if (Test-Path -LiteralPath $inputPath) { Remove-Item -LiteralPath $inputPath -Force }
         if ($tempOutputPath -and (Test-Path -LiteralPath $tempOutputPath)) { Remove-Item -LiteralPath $tempOutputPath -Force }
+        if ($profileMode) {
+            $workerProfileData.provider = if ($config -and $config.PSObject.Properties.Name -contains 'provider') { [string]$config.provider } else { 'custom' }
+            $workerProfileData.model = if ($resultModel) { [string]$resultModel } else { '' }
+            $workerProfileData.inputChars = if ($aiInputJson) { $aiInputJson.Length } else { 0 }
+            $workerProfileData.inputBytes = if ($aiInputJson) { [Text.Encoding]::UTF8.GetByteCount($aiInputJson) } else { 0 }
+            $workerProfileData.systemChars = if ($prompt) { ([string]$prompt.system).Length } else { 0 }
+            $workerProfileData.userChars = if ($prompt) { ([string]$prompt.user).Length } else { 0 }
+            $workerProfileData.requestBytes = if ($script:aiProfileRequestBytes) { [int]$script:aiProfileRequestBytes } else { 0 }
+            $workerProfileData.processStartMs = $workerProcessStartMs
+            $workerProfileData.scriptReadyMs = [int64]$workerMarks.scriptReady
+            $workerProfileData.contractReadMs = if ($workerMarks.Contains('contractRead')) { [int64]$workerMarks['contractRead'] - [int64]$workerMarks['scriptReady'] } else { 0 }
+            $workerProfileData.promptReadyMs = if ($workerMarks.Contains('promptReady')) { [int64]$workerMarks['promptReady'] - [int64]$workerMarks['contractRead'] } else { 0 }
+            $workerProfileData.requestStartMs = if ($workerMarks.Contains('requestStart')) { [int64]$workerMarks['requestStart'] - [int64]$workerMarks['promptReady'] } else { 0 }
+            $workerProfileData.requestEndMs = if ($workerMarks.Contains('requestEnd') -and $workerMarks.Contains('requestStart')) { [int64]$workerMarks['requestEnd'] - [int64]$workerMarks['requestStart'] } else { 0 }
+            $workerProfileData.responseParseMs = if ($workerMarks.Contains('responseParse') -and $workerMarks.Contains('requestEnd')) { [int64]$workerMarks['responseParse'] - [int64]$workerMarks['requestEnd'] } else { 0 }
+            $workerProfileData.htmlUpdateMs = if ($workerMarks.Contains('htmlUpdate') -and $workerMarks.Contains('responseParse')) { [int64]$workerMarks['htmlUpdate'] - [int64]$workerMarks['responseParse'] } else { 0 }
+            $workerProfileData.resultWriteMs = if ($workerMarks.Contains('resultWrite') -and $workerMarks.Contains('htmlUpdate')) { [int64]$workerMarks['resultWrite'] - [int64]$workerMarks['htmlUpdate'] } else { 0 }
+            $workerProfileData.totalMs = $workerWatch.ElapsedMilliseconds
+            $workerProfileData.inputTokens = if ($usage) { $usage.inputTokens } else { 0 }
+            $workerProfileData.outputTokens = if ($usage) { $usage.outputTokens } else { 0 }
+            $workerProfileData.completionTokens = if ($usage) { $usage.completionTokens } else { 0 }
+            $workerProfileData.reasoningTokens = if ($usage) { $usage.reasoningTokens } else { 0 }
+            $workerProfileData.cachedTokens = if ($usage) { $usage.cachedTokens } else { 0 }
+            $workerProfileData.totalTokens = if ($usage) { $usage.totalTokens } else { 0 }
+            Write-DiskPulseAIProfile -Path $workerProfilePath -Data ([PSCustomObject]$workerProfileData)
+        }
+    }
+}
+
+function Get-DiskPulseAIUsage {
+    param($Response)
+    $usage = if ($Response -and $Response.PSObject.Properties.Name -contains 'usage') { $Response.usage } else { $null }
+    $details = if ($usage -and $usage.PSObject.Properties.Name -contains 'completion_tokens_details') { $usage.completion_tokens_details } else { $null }
+    $promptDetails = if ($usage -and $usage.PSObject.Properties.Name -contains 'prompt_tokens_details') { $usage.prompt_tokens_details } else { $null }
+    [PSCustomObject]@{
+        inputTokens     = if ($usage -and $usage.PSObject.Properties.Name -contains 'input_tokens') { [int64]$usage.input_tokens } elseif ($usage -and $usage.PSObject.Properties.Name -contains 'prompt_tokens') { [int64]$usage.prompt_tokens } else { 0 }
+        outputTokens    = if ($usage -and $usage.PSObject.Properties.Name -contains 'output_tokens') { [int64]$usage.output_tokens } elseif ($usage -and $usage.PSObject.Properties.Name -contains 'completion_tokens') { [int64]$usage.completion_tokens } else { 0 }
+        completionTokens = if ($usage -and $usage.PSObject.Properties.Name -contains 'completion_tokens') { [int64]$usage.completion_tokens } elseif ($usage -and $usage.PSObject.Properties.Name -contains 'output_tokens') { [int64]$usage.output_tokens } else { 0 }
+        reasoningTokens = if ($usage -and $usage.PSObject.Properties.Name -contains 'reasoning_tokens') { [int64]$usage.reasoning_tokens } elseif ($details -and $details.PSObject.Properties.Name -contains 'reasoning_tokens') { [int64]$details.reasoning_tokens } else { 0 }
+        cachedTokens   = if ($usage -and $usage.PSObject.Properties.Name -contains 'cached_tokens') { [int64]$usage.cached_tokens } elseif ($promptDetails -and $promptDetails.PSObject.Properties.Name -contains 'cached_tokens') { [int64]$promptDetails.cached_tokens } else { 0 }
+        totalTokens    = if ($usage -and $usage.PSObject.Properties.Name -contains 'total_tokens') { [int64]$usage.total_tokens } else { 0 }
     }
 }
 
