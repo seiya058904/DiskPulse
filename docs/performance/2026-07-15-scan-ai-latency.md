@@ -5,7 +5,7 @@
 - Baseline branch: `main`
 - Optimization branch: `perf/scan-ai-latency`
 - Baseline HEAD: `951362c`
-- Final implementation commits: `c9cdd36`, `62d34d6`, `f27ec53`, `b6954f8`
+- Final implementation commits: `c9cdd36`, `62d34d6`, `f27ec53`, `b6954f8`, `06d69d0`, `40e3dcd`
 - Real API calls: 5 total, using the existing configured provider/model; no further real calls were made.
 
 ## Benchmark conditions
@@ -52,7 +52,7 @@ The scan target of at least 10% improvement was not demonstrated and no scan opt
 
 | Metric | Before observed | After observed | Change |
 |---|---:|---:|---:|
-| System prompt characters | 1,515 | 1,208 | -20.3% |
+| System prompt characters | 1,515 | 1,014 | -33.1% |
 | User prompt characters | 2,367 | 3,207 in one mixed-data run | not comparable |
 | Redacted input characters | 2,324 | 2,797 in one mixed-data run | not comparable |
 | Redacted input UTF-8 bytes | 2,434 | 2,907 | not comparable |
@@ -67,7 +67,7 @@ The earlier missing usage values must not be attributed directly to the provider
 ## Changes retained
 
 - Profile-only safe diagnostics for main/worker timing, payload sizes, provider/model, and token usage.
-- Prompt compression from 1,515 to 1,208 characters while retaining the safety constraints.
+- Prompt compression from 1,515 to 1,014 characters while retaining the safety constraints and complete structured JSON contract; measured in Windows PowerShell 5.1.
 - AI input caps restored to growth 15, release 10, breakdown 5 per retained parent, trends 10 because the smaller range had no same-input token, latency, or quality proof.
 - Exact `omitted` counts and absolute-byte totals for omitted growth/release items.
 - Structured-result safety limits restored to summary 4,000 characters, up to 10 items per list, 1,000 characters per item, and raw text 16,000 characters. Post-parse truncation is safety handling, not a performance optimization.
@@ -93,7 +93,7 @@ The earlier missing usage values must not be attributed directly to the provider
 - Profile writer uses an allowlist and does not persist prompts, paths, authorization, or API keys.
 - No disk-scan speedup was proven.
 - No AI end-to-end speedup was proven.
-- System prompt reduction of 20.3% was proven (1,515 to 1,208 characters).
+- System prompt reduction of 33.1% was proven (1,515 to 1,014 characters).
 - No additional real API calls were performed during this revision.
 
 ## Verification results
