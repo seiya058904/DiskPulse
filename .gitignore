@@ -1,4 +1,5 @@
 /runtime/
+/dist/
 /DiskPulse.csv
 /DiskPulse.html
 *.local.json

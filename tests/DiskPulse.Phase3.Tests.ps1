@@ -48,10 +48,22 @@ if($source-notmatch 'exit /b %ERRORLEVEL%'){throw 'BAT must return the PowerShel
 Write-Host ($counts|ConvertTo-Json -Compress);Write-Host 'PASS: Phase 3 comparison states, baseline selection, and coverage.'
 
 # === AI Configuration & Security Tests ===
-foreach($name in 'Get-DiskPulseAIConfig','Protect-DiskPulseSecret','Unprotect-DiskPulseSecret','Test-DiskPulseAIEndpoint','Invoke-DiskPulseAIConfigure','ConvertTo-DiskPulseSafeJSON'){
+foreach($name in 'Get-DiskPulseAIConfig','Get-DiskPulseAIProviders','Protect-DiskPulseSecret','Unprotect-DiskPulseSecret','Test-DiskPulseAIEndpoint','Invoke-DiskPulseAIConfigure','ConvertTo-DiskPulseSafeJSON'){
     if(-not(Get-Command $name -ErrorAction SilentlyContinue)){throw "Missing AI function: $name"}
 }
 if(-not(Get-Command ConvertFrom-DiskPulseAIRequestResult -ErrorAction SilentlyContinue)){throw 'Missing unified AI response parser.'}
+$providers = @(Get-DiskPulseAIProviders)
+foreach($id in 'deepseek','mimo','qwen','openai') {
+    $provider = $providers | Where-Object id -eq $id | Select-Object -First 1
+    if(-not $provider){throw "Missing AI provider preset: $id"}
+    if(-not (Test-DiskPulseAIEndpoint $provider.endpoint)){throw "Invalid preset endpoint: $id"}
+    if([string]::IsNullOrWhiteSpace([string]$provider.model)){throw "Missing preset model: $id"}
+}
+$mimo = $providers | Where-Object id -eq 'mimo' | Select-Object -First 1
+foreach($model in 'mimo-v2.5-pro','mimo-v2.5') {
+    if($model -notin @($mimo.models)){throw "Missing MiMo model preset: $model"}
+}
+if(@($providers | Where-Object id -eq 'custom').Count -ne 1){throw 'Missing custom AI provider option.'}
 $aiCfgNullPath=Join-Path ([IO.Path]::GetTempPath()) 'ai-test-nonexistent.json'
 $aiCfgNull = Get-DiskPulseAIConfig -ConfigPath $aiCfgNullPath
 if($null-ne$aiCfgNull){throw 'AI config must be null when no config file exists.'}

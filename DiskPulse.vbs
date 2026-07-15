@@ -11,7 +11,8 @@ Set fso = CreateObject("Scripting.FileSystemObject")
 
 root = fso.GetParentFolderName(WScript.ScriptFullName)
 batPath = fso.BuildPath(root, "check.bat")
-logPath = fso.BuildPath(fso.BuildPath(root, "runtime"), "last-run.log")
+shell.Environment("PROCESS")("DISKPULSE_DATA_ROOT") = shell.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\DiskPulse\data"
+logPath = fso.BuildPath(fso.BuildPath(shell.Environment("PROCESS")("DISKPULSE_DATA_ROOT"), "runtime"), "last-run.log")
 
 If Not fso.FileExists(batPath) Then
     MsgBox "Cannot find check.bat in:" & vbCrLf & batPath, _
