@@ -12,6 +12,7 @@ $output = Join-Path $env:TEMP ('DiskPulse-launcher-test-' + [guid]::NewGuid().To
 
 Assert-True (Test-Path -LiteralPath $buildScript) 'build-release.ps1 is missing.'
 Assert-True ($launcherSource -match 'DISKPULSE_NO_OPEN') 'Launcher must suppress script-side browser opening.'
+Assert-True ($launcherSource -match 'app", "runtime') 'Launcher must migrate runtime data from the previous app folder.'
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $buildScript -OutputPath $output
 
 $exe = Join-Path $output 'DiskPulse.exe'

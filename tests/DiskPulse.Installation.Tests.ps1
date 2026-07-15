@@ -11,6 +11,9 @@ $installerScript = Join-Path $root 'installer\DiskPulse.nsi'
 
 Assert-True (Test-Path -LiteralPath $buildScript) 'build-installer.ps1 is missing.'
 Assert-True (Test-Path -LiteralPath $installerScript) 'installer/DiskPulse.nsi is missing.'
+$installerSource = Get-Content -Raw -LiteralPath $installerScript -Encoding UTF8
+Assert-True ($installerSource -match 'InstallDir "\$LOCALAPPDATA\\DiskPulse"') 'Installer must use the DiskPulse folder as the application directory.'
+Assert-True ($installerSource -notmatch 'InstallDir "\$LOCALAPPDATA\\DiskPulse\\app"') 'Installer must not use a generic app folder.'
 Assert-True (Test-Path -LiteralPath (Join-Path $root 'assets\DiskPulse.png')) 'assets/DiskPulse.png is missing.'
 Assert-True (Test-Path -LiteralPath (Join-Path $root 'assets\DiskPulse.ico')) 'assets/DiskPulse.ico is missing.'
 Assert-True ((Get-Content -Raw -LiteralPath (Join-Path $root 'check.bat') -Encoding UTF8) -match 'DISKPULSE_DATA_ROOT') 'check.bat does not support a separate data root.'

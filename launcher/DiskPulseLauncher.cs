@@ -32,7 +32,7 @@ internal static class Payload
 {
     internal static readonly string Root = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "DiskPulse", "app");
+        "DiskPulse");
 
     internal static void EnsureExtracted()
     {
@@ -63,6 +63,7 @@ internal static class DataPaths
     {
         Directory.CreateDirectory(Runtime);
         MigrateDirectory(Path.Combine(appRoot, "runtime"), Runtime);
+        MigrateDirectory(Path.Combine(appRoot, "app", "runtime"), Runtime);
         MigrateDirectory(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "runtime"), Runtime);
 
         string marker = Path.Combine(Root, "migration-sources.txt");
