@@ -1314,8 +1314,7 @@ function Invoke-DiskPulseAIRequest {
         }
         else {
             $webResponse = Invoke-WebRequest -Uri $uri -Method Post -Headers $headers -Body $bodyBytes -ContentType 'application/json; charset=utf-8' -TimeoutSec $timeout -UseBasicParsing
-            $rawContent = [System.Text.Encoding]::UTF8.GetString($webResponse.RawContentStream.ToArray())
-            $response = $rawContent | ConvertFrom-Json
+            $response = $webResponse.RawContentStream.ToArray()
         }
         return [PSCustomObject]@{ ok = $true; response = $response }
     }
@@ -1340,6 +1339,24 @@ function Invoke-DiskPulseAIRequest {
     }
 }
 
+function ConvertFrom-DiskPulseAIResponseBytes {
+    param([byte[]]$Bytes)
+    if (-not $Bytes -or $Bytes.Length -eq 0) {
+        return [PSCustomObject]@{ status = 'invalid-response'; format = 'none'; analysis = $null; rawText = $null }
+    }
+    if ($Bytes.Length -ge 3 -and $Bytes[0] -eq 0xEF -and $Bytes[1] -eq 0xBB -and $Bytes[2] -eq 0xBF) {
+        $Bytes = $Bytes[3..($Bytes.Length - 1)]
+    }
+    $utf8Strict = New-Object System.Text.UTF8Encoding($false, $true)
+    try {
+        $text = $utf8Strict.GetString($Bytes)
+    }
+    catch {
+        return [PSCustomObject]@{ status = 'invalid-response'; format = 'none'; analysis = $null; rawText = $null }
+    }
+    return ConvertFrom-DiskPulseAIResponse ([PSCustomObject]@{ ok = $true; response = [PSCustomObject]@{ choices = @([PSCustomObject]@{ message = [PSCustomObject]@{ content = $text } }) } })
+}
+
 function Get-DiskPulseAILatestScanEvent {
     param([string]$EventsPath)
     if ([string]::IsNullOrWhiteSpace($EventsPath) -or -not (Test-Path -LiteralPath $EventsPath)) { return $null }
@@ -1351,6 +1368,17 @@ function Get-DiskPulseAILatestScanEvent {
     catch { return $null }
 }
 
+function Remove-StaleDiskPulseAIInputs {
+    param([string]$RuntimePath)
+    if ([string]::IsNullOrWhiteSpace($RuntimePath) -or -not (Test-Path -LiteralPath $RuntimePath)) { return }
+    $cutoff = (Get-Date).AddHours(-24)
+    Get-ChildItem -LiteralPath $RuntimePath -Filter 'ai-input-*.json' -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.LastWriteTime -lt $cutoff } |
+        ForEach-Object {
+            try { Remove-Item -LiteralPath $_.FullName -Force } catch {}
+        }
+}
+
 function Get-DiskPulseAIAnalysisState {
     param(
         [array]$DirectoryResults,
@@ -1359,7 +1387,7 @@ function Get-DiskPulseAIAnalysisState {
         [string]$ConfigPath
     )
     $config = if ([string]::IsNullOrWhiteSpace($ConfigPath)) { Get-DiskPulseAIConfig } else { Get-DiskPulseAIConfig -ConfigPath $ConfigPath }
-    $model = if ($config) { [string]$config.model } else { '' }
+    $model = if ($config -and $config.PSObject.Properties.Name -contains 'model') { [string]$config.model } else { '' }
     if (-not $config) {
         return [PSCustomObject]@{ status = 'not-configured'; model = ''; ready = $false; input = $null }
     }
@@ -1458,19 +1486,32 @@ function Invoke-DiskPulseAIWorker {
     $paths = Get-DiskPulsePaths
     $scanId = [string]$env:DISKPULSE_AI_WORKER_SCANID
     $inputPath = [string]$env:DISKPULSE_AI_WORKER_INPUT
-    $outputPath = [string]$env:DISKPULSE_AI_WORKER_OUTPUT
     $htmlPath = [string]$env:DISKPULSE_AI_WORKER_HTML
+    $tempOutputPath = $null
     if ([string]::IsNullOrWhiteSpace($scanId) -or [string]::IsNullOrWhiteSpace($inputPath)) { return }
     try {
         $latest = Get-DiskPulseAILatestScanEvent $paths.Events
-        if (-not $latest -or [string]$latest.scanId -ne $scanId -or [string]$latest.status -ne 'complete') { return }
+        if (-not $latest -or [string]$latest.scanId -ne $scanId -or [string]$latest.status -notin @('complete','partial')) { return }
         $workerInput = Get-Content -Raw -LiteralPath $inputPath -Encoding UTF8 | ConvertFrom-Json
-        $result = Invoke-DiskPulseAIAnalysis -ScanId $scanId -DirectoryResults @($workerInput.directoryResults) -HistoryCenter @($workerInput.historyCenter) -Snapshot $workerInput.snapshot -OutputPath $outputPath -ConfigPath $null
-        if ($result.status -eq 'success' -or $result.status -eq 'invalid-response' -or $result.status -eq 'authentication-failed' -or $result.status -eq 'rate-limited' -or $result.status -eq 'timeout' -or $result.status -eq 'connection-failed' -or $result.status -eq 'unknown-error') {
-            Write-DiskPulseAIHtmlResult -HtmlPath $htmlPath -AnalysisResult $result
+        $tempOutputPath = [string]$workerInput.tempOutputPath
+        $result = Invoke-DiskPulseAIAnalysis -ScanId $scanId -DirectoryResults @($workerInput.aiPlan.input.directoryResults) -HistoryCenter @($workerInput.aiPlan.input.historyCenter) -Snapshot $workerInput.aiPlan.input.snapshot -OutputPath $tempOutputPath -ConfigPath $null
+        $latest = Get-DiskPulseAILatestScanEvent $paths.Events
+        if (-not $latest -or [string]$latest.scanId -ne $scanId -or [string]$latest.status -notin @('complete','partial')) { return }
+        $htmlNow = Get-Content -Raw -LiteralPath $htmlPath -Encoding UTF8
+        if ($htmlNow -notmatch 'const RAW_SCAN_META = \{"scanId":"'+[regex]::Escape($scanId)+'"') { return }
+        if (-not (Update-DiskPulseAIHtmlResult -HtmlPath $htmlPath -AnalysisResult $result)) { return }
+        if ($tempOutputPath -and (Test-Path -LiteralPath $tempOutputPath)) {
+            if (Test-Path -LiteralPath ([string]$workerInput.outputPath)) { Remove-Item -LiteralPath ([string]$workerInput.outputPath) -Force }
+            [IO.File]::Move($tempOutputPath, [string]$workerInput.outputPath)
+        } else {
+            Write-DiskPulseAIResult -ScanId $scanId -Status $result.status -Model $result.model -Format $result.format -Analysis $result.analysis -RawText $result.rawText -OutputPath ([string]$workerInput.outputPath)
         }
     }
     catch {}
+    finally {
+        if (Test-Path -LiteralPath $inputPath) { Remove-Item -LiteralPath $inputPath -Force }
+        if ($tempOutputPath -and (Test-Path -LiteralPath $tempOutputPath)) { Remove-Item -LiteralPath $tempOutputPath -Force }
+    }
 }
 
 function ConvertFrom-DiskPulseAIResponse {
@@ -1577,6 +1618,58 @@ function Write-DiskPulseAIResult {
     [IO.File]::Move($tmpPath, $OutputPath)
 }
 
+function Update-DiskPulseAIHtmlResult {
+    param(
+        [string]$HtmlPath,
+        $AnalysisResult
+    )
+    if ([string]::IsNullOrWhiteSpace($HtmlPath) -or -not (Test-Path -LiteralPath $HtmlPath)) { return $false }
+    try {
+        $html = Get-Content -Raw -LiteralPath $HtmlPath -Encoding UTF8
+        $startTag = '/* DISKPULSE_AI_RESULT_START */'
+        $endTag = '/* DISKPULSE_AI_RESULT_END */'
+        $startIdx = $html.IndexOf($startTag, [StringComparison]::Ordinal)
+        $endIdx = $html.IndexOf($endTag, [StringComparison]::Ordinal)
+        if ($startIdx -lt 0 -or $endIdx -lt 0) { return $false }
+        if ($html.IndexOf($startTag, $startIdx + 1, [StringComparison]::Ordinal) -ge 0) { return $false }
+        if ($html.IndexOf($endTag, $endIdx + 1, [StringComparison]::Ordinal) -ge 0) { return $false }
+        if ($endIdx -lt $startIdx) { return $false }
+        $aiJsonNew = ConvertTo-DiskPulseSafeJSON $AnalysisResult
+        $replacement = "/* DISKPULSE_AI_RESULT_START */`nconst RAW_AI_ANALYSIS = $aiJsonNew;`n/* DISKPULSE_AI_RESULT_END */"
+        $prefix = $html.Substring(0, $startIdx)
+        $suffix = $html.Substring($endIdx + $endTag.Length)
+        $updated = $prefix + $replacement + $suffix
+        $tmpPath = [IO.Path]::GetTempFileName()
+        $jsPath = [IO.Path]::ChangeExtension($tmpPath, '.js')
+        $backupPath = [IO.Path]::GetTempFileName()
+        try {
+            [System.IO.File]::WriteAllText($tmpPath, $updated, (New-Object System.Text.UTF8Encoding $false))
+            $scriptOpen = '<' + 'script>'
+            $scriptClose = '<' + '/script>'
+            $jsPattern = '(?s)' + [regex]::Escape($scriptOpen) + '\s*(.*?)\s*' + [regex]::Escape($scriptClose)
+            $js = [regex]::Match($updated, $jsPattern).Groups[1].Value
+            if ([string]::IsNullOrWhiteSpace($js)) { return $false }
+            [System.IO.File]::WriteAllText($jsPath, $js, (New-Object System.Text.UTF8Encoding $false))
+            & node --check $jsPath
+            if ($LASTEXITCODE -ne 0) { return $false }
+            if (Test-Path -LiteralPath $HtmlPath) {
+                [System.IO.File]::Replace($tmpPath, $HtmlPath, $backupPath, $true)
+                if (Test-Path -LiteralPath $backupPath) { Remove-Item -LiteralPath $backupPath -Force }
+            } else {
+                [System.IO.File]::Move($tmpPath, $HtmlPath)
+            }
+            $tmpPath = $null
+            return $true
+        }
+        finally {
+            if (Test-Path -LiteralPath $tmpPath) { Remove-Item -LiteralPath $tmpPath -Force }
+            if (Test-Path -LiteralPath $jsPath) { Remove-Item -LiteralPath $jsPath -Force }
+            if (Test-Path -LiteralPath $backupPath) { Remove-Item -LiteralPath $backupPath -Force }
+        }
+    }
+    catch { return $false }
+}
+
 # ═══════════════════════════════════════════════════════════════
 # AI Analysis Orchestration (Phase 4)
 # ═══════════════════════════════════════════════════════════════
@@ -1660,19 +1753,9 @@ function Invoke-DiskPulseAIAnalysis {
     }
 
     $statusObj = New-DiskPulseAIStatus -ScanId $ScanId -Status $resultStatus -Model $resultModel -Analysis $resultAnalysis -RawText $resultRawText -Format $resultFormat
-
-    try {
-        if ($OutputPath) {
-            $json = ConvertTo-Json -InputObject $statusObj -Depth 8
-            $utf8NoBom = New-Object System.Text.UTF8Encoding $false
-            $tmpPath = $OutputPath + '.tmp'
-            [System.IO.File]::WriteAllText($tmpPath, $json, $utf8NoBom)
-            if (Test-Path -LiteralPath $OutputPath) { Remove-Item -LiteralPath $OutputPath -Force }
-            [IO.File]::Move($tmpPath, $OutputPath)
-        }
+    if ($OutputPath) {
+        try { Write-DiskPulseAIResult -ScanId $ScanId -Status $statusObj.status -Model $statusObj.model -Format $statusObj.format -Analysis $statusObj.analysis -RawText $statusObj.rawText -OutputPath $OutputPath } catch {}
     }
-    catch {}
-
     return $statusObj
 }
 
@@ -1683,6 +1766,7 @@ Ensure-Directory $paths.Legacy
 Ensure-Directory $paths.Snapshots
 Complete-InterruptedScans $paths
 Remove-StaleTemporaryFiles $paths
+Remove-StaleDiskPulseAIInputs $paths.Runtime
 $legacyFile = Copy-LegacyHistory $paths
 $scanId = New-ScanId
 $owner = Acquire-DiskPulseLock $paths $scanId
@@ -2770,7 +2854,9 @@ const HISTORY_CENTER = Array.isArray(RAW_HISTORY_CENTER) ? RAW_HISTORY_CENTER : 
 const SCAN_META = RAW_SCAN_META || {};
 const TS = INJECT_TS_JSON;
 const SYSTEM_DRIVE = INJECT_SYSTEM_DRIVE;
+/* DISKPULSE_AI_RESULT_START */
 const RAW_AI_ANALYSIS = INJECT_AI_ANALYSIS;
+/* DISKPULSE_AI_RESULT_END */
 const AI_ANALYSIS = RAW_AI_ANALYSIS || {};
 
 // TESTABLE_HISTORY_HELPERS_START
@@ -3821,24 +3907,12 @@ if ($env:DISKPULSE_NO_OPEN -ne "1") {
 }
 Profile-Mark "browserOpen"
 
-if ($aiPlan.ready) {
+if (-not $aiPlan.ready) {
     try {
-        $aiInputPayload = [PSCustomObject]@{
-            scanId           = $scanId
-            htmlPath         = $htmlFile
-            outputPath       = $aiOutputPath
-            directoryResults = @($directoryResults)
-            historyCenter    = @($historyCenter)
-            snapshot         = $snapshot
-        }
-        $aiInputPayload | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $aiWorkerInputPath -Encoding UTF8
-        $workerScriptPath = if ([string]::IsNullOrWhiteSpace($env:DISKPULSE_SCRIPT_PATH)) { Join-Path $paths.Root 'check.bat' } else { $env:DISKPULSE_SCRIPT_PATH }
-        Start-DiskPulseAIWorker -ScriptPath $workerScriptPath -RootPath $paths.Root -ScanId $scanId -InputPath $aiWorkerInputPath -OutputPath $aiOutputPath -HtmlPath $htmlFile
+        Write-DiskPulseAIResult -ScanId $scanId -Status $aiAnalysisResult.status -Model $aiAnalysisResult.model -Format $aiAnalysisResult.format -Analysis $null -RawText $null -OutputPath $aiOutputPath
+        if (-not (Update-DiskPulseAIHtmlResult -HtmlPath $htmlFile -AnalysisResult $aiAnalysisResult)) { throw 'AI HTML update failed.' }
     }
-    catch {
-        $aiAnalysisResult = [PSCustomObject]@{ status = 'unknown-error'; format = 'none'; analysis = $null; rawText = $null; model = [string]$aiPlan.model; scanId = $scanId; generatedAt = (Get-Date).ToUniversalTime().ToString('o'); error = $null }
-        Write-DiskPulseAIHtmlResult -HtmlPath $htmlFile -AnalysisResult $aiAnalysisResult
-    }
+    catch {}
 }
 Profile-Mark "aiAnalysis"
 
@@ -3851,6 +3925,29 @@ Write-ScanEvent $paths ([PSCustomObject]@{
 $lockReleased = $false
 try { Release-DiskPulseLock $paths $owner; $lockReleased = $true } catch {}
 $owner = $null
+
+if ($aiPlan.ready) {
+    try {
+        $aiInputPayload = [PSCustomObject]@{
+            scanId       = $scanId
+            outputPath   = $aiOutputPath
+            tempOutputPath = ($aiOutputPath + '.' + $scanId + '.tmp')
+            aiPlan       = [PSCustomObject]@{
+                model = [string]$aiPlan.model
+                input = $aiPlan.input
+            }
+        }
+        $aiInputPayload | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $aiWorkerInputPath -Encoding UTF8
+        $workerScriptPath = if ([string]::IsNullOrWhiteSpace($env:DISKPULSE_SCRIPT_PATH)) { Join-Path $paths.Root 'check.bat' } else { $env:DISKPULSE_SCRIPT_PATH }
+        Start-DiskPulseAIWorker -ScriptPath $workerScriptPath -RootPath $paths.Root -ScanId $scanId -InputPath $aiWorkerInputPath -OutputPath $aiOutputPath -HtmlPath $htmlFile
+    }
+    catch {
+        $aiAnalysisResult = [PSCustomObject]@{ status = 'unknown-error'; format = 'none'; analysis = $null; rawText = $null; model = [string]$aiPlan.model; scanId = $scanId; generatedAt = (Get-Date).ToUniversalTime().ToString('o'); error = $null }
+        Write-DiskPulseAIResult -ScanId $scanId -Status $aiAnalysisResult.status -Model $aiAnalysisResult.model -Format $aiAnalysisResult.format -Analysis $null -RawText $null -OutputPath $aiOutputPath
+        Update-DiskPulseAIHtmlResult -HtmlPath $htmlFile -AnalysisResult $aiAnalysisResult | Out-Null
+        if (Test-Path -LiteralPath $aiWorkerInputPath) { Remove-Item -LiteralPath $aiWorkerInputPath -Force }
+    }
+}
 $runStopwatch.Stop()
 & $clearConsoleProgress
 if (-not $silent) {
