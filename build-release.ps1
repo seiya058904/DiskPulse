@@ -11,12 +11,14 @@ $compiler = if ([Environment]::Is64BitOperatingSystem) {
 }
 $output = [IO.Path]::GetFullPath($OutputPath)
 $resourceFile = Join-Path $env:TEMP ('DiskPulse-' + [guid]::NewGuid().ToString('N') + '.resources')
-$payload = @('check.bat', 'DiskPulse.vbs', 'configure-ai.bat')
+$payload = @('check.bat', 'DiskPulse.vbs', 'configure-ai.bat', 'assets\DiskPulse.png')
+$iconPath = Join-Path $root 'assets\DiskPulse.ico'
 
 if (-not (Test-Path -LiteralPath $compiler)) { throw "C# compiler not found: $compiler" }
 foreach ($file in $payload) {
     if (-not (Test-Path -LiteralPath (Join-Path $root $file))) { throw "Payload file not found: $file" }
 }
+if (-not (Test-Path -LiteralPath $iconPath)) { throw "Icon file not found: $iconPath" }
 
 New-Item -ItemType Directory -Path $output -Force | Out-Null
 $writer = New-Object System.Resources.ResourceWriter($resourceFile)
@@ -31,6 +33,7 @@ try {
 $exe = Join-Path $output 'DiskPulse.exe'
 $arguments = @(
     '/nologo', '/target:winexe', "/out:$exe",
+    "/win32icon:$iconPath",
     "/resource:$resourceFile,DiskPulse.Payload",
     "/reference:System.dll", '/reference:System.Core.dll',
     '/reference:System.Drawing.dll', '/reference:System.Windows.Forms.dll',

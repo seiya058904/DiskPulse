@@ -2076,6 +2076,9 @@ $scanMetaJson = $snapshot | Select-Object scanId,startedAt,completedAt,status,@{
 $timestampJson = ConvertTo-Json -InputObject ([string]$timestamp) -Compress
 $systemDriveJson = ConvertTo-Json -InputObject ([string]$env:SystemDrive) -Compress
 $aiAnalysisJson = if ($aiAnalysisResult) { ConvertTo-DiskPulseSafeJSON $aiAnalysisResult } else { '{}' }
+$brandAssetPath = Join-Path $paths.Root 'assets\DiskPulse.png'
+if (-not (Test-Path -LiteralPath $brandAssetPath)) { throw "图标文件不存在：$brandAssetPath" }
+$brandDataUri = 'data:image/png;base64,' + [Convert]::ToBase64String([IO.File]::ReadAllBytes($brandAssetPath))
 Profile-Mark "json:META"
 if ([string]::IsNullOrWhiteSpace($jsonArray)) { $jsonArray = "[]" }
 if ([string]::IsNullOrWhiteSpace($historyJson)) { $historyJson = "[]" }
@@ -2087,6 +2090,7 @@ $html = @'
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>DiskPulse</title>
+<link rel="icon" href="INJECT_BRAND_DATA_URI">
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -2409,7 +2413,8 @@ $html = @'
   body { padding:6px 10px 28px; }
   .product-header { display:flex; align-items:center; justify-content:space-between; gap:24px; margin:0; padding:18px 22px 14px; }
   .header-brand { display:flex; align-items:center; gap:13px; min-width:260px; }
-  .brand-mark { width:48px; height:48px; flex:0 0 auto; filter:drop-shadow(0 6px 10px rgba(51,112,255,.2)); }
+  .brand-mark { display:none; }
+  .brand-image { width:48px; height:48px; flex:0 0 auto; border-radius:12px; filter:drop-shadow(0 6px 10px rgba(51,112,255,.2)); }
   h1 { font-size: 27px; line-height:1.12; letter-spacing: -.025em; font-weight: 780; }
   .product-subtitle { color:var(--muted); font-size:14px; margin-top:4px; }
   .eyebrow { color: var(--muted); letter-spacing: .04em; text-transform: none; font-size: 12px; margin-bottom: 5px; }
@@ -2775,6 +2780,7 @@ $html = @'
 <main class="shell dashboard-shell">
   <header class="product-header">
     <div class="header-brand">
+      <img class="brand-image" src="INJECT_BRAND_DATA_URI" alt="DiskPulse 图标">
       <svg class="brand-mark" viewBox="0 0 48 48" role="img" aria-labelledby="brand-title brand-desc"><title id="brand-title">DiskPulse</title><desc id="brand-desc">蓝色磁盘堆叠图标</desc><defs><linearGradient id="brand-gradient" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#73a7ff"/><stop offset="1" stop-color="#3370ff"/></linearGradient></defs><ellipse cx="21" cy="12" rx="12" ry="5.5" fill="url(#brand-gradient)"/><path d="M9 12v8c0 3 5.4 5.5 12 5.5S33 23 33 20v-8c0 3-5.4 5.5-12 5.5S9 15 9 12Z" fill="#4b83f5"/><path d="M9 20v8c0 3 5.4 5.5 12 5.5S33 31 33 28v-8c0 3-5.4 5.5-12 5.5S9 23 9 20Z" fill="#3b73ef"/><path d="M9 28v8c0 3 5.4 5.5 12 5.5S33 39 33 36v-8c0 3-5.4 5.5-12 5.5S9 31 9 28Z" fill="#2f66db"/><circle cx="36" cy="34" r="8" fill="#fff"/><path d="m32.5 34 2.2 2.2 4.6-5" fill="none" stroke="#20b982" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
       <div><h1>磁盘容量看板</h1><p class="product-subtitle">系统存储监控与分析报告</p><div class="timestamp" id="ts"></div></div>
     </div>
@@ -3946,8 +3952,9 @@ $replacementMap = @{
     INJECT_TS_JSON = $timestampJson
     INJECT_SYSTEM_DRIVE = $systemDriveJson
     INJECT_AI_ANALYSIS = $aiAnalysisJson
+    INJECT_BRAND_DATA_URI = $brandDataUri
 }
-$placeholderPattern = 'INJECT_(?:AI_ANALYSIS|HISTORY_CENTER|SYSTEM_DRIVE|SCAN_META|TS_JSON|DIRECTORY|HISTORY|DATA)'
+$placeholderPattern = 'INJECT_(?:AI_ANALYSIS|HISTORY_CENTER|BRAND_DATA_URI|SYSTEM_DRIVE|SCAN_META|TS_JSON|DIRECTORY|HISTORY|DATA)'
 $html = [regex]::Replace($html, $placeholderPattern, { param($match) [string]$replacementMap[$match.Value] })
 Profile-Mark "htmlReplace"
 

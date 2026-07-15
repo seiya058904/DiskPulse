@@ -43,6 +43,8 @@ internal static class Payload
             foreach (DictionaryEntry entry in reader)
             {
                 string path = Path.Combine(Root, (string)entry.Key);
+                string parent = Path.GetDirectoryName(path);
+                if (!String.IsNullOrEmpty(parent)) Directory.CreateDirectory(parent);
                 File.WriteAllBytes(path, (byte[])entry.Value);
             }
         }
@@ -100,6 +102,7 @@ internal sealed class MainForm : Form
     {
         root = applicationRoot;
         Text = "DiskPulse";
+        Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
         StartPosition = FormStartPosition.CenterScreen;
         ClientSize = new Size(390, 245);
         MinimumSize = new Size(390, 245);

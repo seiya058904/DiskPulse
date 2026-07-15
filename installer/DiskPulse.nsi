@@ -9,6 +9,8 @@ RequestExecutionLevel user
 Name "DiskPulse"
 Caption "DiskPulse 安装程序"
 OutFile "${OUTPUT_PATH}\DiskPulse-Setup.exe"
+Icon "${PROJECT_ROOT}\assets\DiskPulse.ico"
+UninstallIcon "${PROJECT_ROOT}\assets\DiskPulse.ico"
 InstallDir "$LOCALAPPDATA\DiskPulse\app"
 InstallDirRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\DiskPulse" "InstallLocation"
 ShowInstDetails show
