@@ -62,16 +62,18 @@ The scan target of at least 10% improvement was not demonstrated and no scan opt
 | Output tokens | unavailable from provider | unavailable from provider | not returned |
 | Total tokens | unavailable from provider | unavailable from provider | not returned |
 
-The provider did not return a usable `usage` object in the authorized calls. The implementation now records usage when providers return standard fields, without adding reasoning tokens twice.
+The earlier missing usage values must not be attributed directly to the provider: production `Invoke-WebRequest` returns `byte[]`, and the old worker queried usage before decoding that byte array. The worker now strictly UTF-8 decodes the complete envelope once and uses that same envelope for both usage extraction and structured content parsing. Offline coverage verifies `inputTokens=1811`, `outputTokens=2217`, `reasoningTokens=1576`, and `totalTokens=4028`; reasoning tokens are not added again. No additional real API calls were executed in this revision.
 
 ## Changes retained
 
 - Profile-only safe diagnostics for main/worker timing, payload sizes, provider/model, and token usage.
 - Prompt compression from 1,515 to 1,208 characters while retaining the safety constraints.
-- AI-only summary caps: growth 10, release 8, breakdown 3 per retained parent, trends 8.
+- AI input caps restored to growth 15, release 10, breakdown 5 per retained parent, trends 10 because the smaller range had no same-input token, latency, or quality proof.
 - Exact `omitted` counts and absolute-byte totals for omitted growth/release items.
-- Structured-result limits: summary 120 characters, possible causes/evidence/recommendations 3 each, cautions 2, each item 80 characters.
-- Offline tests for prompt safety, omitted accounting, completion-limit fixture parsing, worker profile redaction, and usage normalization.
+- Structured-result safety limits restored to summary 4,000 characters, up to 10 items per list, 1,000 characters per item, and raw text 16,000 characters. Post-parse truncation is safety handling, not a performance optimization.
+- Per-scan atomic profiles under `runtime/ai-profiles/<scanId>.json`; stale workers retain their own profile but cannot overwrite `last-ai-profile.json`.
+- Stage fields use durations: `contractReadMs`, `promptBuildMs`, `configLoadMs`, `httpRequestMs`, `responseDecodeParseMs`, `htmlUpdateMs`, `resultWriteMs`, `workerTotalMs`, and `launchToWorkerEntryMs`.
+- Offline tests for prompt safety, omitted accounting, byte[] envelope usage, worker profile redaction, and stale-profile race behavior.
 
 ## Experiments reverted or rejected
 
@@ -80,6 +82,7 @@ The provider did not return a usable `usage` object in the authorized calls. The
 - Multi-disk concurrency: not implemented. No controlled result-equality and median-improvement evidence justified it.
 - C# scanner hot-loop rewrite: not implemented. The profile identified scan time, but no single safe rewrite was proven to meet the 10% target without a larger semantic-risk surface.
 - Completion token default: not changed. Offline fixtures remain valid at 768/1024/1536/2048, but no provider usage and no remaining real-call budget support choosing a production default.
+- Parser-tightening experiment: reverted; it happened after model output and therefore did not reduce tokens or latency.
 
 ## Quality and safety
 
@@ -88,7 +91,10 @@ The provider did not return a usable `usage` object in the authorized calls. The
 - Worker does not acquire the main lock or rescan disks.
 - Stale-worker checks remain in place.
 - Profile writer uses an allowlist and does not persist prompts, paths, authorization, or API keys.
-- Baseline structured success rate was 2/3; the optimization did not establish a higher rate because only one post-change real success sample was available.
+- No disk-scan speedup was proven.
+- No AI end-to-end speedup was proven.
+- System prompt reduction of 20.3% was proven (1,515 to 1,208 characters).
+- No additional real API calls were performed during this revision.
 
 ## Verification results
 

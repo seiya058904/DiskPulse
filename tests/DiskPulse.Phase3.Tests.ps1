@@ -260,8 +260,8 @@ $manyCurrent=[pscustomobject]@{drive='T:';status='complete';rootPath='T:\';usedB
 $manyDir=@([pscustomobject]@{drive='T:';status='complete';baselineScanId='base';changes=[array]$changeRecords;coverage=[pscustomobject]@{actualNetBytes=1000;locatedNetBytes=1000;addedBytes=1000;releasedBytes=0;rate=100;activityPreferred=$false};errors=@();unavailable=@();excluded=@()})
 $manySnap=[pscustomobject]@{scanId='many';completedAt='2026-07-14T11:00:00Z';status='complete'}
 $manyInput=New-DiskPulseAIInput -DirectoryResults $manyDir -HistoryCenter @() -Snapshot $manySnap
-if($manyInput.primaryGrowth.Count-ne10){throw "Growth must be capped at 10, got $($manyInput.primaryGrowth.Count)."}
-if($manyInput.omitted.growthCount-ne10){throw "Omitted growth must be 10, got $($manyInput.omitted.growthCount)."}
+if($manyInput.primaryGrowth.Count-ne15){throw "Growth must be capped at 15, got $($manyInput.primaryGrowth.Count)."}
+if($manyInput.omitted.growthCount-ne5){throw "Omitted growth must be 5, got $($manyInput.omitted.growthCount)."}
 if($manyInput.omitted.growthBytes-le0){throw "Omitted growth bytes must be positive."}
 
 # --- No baseline / no reliable changes / all failed ---
@@ -336,10 +336,10 @@ $regDirD=[pscustomobject]@{drive='D:';status='complete';baselineScanId='base';ch
 $regInput=New-DiskPulseAIInput -DirectoryResults @($regDirC,$regDirD) -HistoryCenter @() -Snapshot $regSnap
 $cGrowth=@($regInput.primaryGrowth | Where-Object { $_.drive -eq 'C:' })
 $dGrowth=@($regInput.primaryGrowth | Where-Object { $_.drive -eq 'D:' })
-if($cGrowth.Count-ne10){throw "C: must have 10 growth items, got $($cGrowth.Count)."}
-if($dGrowth.Count-ne10){throw "D: must have 10 growth items, got $($dGrowth.Count)."}
-if($regInput.primaryGrowth.Count-ne20){throw "Total growth must be 20 (10+10), got $($regInput.primaryGrowth.Count)."}
-if($regInput.omitted.growthCount-ne20){throw "Omitted must be 20 (10+10), got $($regInput.omitted.growthCount)."}
+if($cGrowth.Count-ne15){throw "C: must have 15 growth items, got $($cGrowth.Count)."}
+if($dGrowth.Count-ne15){throw "D: must have 15 growth items, got $($dGrowth.Count)."}
+if($regInput.primaryGrowth.Count-ne30){throw "Total growth must be 30 (15+15), got $($regInput.primaryGrowth.Count)."}
+if($regInput.omitted.growthCount-ne10){throw "Omitted must be 10 (5+5), got $($regInput.omitted.growthCount)."}
 
 # One parent with >5 children, confirm only 5 breakdown
 $regParent=[pscustomobject]@{key='c-big';displayPath='C:\BigParent';kind='directory';level=1;sizeBytes=1000;deltaBytes=500;state='changed'}
@@ -350,7 +350,7 @@ for($i=1;$i -le 8;$i++){
 $regDir2=[pscustomobject]@{drive='C:';status='complete';baselineScanId='base';changes=@($regParent)+$regChildren;coverage=[pscustomobject]@{actualNetBytes=500;locatedNetBytes=500;addedBytes=500;releasedBytes=0;rate=100;activityPreferred=$false;unexplainedBytes=0};errors=@();unavailable=@();excluded=@()}
 $regInput2=New-DiskPulseAIInput -DirectoryResults @($regDir2) -HistoryCenter @() -Snapshot $regSnap
 $parentBd=@($regInput2.breakdown | Where-Object { $_.parentPath -eq 'C:\BigParent' })
-if($parentBd.Count-ne3){throw "Breakdown must be capped at 3, got $($parentBd.Count)."}
+if($parentBd.Count-ne5){throw "Breakdown must be capped at 5, got $($parentBd.Count)."}
 
 # Omitted parent's children must NOT appear in breakdown
 $omParent=[pscustomobject]@{key='c-omp';displayPath='C:\OmittedParent';kind='directory';level=1;sizeBytes=1000;deltaBytes=5;state='changed'}
@@ -388,7 +388,7 @@ $manyTrends=@()
 for($i=1;$i -le 12;$i++){$manyTrends+=[pscustomobject]@{key="c-mt$i";displayPath="C:\MT$(($i).ToString('00'))";level=1;label='持续增长';cumulativeBytes=[int64]($i*10);samples=@();growthCount=1;releaseCount=0;occurrenceCount=1;comparisonCount=1;firstSeen='2026-07-13T10:00:00Z';lastSeen='2026-07-14T10:30:00Z'}}
 $manyTrendHC=@([pscustomobject]@{drive='C:';status='complete';selections=[pscustomobject]@{};comparisons=@();trends=[array]$manyTrends})
 $manyTrendInput=New-DiskPulseAIInput -DirectoryResults @($trendsDir) -HistoryCenter $manyTrendHC -Snapshot $regSnap
-if($manyTrendInput.historicalTrends.Count-ne8){throw "historicalTrends must cap at 8, got $($manyTrendInput.historicalTrends.Count)."}
+if($manyTrendInput.historicalTrends.Count-ne10){throw "historicalTrends must cap at 10, got $($manyTrendInput.historicalTrends.Count)."}
 
 Write-Host 'PASS: Phase 2 regression — per-disk Top N, breakdown limits, omitted parent, trend sort.'
 
@@ -502,9 +502,9 @@ $causeJson=($causeArr | ForEach-Object { '"' + $_ + '"' }) -join ','
 $longEv='B'*2000
 $tTrunc={ param($u,$h,$b,$t) $jsonStr=('{ "summary":"' + ('A'*5000) + '", "possibleCauses":[' + $causeJson + '], "confidence":"low", "evidence":["' + $longEv + '"], "recommendations":[], "cautions":[] }'); $msg=[pscustomobject]@{content=$jsonStr}; $ch=[pscustomobject]@{message=$msg}; return [pscustomobject]@{choices=@($ch)} }
 $tr=ConvertFrom-DiskPulseAIResponse (Invoke-DiskPulseAIRequest -Config $remoteCfg -Prompt $tp -Transport $tTrunc)
-if($tr.analysis.summary.Length-gt120){throw 'Summary capped at 120.'}
-if($tr.analysis.possibleCauses.Count-gt3 -or $tr.analysis.evidence.Count-gt3 -or $tr.analysis.recommendations.Count-gt3 -or $tr.analysis.cautions.Count-gt2){throw 'AI lists must be capped at 3/3/3/2.'}
-if($tr.analysis.evidence[0].Length-gt80){throw 'Item capped at 80.'}
+if($tr.analysis.summary.Length-gt4000){throw 'Summary capped at 4000.'}
+if($tr.analysis.possibleCauses.Count-gt10 -or $tr.analysis.evidence.Count-gt10 -or $tr.analysis.recommendations.Count-gt10 -or $tr.analysis.cautions.Count-gt10){throw 'AI lists must be capped at 10.'}
+if($tr.analysis.evidence[0].Length-gt1000){throw 'Item capped at 1000.'}
 
 # Test: Raw text truncation
 $longPlain='X'*20000
@@ -534,6 +534,12 @@ if((ConvertFrom-DiskPulseAIRequestResult ([pscustomobject]@{ok=$true;response=$e
 $envelopeBytes=[Text.Encoding]::UTF8.GetBytes('{"choices":[{"message":{"content":"plain bytes"}}]}')
 if((ConvertFrom-DiskPulseAIRequestResult ([pscustomobject]@{ok=$true;response=$envelopeBytes})).format-ne'text'){throw 'Unified parser byte response failed.'}
 if((ConvertFrom-DiskPulseAIRequestResult ([pscustomobject]@{ok=$false;error='timeout'})).status-ne'timeout'){throw 'Unified parser request error failed.'}
+$usageEnvelopeJson='{"choices":[{"message":{"content":"{\"summary\":\"ok\",\"possibleCauses\":[],\"confidence\":\"high\",\"evidence\":[],\"recommendations\":[],\"cautions\":[]}"}}],"usage":{"prompt_tokens":1811,"completion_tokens":2217,"total_tokens":4028,"completion_tokens_details":{"reasoning_tokens":1576}}}'
+$usageParsed=ConvertFrom-DiskPulseAIRequestResult ([pscustomobject]@{ok=$true;response=[Text.Encoding]::UTF8.GetBytes($usageEnvelopeJson)})
+if($usageParsed.status-ne'success' -or $usageParsed.format-ne'structured'){throw 'Byte[] envelope structured response must succeed.'}
+if($usageParsed.analysis.summary-ne'ok'){throw 'Byte[] envelope summary must parse.'}
+if($usageParsed.usage.inputTokens-ne1811 -or $usageParsed.usage.outputTokens-ne2217 -or $usageParsed.usage.reasoningTokens-ne1576 -or $usageParsed.usage.totalTokens-ne4028){throw "Byte[] usage mismatch: $($usageParsed.usage | ConvertTo-Json -Compress)."}
+if($usageParsed.usage.completionTokens-ne2217){throw 'Completion tokens must not double count reasoning tokens.'}
 
 # Test: Error classification
 $e401=Invoke-DiskPulseAIRequest -Config $remoteCfg -Prompt $tp -Transport { param($u,$h,$b,$t) throw (New-Object System.Net.WebException('401')) }
@@ -997,12 +1003,21 @@ function renderAIAnalysis(){ return AI_ANALYSIS.status; }
     ))
     Invoke-DiskPulseAIWorker
     if($script:workerCalls-ne1){throw 'Worker should call AI exactly once for complete event.'}
-    $workerProfilePath=Join-Path $workerRuntime 'last-ai-profile.json'
-    if(-not(Test-Path -LiteralPath $workerProfilePath)){throw 'Profile mode worker must write last-ai-profile.json.'}
+    $workerProfilePath=Join-Path (Join-Path $workerRuntime 'ai-profiles') 'scan-1.json'
+    if(-not(Test-Path -LiteralPath $workerProfilePath)){throw 'Profile mode worker must write a per-scan profile.'}
+    $workerLatestProfilePath=Join-Path $workerRuntime 'last-ai-profile.json'
+    if(-not(Test-Path -LiteralPath $workerLatestProfilePath)){throw 'Latest profile must be written for the current complete scan.'}
     $workerProfile=Get-Content -Raw -LiteralPath $workerProfilePath -Encoding UTF8|ConvertFrom-Json
+    if($workerProfile.scanId-ne'scan-1' -or $workerProfile.format-ne'structured'){throw 'Per-scan profile must include scanId and final format.'}
     foreach($unsafe in 'prompt','path','authorization','apiKey'){
         if($workerProfile.PSObject.Properties.Name -contains $unsafe){throw "Worker profile must not persist $unsafe."}
     }
+    # Race: B becomes latest before stale A publishes its own per-scan profile.
+    Publish-DiskPulseAIProfile -RuntimePath $workerRuntime -ScanId 'scan-B' -Data ([pscustomobject]@{scanId='scan-B';status='complete';format='structured';model='m'}) -LatestScanId 'scan-B' -LatestStatus 'complete'
+    Publish-DiskPulseAIProfile -RuntimePath $workerRuntime -ScanId 'scan-A' -Data ([pscustomobject]@{scanId='scan-A';status='success';format='structured';model='m'}) -LatestScanId 'scan-B' -LatestStatus 'complete'
+    $latestAfterRace=Get-Content -Raw -LiteralPath $workerLatestProfilePath -Encoding UTF8|ConvertFrom-Json
+    if($latestAfterRace.scanId-ne'scan-B'){throw 'Stale worker must not overwrite latest profile.'}
+    if(-not(Test-Path -LiteralPath (Join-Path (Join-Path $workerRuntime 'ai-profiles') 'scan-A.json'))){throw 'Stale worker must retain its per-scan profile.'}
     $saved=Get-Content -Raw -LiteralPath $workerOut -Encoding UTF8 | ConvertFrom-Json
     if($saved.status-ne'success'){throw 'Worker complete must write success result.'}
     $html=Get-Content -Raw -LiteralPath $workerHtml -Encoding UTF8
@@ -1133,4 +1148,6 @@ Write-Host 'PASS: profile output redaction.'
 if(-not(Get-Command Get-DiskPulseAIUsage -ErrorAction SilentlyContinue)){throw 'Missing AI usage reader.'}
 $usage=Get-DiskPulseAIUsage ([pscustomobject]@{usage=[pscustomobject]@{prompt_tokens=11;completion_tokens=22;total_tokens=33;completion_tokens_details=[pscustomobject]@{reasoning_tokens=7}}})
 if($usage.inputTokens-ne11 -or $usage.outputTokens-ne22 -or $usage.totalTokens-ne33 -or $usage.reasoningTokens-ne7){throw 'AI usage fields must be normalized without double counting.'}
+$aliasUsage=Get-DiskPulseAIUsage ([pscustomobject]@{usage=[pscustomobject]@{input_tokens=13;output_tokens=23;total_tokens=36;input_tokens_details=[pscustomobject]@{cached_tokens=3};output_tokens_details=[pscustomobject]@{reasoning_tokens=9}}})
+if($aliasUsage.inputTokens-ne13 -or $aliasUsage.outputTokens-ne23 -or $aliasUsage.cachedTokens-ne3 -or $aliasUsage.reasoningTokens-ne9){throw 'AI usage aliases and nested details must be normalized.'}
 Write-Host 'PASS: AI usage normalization.'
