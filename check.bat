@@ -55,16 +55,15 @@ function Acquire-DiskPulseAIProfileLock {
     if (-not (Test-Path -LiteralPath $RuntimePath)) { [IO.Directory]::CreateDirectory($RuntimePath) | Out-Null }
     for ($attempt = 0; $attempt -lt 240; $attempt++) {
         try {
-            $stream = [IO.File]::Open($lockPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
-            $stream.Dispose()
-            return $lockPath
+            $stream = [IO.File]::Open($lockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+            return $stream
         } catch [IO.IOException] { Start-Sleep -Milliseconds 25 }
     }
     throw '无法取得 AI profile 发布锁。'
 }
 function Release-DiskPulseAIProfileLock {
-    param([string]$LockPath)
-    if ($LockPath -and (Test-Path -LiteralPath $LockPath)) { Remove-Item -LiteralPath $LockPath -Force }
+    param($Lock)
+    if ($Lock) { $Lock.Dispose() }
 }
 function Publish-DiskPulseAIProfile {
     param([string]$RuntimePath, [string]$ScanId, $Data, [string]$EventsPath)
@@ -75,11 +74,15 @@ function Publish-DiskPulseAIProfile {
         if (-not (Test-Path -LiteralPath $profileDir)) { [IO.Directory]::CreateDirectory($profileDir) | Out-Null }
         Write-DiskPulseAIProfile -Path (Join-Path $profileDir ($ScanId + '.json')) -Data $Data
         $latest = Get-DiskPulseAILatestScanEvent $EventsPath
-        $publishOutcome = if ($latest -and [string]$latest.scanId -eq $ScanId -and [string]$latest.status -in @('complete','partial')) { 'completed' } else { 'stale-discarded' }
-        if ($Data.PSObject.Properties.Name -contains 'workerOutcome') { $Data.workerOutcome = $publishOutcome } else { $Data | Add-Member -NotePropertyName workerOutcome -NotePropertyValue $publishOutcome }
-        Write-DiskPulseAIProfile -Path (Join-Path $profileDir ($ScanId + '.json')) -Data $Data
-        if ($latest -and [string]$latest.scanId -eq $ScanId -and [string]$latest.status -in @('complete','partial')) {
+        $sameScan = $latest -and [string]$latest.scanId -eq $ScanId
+        $isCurrent = $sameScan -and [string]$latest.status -in @('complete','partial')
+        if ($isCurrent) {
+            $publishOutcome = if ($Data.PSObject.Properties.Name -contains 'workerOutcome') { [string]$Data.workerOutcome } else { 'skipped' }
             Write-DiskPulseAIProfile -Path (Join-Path $RuntimePath 'last-ai-profile.json') -Data $Data
+        } else {
+            $publishOutcome = if ($sameScan -and $Data.PSObject.Properties.Name -contains 'workerOutcome') { [string]$Data.workerOutcome } else { 'stale-discarded' }
+            if ($Data.PSObject.Properties.Name -contains 'workerOutcome') { $Data.workerOutcome = $publishOutcome } else { $Data | Add-Member -NotePropertyName workerOutcome -NotePropertyValue $publishOutcome }
+            Write-DiskPulseAIProfile -Path (Join-Path $profileDir ($ScanId + '.json')) -Data $Data
         }
         $profiles = @(Get-ChildItem -LiteralPath $profileDir -Filter '*.json' -File | Sort-Object LastWriteTimeUtc -Descending)
         foreach ($old in @($profiles | Select-Object -Skip 20)) { Remove-Item -LiteralPath $old.FullName -Force }
@@ -1394,7 +1397,7 @@ function Invoke-DiskPulseAIRequest {
         try {
             [Net.ServicePointManager]::SecurityProtocol = $savedProtocol -bor [Net.SecurityProtocolType]::Tls12
         }
-        catch { $workerOutcome = 'error' }
+        catch { }
 
         if ($Transport) {
             $response = & $Transport $uri $headers $bodyBytes $timeout

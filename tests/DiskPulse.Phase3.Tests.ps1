@@ -993,6 +993,16 @@ function renderAIAnalysis(){ return AI_ANALYSIS.status; }
     $env:DISKPULSE_AI_WORKER_INPUT=$workerInput
     $env:DISKPULSE_AI_WORKER_HTML=$workerHtml
     $workerPaths=[pscustomobject]@{Runtime=$workerRuntime;Events=$workerEvents;Lock=(Join-Path $workerRuntime 'DiskPulse.lock')}
+    $profileLockPath=Join-Path $workerRuntime 'ai-profile.lock'
+    [IO.File]::WriteAllText($profileLockPath,'')
+    $freeProfileLock=Acquire-DiskPulseAIProfileLock $workerRuntime
+    Release-DiskPulseAIProfileLock $freeProfileLock
+    $heldProfileLock=Acquire-DiskPulseAIProfileLock $workerRuntime
+    try {
+        try { $blockedStream=[IO.File]::Open($profileLockPath,[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None); throw 'Second profile lock entered while first was held.' } catch [IO.IOException] { }
+    } finally { Release-DiskPulseAIProfileLock $heldProfileLock }
+    $releasedProfileLock=Acquire-DiskPulseAIProfileLock $workerRuntime
+    Release-DiskPulseAIProfileLock $releasedProfileLock
     $workerLock=Acquire-DiskPulseLock $workerPaths 'lock-test'
     $script:workerCalls=0
     function Invoke-DiskPulseAIRequest {
@@ -1019,7 +1029,7 @@ function renderAIAnalysis(){ return AI_ANALYSIS.status; }
     Set-Content -LiteralPath $workerEvents -Encoding UTF8 -Value '{"scanId":"scan-B","status":"complete","completedAt":"2026-07-14T10:32:00Z"}'
     $heldProfileLock=Acquire-DiskPulseAIProfileLock $workerRuntime
     Release-DiskPulseAIProfileLock $heldProfileLock
-    $bPublish=Publish-DiskPulseAIProfile -RuntimePath $workerRuntime -ScanId 'scan-B' -Data ([pscustomobject]@{scanId='scan-B';status='complete';format='structured';model='m'}) -EventsPath $workerEvents
+    $bPublish=Publish-DiskPulseAIProfile -RuntimePath $workerRuntime -ScanId 'scan-B' -Data ([pscustomobject]@{scanId='scan-B';status='complete';format='structured';workerOutcome='completed';model='m'}) -EventsPath $workerEvents
     $aPublish=Publish-DiskPulseAIProfile -RuntimePath $workerRuntime -ScanId 'scan-A' -Data ([pscustomobject]@{scanId='scan-A';status='success';format='structured';model='m'}) -EventsPath $workerEvents
     if($bPublish-ne'completed' -or $aPublish-ne'stale-discarded'){throw 'Profile publication outcomes must distinguish completed from stale-discarded.'}
     $latestAfterRace=Get-Content -Raw -LiteralPath $workerLatestProfilePath -Encoding UTF8|ConvertFrom-Json
@@ -1027,6 +1037,13 @@ function renderAIAnalysis(){ return AI_ANALYSIS.status; }
     $staleProfile=Get-Content -Raw -LiteralPath (Join-Path (Join-Path $workerRuntime 'ai-profiles') 'scan-A.json') -Encoding UTF8|ConvertFrom-Json
     if($staleProfile.workerOutcome-ne'stale-discarded'){throw 'Stale profile must record stale-discarded outcome.'}
     if(-not(Test-Path -LiteralPath (Join-Path (Join-Path $workerRuntime 'ai-profiles') 'scan-A.json'))){throw 'Stale worker must retain its per-scan profile.'}
+    Set-Content -LiteralPath $workerEvents -Encoding UTF8 -Value '{"scanId":"scan-C","status":"complete","completedAt":"2026-07-14T10:33:00Z"}'
+    $errorPublish=Publish-DiskPulseAIProfile -RuntimePath $workerRuntime -ScanId 'scan-C' -Data ([pscustomobject]@{scanId='scan-C';status='unknown-error';format='none';workerOutcome='error'}) -EventsPath $workerEvents
+    $errorProfile=Get-Content -Raw -LiteralPath (Join-Path (Join-Path $workerRuntime 'ai-profiles') 'scan-C.json') -Encoding UTF8|ConvertFrom-Json
+    if($errorPublish-ne'error' -or $errorProfile.workerOutcome-ne'error'){throw 'Error outcome must be preserved by profile publishing.'}
+    $skipPublish=Publish-DiskPulseAIProfile -RuntimePath $workerRuntime -ScanId 'scan-C' -Data ([pscustomobject]@{scanId='scan-C';status='skipped';format='none';workerOutcome='skipped'}) -EventsPath $workerEvents
+    $skipProfile=Get-Content -Raw -LiteralPath (Join-Path (Join-Path $workerRuntime 'ai-profiles') 'scan-C.json') -Encoding UTF8|ConvertFrom-Json
+    if($skipPublish-ne'skipped' -or $skipProfile.workerOutcome-ne'skipped'){throw 'Skipped outcome must be preserved by profile publishing.'}
     $saved=Get-Content -Raw -LiteralPath $workerOut -Encoding UTF8 | ConvertFrom-Json
     if($saved.status-ne'success'){throw 'Worker complete must write success result.'}
     $html=Get-Content -Raw -LiteralPath $workerHtml -Encoding UTF8
@@ -1052,9 +1069,13 @@ function renderAIAnalysis(){ return AI_ANALYSIS.status; }
     Set-Content -LiteralPath $workerEvents -Encoding UTF8 -Value '{"scanId":"scan-1","status":"running","completedAt":"2026-07-14T10:31:00Z"}'
     Invoke-DiskPulseAIWorker
     if((Get-Content -Raw -LiteralPath $workerHtml -Encoding UTF8)-match'Worker ok'){throw 'Running event must not update HTML.'}
+    $runningProfile=Get-Content -Raw -LiteralPath $workerProfilePath -Encoding UTF8|ConvertFrom-Json
+    if($runningProfile.workerOutcome-ne'skipped'){throw 'Running scan with no request must record skipped outcome.'}
     Set-Content -LiteralPath $workerEvents -Encoding UTF8 -Value '{"scanId":"scan-1","status":"failed","completedAt":"2026-07-14T10:31:00Z"}'
     Invoke-DiskPulseAIWorker
     if((Get-Content -Raw -LiteralPath $workerHtml -Encoding UTF8)-match'Worker ok'){throw 'Failed event must not update HTML.'}
+    $failedProfile=Get-Content -Raw -LiteralPath $workerProfilePath -Encoding UTF8|ConvertFrom-Json
+    if($failedProfile.workerOutcome-ne'skipped'){throw 'Failed scan with no request must record skipped outcome.'}
 
     # stale worker must not overwrite newer scan
     [IO.File]::WriteAllText($workerHtml,$htmlTemplate,[Text.UTF8Encoding]::new($false))
