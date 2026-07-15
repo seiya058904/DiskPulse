@@ -389,7 +389,16 @@ if($bObj.model-ne'test-model'){throw 'Model mismatch.'}
 if($bObj.messages.Count-ne2){throw 'Must have 2 messages.'}
 if($bObj.messages[0].role-ne'system'){throw 'First msg must be system.'}
 if($bObj.messages[1].role-ne'user'){throw 'Second msg must be user.'}
-if($bObj.temperature-ne0.2){throw 'Temperature must be 0.2.'}
+if($bObj.PSObject.Properties.Name -contains 'temperature'){throw 'Default request must not include temperature.'}
+if($bObj.PSObject.Properties.Name -contains 'max_tokens'){throw 'Default request must not include max_tokens.'}
+if($bObj.PSObject.Properties.Name -contains 'max_completion_tokens'){throw 'Default request must not include max_completion_tokens.'}
+
+$tokenCfg=[pscustomobject]@{enabled=$true;endpoint='https://api.example.com/v1/chat/completions';model='test-model';protectedApiKey=(Protect-DiskPulseSecret 'test-api-key-12345');timeoutSeconds=10;tokenLimit=512;tokenLimitParameter='max_completion_tokens';temperature=0.1}
+$req2=Invoke-DiskPulseAIRequest -Config $tokenCfg -Prompt $tp -Transport { param($u,$h,$b,$t) $script:tBody2=$b; $m=[pscustomobject]@{content='ok'}; $c=[pscustomobject]@{message=$m}; return [pscustomobject]@{choices=@($c)} }
+$bObj2=[Text.Encoding]::UTF8.GetString($script:tBody2) | ConvertFrom-Json
+if($bObj2.temperature-ne0.1){throw 'Optional temperature must be included when configured.'}
+if($bObj2.max_completion_tokens-ne512){throw 'max_completion_tokens must be used when configured.'}
+if($bObj2.PSObject.Properties.Name -contains 'max_tokens'){throw 'max_tokens must not be sent when max_completion_tokens is selected.'}
 
 # Test: Remote includes Bearer header
 if($script:tHeaders['Authorization']-ne'Bearer test-api-key-12345'){throw 'Remote must include Bearer.'}
@@ -421,6 +430,18 @@ $plain=ConvertFrom-DiskPulseAIResponse (Invoke-DiskPulseAIRequest -Config $remot
 if($plain.status-ne'success'){throw 'Plain text must succeed.'}
 if($plain.format-ne'text'){throw 'Format must be text.'}
 if($plain.rawText-ne'Just text.'){throw 'rawText must match.'}
+
+# Test: UTF-8 Chinese + emoji structured response
+$tUtf8={ param($u,$h,$b,$t) $msg=[pscustomobject]@{content='{ "summary":"中文😀", "possibleCauses":["原因😀"], "confidence":"medium", "evidence":["证据"], "recommendations":["建议"], "cautions":["注意"] }'}; $ch=[pscustomobject]@{message=$msg}; return [pscustomobject]@{choices=@($ch)} }
+$utf8=ConvertFrom-DiskPulseAIResponse (Invoke-DiskPulseAIRequest -Config $remoteCfg -Prompt $tp -Transport $tUtf8)
+if($utf8.status-ne'success'){throw 'UTF-8 structured response must succeed.'}
+if($utf8.analysis.summary-ne'中文😀'){throw 'UTF-8 summary mismatch.'}
+if($utf8.analysis.possibleCauses[0]-ne'原因😀'){throw 'UTF-8 possibleCauses mismatch.'}
+
+# Test: Invalid JSON
+$tBadJson={ param($u,$h,$b,$t) $msg=[pscustomobject]@{content='{ "summary":"broken" '}; $ch=[pscustomobject]@{message=$msg}; return [pscustomobject]@{choices=@($ch)} }
+$bad=ConvertFrom-DiskPulseAIResponse (Invoke-DiskPulseAIRequest -Config $remoteCfg -Prompt $tp -Transport $tBadJson)
+if($bad.status-ne'invalid-response'){throw 'Invalid JSON must be invalid-response.'}
 
 # Test: Empty content
 $tEmpty={ param($u,$h,$b,$t) $msg=[pscustomobject]@{content=''}; $ch=[pscustomobject]@{message=$msg}; return [pscustomobject]@{choices=@($ch)} }
@@ -846,6 +867,20 @@ try{
 }finally{
     if(Test-Path -LiteralPath $orcTempRoot){Remove-Item -LiteralPath $orcTempRoot -Recurse -Force -ErrorAction SilentlyContinue}
 }
+
+# === Worker lifecycle and request construction guards ===
+foreach($name in 'Get-DiskPulseAIAnalysisState','Get-DiskPulseAILatestScanEvent','New-DiskPulseAIWorkerCommand','Start-DiskPulseAIWorker','Invoke-DiskPulseAIWorker'){
+    if(-not(Get-Command $name -ErrorAction SilentlyContinue)){throw "Missing worker helper: $name"}
+}
+$src=Get-Content -Raw -LiteralPath (Join-Path $root 'check.bat') -Encoding UTF8
+$workerStart=$src.IndexOf('function Invoke-DiskPulseAIWorker')
+$workerEnd=$src.IndexOf('function ConvertFrom-DiskPulseAIResponse')
+$workerBody=if($workerStart -ge 0 -and $workerEnd -gt $workerStart){$src.Substring($workerStart,$workerEnd-$workerStart)}else{''}
+if($workerBody -match 'Acquire-DiskPulseLock'){throw 'AI worker must not acquire the main scan lock.'}
+if($workerBody -match 'Get-CimInstance'){throw 'AI worker must not rescan disks.'}
+$workerCmd=New-DiskPulseAIWorkerCommand -ScriptPath 'C:\DiskPulse\check.bat' -RootPath 'C:\DiskPulse' -ScanId 'scan-1' -InputPath 'C:\DiskPulse\runtime\ai-input.json' -OutputPath 'C:\DiskPulse\runtime\last-ai-analysis.json' -HtmlPath 'C:\DiskPulse\runtime\DiskPulse.html'
+if($workerCmd -notmatch '\$env:DISKPULSE_AI_WORKER=''1'''){throw 'Worker command must set worker mode.'}
+if($workerCmd -match 'test-api-key'){throw 'Worker command must not contain API key.'}
 
 # --- Verify original runtime/ai-config.local.json was NOT modified ---
 if($origCfgExists){
