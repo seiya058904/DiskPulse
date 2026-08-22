@@ -983,6 +983,11 @@ $dirDnf=[regex]::Match($src,'(?s)else if\(ex is DirectoryNotFoundException\)(.*?
 if(-not $dirDnf.Success -or $dirDnf.Groups[1].Value -match 'result\.status\s*=\s*"partial"'){throw 'Fast scanner directory-level transient branch must not set partial.'}
 # Root-enumeration failure must still be failed; only non-root unexpected I-O flips partial.
 if($src -notmatch '(?s)else \{ AddEvidence\(result\.errors,directory,ex\.Message,"enumeration-failed"\);[^}]*result\.status="partial"'){throw 'Only the unexpected-I-O else branch may flip partial.'}
+$liveProbeStart=$src.IndexOf('function Write-DiskPulseAILiveProbe')
+if($liveProbeStart -lt 0){throw 'Write-DiskPulseAILiveProbe must exist for atomicity check.'}
+$liveProbeBody=$src.Substring($liveProbeStart, $src.IndexOf('function Update-DiskPulseAIHtmlResult') - $liveProbeStart)
+if($liveProbeBody -notmatch '\[IO\.File\]::Replace'){throw 'Live probe write must be atomic (File.Replace).'}
+if($liveProbeBody -match 'Remove-Item -LiteralPath \$LivePath -Force'){throw 'Live probe write must not use remove-then-move.'}
 if($src -match '\[IO\.Path\]::GetTempFileName\(\)'){throw 'HTML replacement must not use system TEMP files.'}
 if($src -match '\$jsPath\s*=|WriteAllText\(\$jsPath|Test-Path -LiteralPath \$jsPath'){throw 'Production HTML update must not create a temporary JS file.'}
 if($src -notmatch '(?s)if \(\$aiPlan\.ready\).*?Write-DiskPulseAIResult -ScanId \$scanId -Status \$aiAnalysisResult\.status'){throw 'Ready scans must persist analyzing before worker startup.'}

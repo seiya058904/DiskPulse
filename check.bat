@@ -1924,10 +1924,19 @@ function Write-DiskPulseAILiveProbe {
     $utf8NoBom = New-Object System.Text.UTF8Encoding $false
     $tmpPath = $LivePath + '.tmp'
     [System.IO.File]::WriteAllText($tmpPath, $content, $utf8NoBom)
-    if (Test-Path -LiteralPath $LivePath) {
-        Remove-Item -LiteralPath $LivePath -Force
+    try {
+        if (Test-Path -LiteralPath $LivePath) {
+            # True atomic replace: readers of the probe never observe a "file missing" window.
+            $backupPath = $LivePath + '.bak'
+            [IO.File]::Replace($tmpPath, $LivePath, $backupPath)
+            if (Test-Path -LiteralPath $backupPath) { Remove-Item -LiteralPath $backupPath -Force }
+        } else {
+            [IO.File]::Move($tmpPath, $LivePath)
+        }
     }
-    [IO.File]::Move($tmpPath, $LivePath)
+    finally {
+        if (Test-Path -LiteralPath $tmpPath) { Remove-Item -LiteralPath $tmpPath -Force }
+    }
 }
 
 function Update-DiskPulseAIHtmlResult {
@@ -3398,7 +3407,8 @@ function aiStartRefreshFallback(scanId) {
   // First fallback refresh happens immediately once the watchdog fires (chromium/edge cache
   // file:// probes, so waiting longer only delays the user); follow-ups back off 20s then 30s.
   const delays = [0, 20000, 30000];
-  aiLiveWatchdog = setTimeout(() => { location.reload(); }, delays[refreshCount] || 30000);
+  // `??` (not `||`): delay 0 is a valid first-fallback delay; `||` would replace it with 30000.
+  aiLiveWatchdog = setTimeout(() => { location.reload(); }, delays[refreshCount] ?? 30000);
 }
 
 function aiProbeGiveUp(scanId) {
@@ -4421,7 +4431,7 @@ $("copy").addEventListener("click", async () => {
     `总容量 ${fmt(t.total)} / 已用 ${fmt(t.used)} / 剩余 ${fmt(t.free)}`,
     ...DATA.map((d) => `${d.id} 使用率 ${pct(d.percent)}，剩余 ${fmt(d.free)}，本次${(Number(d.diff) || 0) >= 0 ? "增加" : "减少"} ${fmt(Math.abs(Number(d.diff) || 0))}`)
   ];
-  const ok = await copyText(lines.join("\\n"));
+  const ok = await copyText(lines.join("\n"));
   if (!ok) return;
   $("copy").textContent = "已复制";
   announce("磁盘摘要已复制到剪贴板");

@@ -217,6 +217,10 @@ foreach ($marker in @('id="ai-analysis"','ai-analysis-content','ai-analysis-note
 foreach ($marker in @('不代表磁盘扫描比例','实际净变化','已定位净变化','未解释净变化','扫描执行：','按设计忽略','权限受限','扫描期间消失','transient-missing','扫描完成','部分完成','change-explanation-note')) {
     if ($source -notmatch [regex]::Escape($marker)) { throw "Missing three-axis scan semantics marker: $marker" }
 }
+if ($source.Contains('delays[refreshCount] || 30000')) { throw 'First fallback delay must not use || (delay 0 must stay immediate).' }
+if (-not $source.Contains('delays[refreshCount] ?? 30000')) { throw 'First fallback delay must use ?? so delay 0 stays immediate.' }
+if ($source.Contains('lines.join("\\n")')) { throw 'Clipboard copies must not join with the literal text \\n.' }
+if (-not $source.Contains('lines.join("\n")')) { throw 'Clipboard copies must join lines with a real newline.' }
 if ($source -match '可见性\s*[0-9]+\s*%|只扫描了[^。]*%|% 未扫描|% 不可见') { throw 'Dashboard must not display visibility-percentage claims (visible/not-scan %).' }
 
 # Navigation link
@@ -296,9 +300,10 @@ var sessionStorage = {
 var reloadCount = 0;
 var location = { reload: function() { reloadCount++; } };
 var window = { DiskPulseAILive: null };
+var lastScheduledDelay = -1;
 var timers = {};
 var timerSeq = 0;
-function setTimeout(fn, delay) { var id = ++timerSeq; timers[id] = { fn: fn, delay: delay || 0, repeat: false }; return id; }
+function setTimeout(fn, delay) { lastScheduledDelay = delay; var id = ++timerSeq; timers[id] = { fn: fn, delay: delay || 0, repeat: false }; return id; }
 function clearTimeout(id) { delete timers[id]; }
 function setInterval(fn, delay) { var id = ++timerSeq; timers[id] = { fn: fn, delay: delay || 0, repeat: true }; return id; }
 function clearInterval(id) { delete timers[id]; }
@@ -501,6 +506,7 @@ window.DiskPulseAILive = { status: "analyzing", scanId: "scan-2" };
 headChildren[0].onload();
 assert.equal(aiProbeSupported, true, "probe mechanism must be detected as supported");
 firePendingTimeout(); // watchdog (~10s) -> immediate first fallback refresh
+assert.equal(lastScheduledDelay, 0, "first fallback reload must be scheduled immediately (delay 0)");
 assert.equal(reloadCount, 0, "fallback must not reload until the refresh delay elapses");
 assert.equal(sessionStorage.getItem("diskpulse-ai-refresh:scan-2"), "1", "refresh counter must increment once");
 firePendingTimeout(); // refresh delay -> reload
