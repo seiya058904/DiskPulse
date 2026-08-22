@@ -21,6 +21,11 @@ $files = @(Get-ChildItem -LiteralPath $output -File)
 Assert-True ($files.Count -eq 1 -and $files[0].Name -eq 'DiskPulse.exe') 'Release output must contain only DiskPulse.exe.'
 $bytes = [IO.File]::ReadAllBytes($exe)
 Assert-True ($bytes.Length -gt 2 -and $bytes[0] -eq 0x4D -and $bytes[1] -eq 0x5A) 'Output is not a Windows executable.'
+$expectedVersion = (Get-Content -Raw -LiteralPath (Join-Path $root 'version.txt') -Encoding UTF8).Trim()
+$expectedVersion4 = if ($expectedVersion.Split('.').Count -ge 4) { $expectedVersion } else { $expectedVersion + '.0' * (4 - $expectedVersion.Split('.').Count) }
+$exeVersionInfo = (Get-Item -LiteralPath $exe).VersionInfo
+Assert-True ($exeVersionInfo.FileVersion -eq $expectedVersion4) 'DiskPulse.exe FileVersion must match the canonical version.'
+Assert-True ($exeVersionInfo.ProductVersion -eq $expectedVersion4) 'DiskPulse.exe ProductVersion must match the canonical version.'
 
 $assembly = [Reflection.Assembly]::LoadFrom($exe)
 $dataType = $assembly.GetType('DataPaths', $true)

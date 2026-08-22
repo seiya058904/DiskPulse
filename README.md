@@ -10,7 +10,7 @@ DiskPulse 是一个零依赖、离线运行的 Windows 磁盘容量与目录变�
 
 ## 使用方法
 
-普通用户请下载 GitHub Release 中的 `DiskPulse-Setup.exe` 并运行。安装程序会在当前用户目录创建程序、桌面快捷方式和开始菜单入口，不需要管理员权限。安装后双击 `DiskPulse`，点击“扫描磁盘”即可；扫描完成后会自动用默认浏览器打开看板。
+普通用户请下载 GitHub Release 中最新的 `DiskPulse-Setup-*.exe`（带版本号）安装包并运行。安装程序会在当前用户目录创建程序、桌面快捷方式和开始菜单入口，不需要管理员权限。安装后双击 `DiskPulse`，点击“扫描磁盘”即可；扫描完成后会自动用默认浏览器打开看板。
 
 | 入口 | 说明 |
 |------|------|
@@ -21,7 +21,7 @@ DiskPulse 是一个零依赖、离线运行的 Windows 磁盘容量与目录变�
 
 程序文件默认安装到 `%LOCALAPPDATA%\DiskPulse`，历史记录、快照、报告、日志和 AI 配置保存到 `%LOCALAPPDATA%\DiskPulse\data\runtime`。升级程序不会覆盖这些数据；卸载时默认保留历史数据。
 
-开发者可在项目根目录运行 `powershell -NoProfile -ExecutionPolicy Bypass -File build-installer.ps1`，生成 `dist\DiskPulse-Setup.exe`。GitHub Release 只需要上传这个安装包。
+开发者可在项目根目录运行 `powershell -NoProfile -ExecutionPolicy Bypass -File build-installer.ps1`，生成 `dist\` 下带版本号的安装包（如 `DiskPulse-Setup-1.1.0.exe`）。GitHub Release 只需要上传这个安装包。
 
 首次运行建立每个磁盘的目录基线；后续运行显示目录变化、解释率、扫描完整性、预期排除和无法访问路径。
 

@@ -8,7 +8,7 @@ RequestExecutionLevel user
 !endif
 Name "DiskPulse"
 Caption "DiskPulse Setup"
-OutFile "${OUTPUT_PATH}\DiskPulse-Setup.exe"
+OutFile "${OUTPUT_PATH}\DiskPulse-Setup-${VERSION}.exe"
 Icon "${PROJECT_ROOT}\assets\DiskPulse.ico"
 UninstallIcon "${PROJECT_ROOT}\assets\DiskPulse.ico"
 InstallDir "$LOCALAPPDATA\DiskPulse"
@@ -34,11 +34,11 @@ ShowUninstDetails show
 !insertmacro MUI_UNPAGE_INSTFILES
 !insertmacro MUI_LANGUAGE "SimpChinese"
 
-VIProductVersion "1.1.0.0"
+VIProductVersion "${VERSION4}"
 VIAddVersionKey "ProductName" "DiskPulse"
 VIAddVersionKey "FileDescription" "DiskPulse Disk Dashboard"
-VIAddVersionKey "FileVersion" "1.1.0"
-VIAddVersionKey "ProductVersion" "1.1.0"
+VIAddVersionKey "FileVersion" "${VERSION}"
+VIAddVersionKey "ProductVersion" "${VERSION}"
 VIAddVersionKey "LegalCopyright" "DiskPulse"
 
 Section "DiskPulse"
@@ -59,7 +59,7 @@ Section "DiskPulse"
 
     WriteUninstaller "$INSTDIR\Uninstall.exe"
     WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\DiskPulse" "DisplayName" "DiskPulse"
-    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\DiskPulse" "DisplayVersion" "1.1.0"
+    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\DiskPulse" "DisplayVersion" "${VERSION}"
     WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\DiskPulse" "Publisher" "DiskPulse"
     WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\DiskPulse" "InstallLocation" "$INSTDIR"
     WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\DiskPulse" "UninstallString" "$INSTDIR\Uninstall.exe"

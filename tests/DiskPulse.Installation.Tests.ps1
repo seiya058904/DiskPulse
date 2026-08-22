@@ -23,9 +23,17 @@ Assert-True ((Get-Content -Raw -LiteralPath (Join-Path $root 'check.bat') -Encod
 $output = Join-Path $env:TEMP ('DiskPulse-installer-test-' + [guid]::NewGuid().ToString('N'))
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $buildScript -OutputPath $output
 
-$setup = Join-Path $output 'DiskPulse-Setup.exe'
-Assert-True (Test-Path -LiteralPath $setup) 'DiskPulse-Setup.exe was not created.'
+$setup = Join-Path $output 'DiskPulse-Setup-1.1.0.exe'
+Assert-True (Test-Path -LiteralPath $setup) 'DiskPulse-Setup-1.1.0.exe was not created.'
 $bytes = [IO.File]::ReadAllBytes($setup)
 Assert-True ($bytes.Length -gt 2 -and $bytes[0] -eq 0x4D -and $bytes[1] -eq 0x5A) 'Installer is not a Windows executable.'
+$expectedVersion = (Get-Content -Raw -LiteralPath (Join-Path $root 'version.txt') -Encoding UTF8).Trim()
+$setupVersionInfo = (Get-Item -LiteralPath $setup).VersionInfo
+Assert-True ($setupVersionInfo.FileVersion -eq $expectedVersion) 'Setup FileVersion must match the canonical version.'
+Assert-True ($setupVersionInfo.ProductVersion -eq $expectedVersion) 'Setup ProductVersion must match the canonical version.'
+Assert-True ($installerSource -match [regex]::Escape('VIProductVersion "${VERSION4}"')) 'Installer must derive VIProductVersion from ${VERSION4}.'
+Assert-True ($installerSource -match [regex]::Escape('DisplayVersion" "${VERSION}"')) 'Installer must derive DisplayVersion from ${VERSION}.'
+Assert-True ($installerSource -notmatch '"1\.0\.0"') 'Installer must not hardcode version 1.0.0.'
+Assert-True ($installerSource -notmatch 'VIProductVersion "1\.1\.0') 'Installer must not hardcode version 1.1.0.'
 
 Write-Output 'PASS: NSIS installer build'
