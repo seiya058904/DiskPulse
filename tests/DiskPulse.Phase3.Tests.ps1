@@ -1,4 +1,4 @@
-$ErrorActionPreference='Stop'; Set-StrictMode -Version Latest
+﻿$ErrorActionPreference='Stop'; Set-StrictMode -Version Latest
 $root=Split-Path -Parent $PSScriptRoot; $source=Get-Content -Raw -LiteralPath (Join-Path $root 'check.bat') -Encoding UTF8
 $env:DISKPULSE_TEST_MODE='1';$env:DISKPULSE_ROOT=$root;$env:DISKPULSE_SCRIPT_PATH=Join-Path $root 'check.bat'
 Invoke-Expression $source.Substring($source.IndexOf('#>')+2)
@@ -318,12 +318,37 @@ if($prompt.system -notmatch 'confidence must be high, medium, or low'){throw 'Pr
 if($prompt.system -match 'Markdown or extra fields'){ } else { throw 'Prompt must forbid Markdown and extra fields.' }
 if($prompt.user -notmatch '\{.*test.*\}'){throw 'User message must contain the input JSON.'}
 
+# --- Copy-to-AI decoupling: building the analysis payload must not depend on API config ---
+$copyText=New-DiskPulseAICopyText -AIInput $aiInput
+if($copyText -notmatch '请分析以下 DiskPulse 磁盘变化数据'){throw 'Copy text must include the Chinese analysis preamble.'}
+if($copyText -notmatch '本次磁盘数据'){throw 'Copy text must mark the data section.'}
+if($copyText -notmatch 'schemaVersion'){throw 'Copy text must embed the canonical structured input JSON.'}
+if($copyText -match 'test-api-key'){throw 'Copy text must not contain an API key.'}
+if($copyText.Length -le 60){throw 'Copy text must be a complete payload, not a stub.'}
+if((New-DiskPulseAICopyText -AIInput $null)-ne''){throw 'Copy text must be empty when no input is available.'}
+if(Test-DiskPulseAIInputEligible -DirectoryResults @([pscustomobject]@{status='complete';changes=@([pscustomobject]@{state='changed'})})){ } else { throw 'A reliable change without any failed drive must be eligible.'}
+if(Test-DiskPulseAIInputEligible -DirectoryResults @([pscustomobject]@{status='failed';changes=@([pscustomobject]@{state='changed'})})){throw 'An all-failed scan must not be eligible even if change records exist.'}
+if(Test-DiskPulseAIInputEligible -DirectoryResults @([pscustomobject]@{status='complete';changes=@([pscustomobject]@{state='unchanged'})})){throw 'A scan without reliable changes must not be eligible.'}
+
+# --- Stale cleanup must cover ai-live-*.js probes too ---
+$staleProbeDir=Join-Path ([IO.Path]::GetTempPath()) ('DiskPulse-Live-' + [guid]::NewGuid().ToString('N'))
+[IO.Directory]::CreateDirectory($staleProbeDir)|Out-Null
+$freshProbe=Join-Path $staleProbeDir 'ai-live-fresh.js'
+$oldProbe=Join-Path $staleProbeDir 'ai-live-old.js'
+'window.DiskPulseAILive={}'|Set-Content -LiteralPath $freshProbe -Encoding UTF8
+'window.DiskPulseAILive={}'|Set-Content -LiteralPath $oldProbe -Encoding UTF8
+[IO.File]::SetLastWriteTime($oldProbe,(Get-Date).AddHours(-25))
+Remove-StaleDiskPulseAIInputs $staleProbeDir
+if(-not(Test-Path -LiteralPath $freshProbe)){throw 'Stale cleanup must keep a fresh ai-live probe.'}
+if(Test-Path -LiteralPath $oldProbe){throw 'Stale cleanup must remove a 24h-old ai-live probe.'}
+if(Test-Path -LiteralPath $staleProbeDir){Remove-Item -LiteralPath $staleProbeDir -Recurse -Force}
+
 # --- No API Key, username, or file content in results ---
 $inputJson=ConvertTo-Json -InputObject $aiInput -Depth 12
 if($inputJson-match'test-api-key'){throw 'AI input must not contain API key.'}
 if($inputJson-match'admin[^-]'){throw 'AI input must not contain username.'}
 
-Write-Host 'PASS: AI input construction, path redaction, Top N, omitted, sort stability, prompt constraints.'
+Write-Host 'PASS: AI input construction, path redaction, Top N, omitted, sort stability, prompt constraints, copy decoupling, live-probe cleanup.'
 
 # === Phase 2 Regression: per-disk Top N, breakdown limits, trend sort ===
 
@@ -945,6 +970,19 @@ if($workerBody -match 'aiPlan\.input|directoryResults|historyCenter|snapshot'){t
 if($src -match '(?s)\$aiInputPayload\s*=.*?aiPlan\s*='){throw 'Production worker input must not persist aiPlan.'}
 if($src -match 'function Write-DiskPulseAIHtmlResult'){throw 'Obsolete HTML writer must be removed.'}
 if($src -match '(?s)function Update-DiskPulseAIHtmlResult.*?node\s+--check'){throw 'Production HTML update must not invoke Node.js.'}
+
+# --- Scanner: transient missing (DirectoryNotFoundException / FileNotFoundException) must be its own
+#      limitation bucket and must NOT flip the drive to partial. Only genuine unexpected I-O errors.
+$dnfBlock=[regex]::Match($src,'(?s)catch\(DirectoryNotFoundException ex\)(.*?)catch\(Exception ex\)')
+if(-not $dnfBlock.Success -or $dnfBlock.Groups[1].Value -match 'status\s*=\s*"partial"|childrenEnumerationComplete\s*=\s*false'){throw 'Fast scanner must classify DirectoryNotFound as transient WITHOUT partial or incomplete flags.'}
+if($src -notmatch 'AddEvidence\(result\.unavailable,[a-z]+,"transient-missing"\)'){throw 'transient-missing must be recorded in unavailable for visibility.'}
+if($src -notmatch 'elseif \(\$_\.Exception -is \[DirectoryNotFoundException\]'){throw 'PowerShell fallback scanner must classify DirectoryNotFound as transient.'}
+$psTransient=[regex]::Match($src,'(?s)elseif \(\$_\.Exception -is \[DirectoryNotFoundException\](.*?)else\s*\{')
+if(-not $psTransient.Success -or $psTransient.Groups[1].Value -match '\$status\s*=\s*"partial"'){throw 'PowerShell fallback scanner transient branch must not set partial.'}
+$dirDnf=[regex]::Match($src,'(?s)else if\(ex is DirectoryNotFoundException\)(.*?)else \{')
+if(-not $dirDnf.Success -or $dirDnf.Groups[1].Value -match 'result\.status\s*=\s*"partial"'){throw 'Fast scanner directory-level transient branch must not set partial.'}
+# Root-enumeration failure must still be failed; only non-root unexpected I-O flips partial.
+if($src -notmatch '(?s)else \{ AddEvidence\(result\.errors,directory,ex\.Message,"enumeration-failed"\);[^}]*result\.status="partial"'){throw 'Only the unexpected-I-O else branch may flip partial.'}
 if($src -match '\[IO\.Path\]::GetTempFileName\(\)'){throw 'HTML replacement must not use system TEMP files.'}
 if($src -match '\$jsPath\s*=|WriteAllText\(\$jsPath|Test-Path -LiteralPath \$jsPath'){throw 'Production HTML update must not create a temporary JS file.'}
 if($src -notmatch '(?s)if \(\$aiPlan\.ready\).*?Write-DiskPulseAIResult -ScanId \$scanId -Status \$aiAnalysisResult\.status'){throw 'Ready scans must persist analyzing before worker startup.'}
@@ -1048,6 +1086,15 @@ function renderAIAnalysis(){ return AI_ANALYSIS.status; }
     if($saved.status-ne'success'){throw 'Worker complete must write success result.'}
     $html=Get-Content -Raw -LiteralPath $workerHtml -Encoding UTF8
     if($html-notmatch'Worker ok'){throw 'Worker complete must update HTML.'}
+    # Terminal result must publish a live probe (success or any failure status), never only analyzing.
+    $workerLiveProbe=Join-Path $workerRuntime 'ai-live-scan-1.js'
+    if(-not(Test-Path -LiteralPath $workerLiveProbe)){throw 'Worker complete must publish an ai-live probe.'}
+    $liveProbeText=Get-Content -Raw -LiteralPath $workerLiveProbe -Encoding UTF8
+    if($liveProbeText -notmatch 'window\.DiskPulseAILive'){throw 'Live probe must expose window.DiskPulseAILive.'}
+    if($liveProbeText -notmatch '"scanId":"scan-1"' -or $liveProbeText -notmatch '"status":"success"'){throw 'Live probe must carry the terminal success status and scan id.'}
+    if($liveProbeText -match 'worker-key'){throw 'Live probe must not contain the API key.'}
+    $liveProbeJs=[regex]::Match($liveProbeText,'(?s)window\.DiskPulseAILive\s*=\s*(.*?);\s*$').Groups[1].Value
+    if(-not ($liveProbeJs | ConvertFrom-Json)){throw 'Live probe body must be valid JSON.'}
     $workerJsPath=Join-Path $workerRuntime 'worker-updated.js'
     $workerJs=[regex]::Match($html,'(?s)<script>\s*(.*?)\s*</script>').Groups[1].Value
     [IO.File]::WriteAllText($workerJsPath,$workerJs,[Text.UTF8Encoding]::new($false))
@@ -1111,6 +1158,9 @@ function renderAIAnalysis(){ return AI_ANALYSIS.status; }
     if($exceptionResult.status-ne'unknown-error'){throw 'Current worker exception must write unknown-error.'}
     if(($exceptionResult|ConvertTo-Json -Compress -Depth 8)-match 'secret exception text'){throw 'Worker exception text must not be persisted.'}
     if((Get-Content -Raw -LiteralPath $workerHtml -Encoding UTF8)-notmatch 'unknown-error'){throw 'Current worker exception must update HTML.'}
+    # A failure terminal state must ALSO publish a live probe so the open page stops polling.
+    $liveProbeText=Get-Content -Raw -LiteralPath $workerLiveProbe -Encoding UTF8
+    if($liveProbeText -notmatch '"status":"unknown-error"'){throw 'Worker exception must publish a terminal unknown-error live probe.'}
     if(Test-Path -LiteralPath $workerInput){throw 'Worker input must be deleted after exception.'}
 
     [IO.File]::WriteAllText($workerHtml,$htmlTemplate,[Text.UTF8Encoding]::new($false))

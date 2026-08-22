@@ -138,8 +138,8 @@ try {
         param($entry)
         if ($entry.FullName -eq $vanishing -and (Test-Path -LiteralPath $vanishing)) { Remove-Item -LiteralPath $vanishing -Force }
     }
-    if ($vanishScan.status -ne "partial" -or -not @($vanishScan.errors | Where-Object kind -eq "entry-disappeared").Count) {
-        throw "A disappearing file must be recorded without terminating the scan."
+    if ($vanishScan.status -eq "partial" -or -not @($vanishScan.unavailable | Where-Object reason -eq "transient-missing").Count -or -not @($vanishScan.errors | Where-Object kind -eq "transient-missing").Count) {
+        throw "A vanishing entry must be recorded as transient-missing without making the drive partial."
     }
 
     [pscustomobject]@{

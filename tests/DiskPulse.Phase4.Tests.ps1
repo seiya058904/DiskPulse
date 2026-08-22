@@ -2,7 +2,7 @@
 $root = Split-Path -Parent $PSScriptRoot
 $source = Get-Content -Raw -LiteralPath (Join-Path $root 'check.bat') -Encoding UTF8
 
-$stable = @('class="grid"','sparkline','estimateDays','id="search"','id="sort"','id="compact"','id="copy"','data-theme','@media')
+$stable = @('class="grid"','sparkline','estimateDays','id="search"','id="sort"','id="compact"','id="copy"','data-theme','@media','id="ai-analysis-title"','id="copy-ai-input"','id="copy-ai-output"','AI_COPY_TEXT','ensureAiLivePolling','copyText')
 $hierarchy = @(
     'class="product-header"', 'class="header-brand"', 'class="brand-mark"',
     'hero-grid', 'hero-card-primary latest-change',
@@ -44,7 +44,7 @@ $injectionPattern = 'INJECT_(?:TS_JSON|DATA)'
 $injectionResult = [regex]::Replace($injectionTemplate, $injectionPattern, { param($match) [string]$injectionMap[$match.Value] })
 if ($injectionResult -ne 'const data="%!&<>|''INJECT_TS_JSON";const ts="safe-time";') { throw 'One-pass placeholder replacement altered inserted content.' }
 
-foreach ($id in 'search','sort','compact','themeBtn','copy','print-report','history-range') {
+foreach ($id in 'search','sort','compact','themeBtn','copy','print-report','history-range','copy-ai-input','copy-ai-output') {
     $binding = '$(' + '"' + $id + '"' + ').addEventListener'
     if ([regex]::Matches($source,[regex]::Escape($binding)).Count -ne 1) { throw "Expected exactly one event binding for $id." }
 }
@@ -90,9 +90,12 @@ assert.equal(defaultChangeFilters.level, "1");
 assert.equal(defaultChangeFilters.direction, "all");
 assert.equal(defaultChangeFilters.state, "reliable");
 assert.equal(statusLabel("failed", false), "扫描失败");
-const evidence = classifyScanEvidence([{drive:"C:",excluded:[{path:"C:\\Link",reason:"reparse-point"},{path:"C:\\Private",reason:"access-denied"}],unavailable:[{path:"C:\\Gone",reason:"entry-unavailable"}],errors:[]}]);
-assert.deepEqual(evidence.expected.map(row => row.path), ["C:\\Link"]);
-assert.deepEqual(evidence.unexpected.map(row => row.path), ["C:\\Private","C:\\Gone"]);
+const evidence = classifyScanEvidence([{drive:"C:",excluded:[{path:"C:\\Link",reason:"reparse-point"},{path:"C:\\Private",reason:"access-denied"}],unavailable:[{path:"C:\\Gone",reason:"entry-unavailable"},{path:"C:\\Vanish",reason:"transient-missing"}],errors:[{path:"C:\\VanishSub",reason:"Could not find a part of the path...",kind:"transient-missing"}]}]);
+assert.deepEqual(evidence.designedIgnored.map(row => row.path), ["C:\\Link"], "reparse/configured exclusions are designed ignores");
+assert.deepEqual(evidence.permissionLimited.map(row => row.path), ["C:\\Private"], "access-denied is a permission limit, not an error");
+assert.deepEqual(evidence.transientMissing.map(row => row.path), ["C:\\Vanish","C:\\VanishSub"], "transient-missing must be its own limitation bucket");
+assert.deepEqual(evidence.unexpected.map(row => row.path), ["C:\\Gone"], "only true unexpected stays unexpected");
+assert.deepEqual(evidence.expected.map(row => row.path), ["C:\\Link"], "expected alias must equal designed ignores");
 assert.equal(confidenceFor([{drive:"C:",status:"baseline",baselineScanId:null}]).state, "waiting");
 assert.equal(confidenceFor([{drive:"C:",status:"partial",baselineScanId:"base"}]).state, "partial");
 assert.equal(confidenceFor([{drive:"C:",status:"failed",baselineScanId:null}]).state, "failed");
@@ -165,7 +168,7 @@ try {
 
     $scriptMatch = [regex]::Match($source, '(?s)<script>(?<script>.*?)</script>')
     if (-not $scriptMatch.Success) { throw 'Embedded JavaScript was not found.' }
-    $script = $scriptMatch.Groups['script'].Value.Replace('INJECT_HISTORY_CENTER','[]').Replace('INJECT_SYSTEM_DRIVE','"C:"').Replace('INJECT_DATA','[]').Replace('INJECT_HISTORY','[]').Replace('INJECT_DIRECTORY','[]').Replace('INJECT_SCAN_META','{}').Replace('INJECT_TS_JSON','"test"').Replace('INJECT_AI_ANALYSIS','{}')
+    $script = $scriptMatch.Groups['script'].Value.Replace('INJECT_HISTORY_CENTER','[]').Replace('INJECT_SYSTEM_DRIVE','"C:"').Replace('INJECT_DATA','[]').Replace('INJECT_HISTORY','[]').Replace('INJECT_DIRECTORY','[]').Replace('INJECT_SCAN_META','{}').Replace('INJECT_TS_JSON','"test"').Replace('INJECT_AI_ANALYSIS','{}').Replace('INJECT_AI_COPY_TEXT','"copy"')
     if ($script -match 'INJECT_[A-Z_]+') { throw "Unresolved dashboard placeholder: $($Matches[0])" }
     $scriptFile = Join-Path $temp 'dashboard.js'
     [IO.File]::WriteAllText($scriptFile, $script, [Text.UTF8Encoding]::new($false))
@@ -202,12 +205,19 @@ foreach ($forbidden in @('SMART','性能衰退','健康指标','实时监控')) 
 
 # INJECT_AI_ANALYSIS marker
 if ($source -notmatch [regex]::Escape('INJECT_AI_ANALYSIS')) { throw 'Missing INJECT_AI_ANALYSIS placeholder.' }
-if ($source -notmatch [regex]::Escape('INJECT_(?:AI_ANALYSIS|HISTORY_CENTER')) { throw 'AI_ANALYSIS must be in placeholder pattern.' }
+if ($source -notmatch [regex]::Escape('INJECT_(?:AI_ANALYSIS|AI_COPY_TEXT|HISTORY_CENTER')) { throw 'AI_ANALYSIS must be in placeholder pattern.' }
 
 # AI section markers
-foreach ($marker in @('id="ai-analysis"','ai-analysis-content','ai-analysis-note','AI 变化解释','renderAIAnalysis')) {
+foreach ($marker in @('id="ai-analysis"','ai-analysis-content','ai-analysis-note','AI 变化解释','renderAIAnalysis','id="ai-analysis-title"','id="copy-ai-input"','id="copy-ai-output"','AI_COPY_TEXT','ensureAiLivePolling','copyText')) {
     if ($source -notmatch [regex]::Escape($marker)) { throw "Missing AI section marker: $marker" }
 }
+
+# Three-axis scan semantics: explanation rate is an attribution ratio, NOT a scan fraction;
+# execution status is separate from scan limitations; no visibility-percentage claims allowed.
+foreach ($marker in @('不代表磁盘扫描比例','实际净变化','已定位净变化','未解释净变化','扫描执行：','按设计忽略','权限受限','扫描期间消失','transient-missing','扫描完成','部分完成','change-explanation-note')) {
+    if ($source -notmatch [regex]::Escape($marker)) { throw "Missing three-axis scan semantics marker: $marker" }
+}
+if ($source -match '可见性\s*[0-9]+\s*%|只扫描了[^。]*%|% 未扫描|% 不可见') { throw 'Dashboard must not display visibility-percentage claims (visible/not-scan %).' }
 
 # Navigation link
 if ($source -notmatch 'href="#ai-analysis"') { throw 'Missing AI analysis nav link.' }
@@ -223,8 +233,15 @@ if ($aiRenderMatch.Success) {
 }
 
 # INJECT_AI_ANALYSIS in unresolved check
-$unresolvedScript = $scriptMatch.Groups['script'].Value.Replace('INJECT_HISTORY_CENTER','[]').Replace('INJECT_SYSTEM_DRIVE','"C:"').Replace('INJECT_DATA','[]').Replace('INJECT_HISTORY','[]').Replace('INJECT_DIRECTORY','[]').Replace('INJECT_SCAN_META','{}').Replace('INJECT_TS_JSON','"test"').Replace('INJECT_AI_ANALYSIS','{}')
+$unresolvedScript = $scriptMatch.Groups['script'].Value.Replace('INJECT_HISTORY_CENTER','[]').Replace('INJECT_SYSTEM_DRIVE','"C:"').Replace('INJECT_DATA','[]').Replace('INJECT_HISTORY','[]').Replace('INJECT_DIRECTORY','[]').Replace('INJECT_SCAN_META','{}').Replace('INJECT_TS_JSON','"test"').Replace('INJECT_AI_ANALYSIS','{}').Replace('INJECT_AI_COPY_TEXT','"copy"')
 if ($unresolvedScript -match 'INJECT_[A-Z_]+') { throw "Unresolved placeholder: $($Matches[0])" }
+
+# Clipboard must be unified through copyText: navigator.clipboard appears exactly once, and no
+# copy path may ever fall back to alert() (AI payloads are tens of KB).
+if ([regex]::Matches($source, 'navigator\.clipboard\.writeText\(').Count -ne 1) { throw 'navigator.clipboard.writeText(...) must be called exactly once, inside copyText.' }
+if ($source -match 'copy-path.*alert\(') { throw 'Path copy must not fall back to alert().' }
+if ($source -match '\$\("copy"\).*alert\(') { throw 'Summary copy must not fall back to alert().' }
+if ($source -notmatch 'function copyText\(') { throw 'Unified copyText helper missing.' }
 
 Write-Host 'PASS: visual hierarchy, state behavior, embedded JavaScript, and AI section markers.'
 
@@ -260,8 +277,14 @@ var document = {
     var node = createNode(tag);
     allElements.push(node);
     return node;
+  },
+  head: {
+    _children: headChildren,
+    appendChild: function(child) { child.parentNode = this; headChildren.push(child); return child; },
+    removeChild: function(child) { var i = headChildren.indexOf(child); if (i >= 0) headChildren.splice(i, 1); child.parentNode = null; return child; }
   }
 };
+var headChildren = [];
 
 function formatLocalDate(d) { return "stub-date"; }
 var sessionStorage = {
@@ -272,9 +295,43 @@ var sessionStorage = {
 };
 var reloadCount = 0;
 var location = { reload: function() { reloadCount++; } };
-function setTimeout(fn) { fn(); return 1; }
+var window = { DiskPulseAILive: null };
+var timers = {};
+var timerSeq = 0;
+function setTimeout(fn, delay) { var id = ++timerSeq; timers[id] = { fn: fn, delay: delay || 0, repeat: false }; return id; }
+function clearTimeout(id) { delete timers[id]; }
+function setInterval(fn, delay) { var id = ++timerSeq; timers[id] = { fn: fn, delay: delay || 0, repeat: true }; return id; }
+function clearInterval(id) { delete timers[id]; }
+function findTimer(pred) { var keys = Object.keys(timers); for (var i = 0; i < keys.length; i++) { var id = keys[i]; if (pred(timers[id])) return id; } return null; }
+function fireIntervalTicks(n) {
+  for (var k = 0; k < n; k++) {
+    var id = findTimer(function(t) { return t.repeat; });
+    if (id === null) throw new Error("No pending interval tick");
+    timers[id].fn();
+  }
+}
+function firePendingTimeout() {
+  var id = findTimer(function(t) { return !t.repeat; });
+  if (id === null) throw new Error("No pending timeout");
+  var t = timers[id];
+  delete timers[id];
+  t.fn();
+}
+function timerCount() { return Object.keys(timers).length; }
+function resetTimers() { timers = {}; timerSeq = 0; }
 
 var AI_ANALYSIS = {};
+var AI_COPY_TEXT = "copy payload";
+function resetAiPollState() {
+  aiLiveScanId = "";
+  aiProbeInFlight = false;
+  aiProbeSupported = null;
+  aiLiveInterval = null;
+  aiLiveWatchdog = null;
+  aiFallbackScheduled = false;
+  window.DiskPulseAILive = null;
+}
+function resetSessionStorage() { sessionStorage._data = Object.create(null); }
 
 // --- Extracted functions ($, element, renderAIAnalysis) are prepended above ---
 
@@ -369,14 +426,135 @@ for (var f = 0; f < fixtures.length; f++) {
   }
 }
 
-// analyzing must auto-refresh with an upper bound
+// --- analyzing: never reloads the page; polls the live probe and updates the AI area in place ---
 allElements.length = 0;
-AI_ANALYSIS = {status:"analyzing",scanId:"scan-1"};
-for (var i = 0; i < 13; i++) {
+headChildren.length = 0;
+resetTimers();
+resetAiPollState();
+resetSessionStorage();
+reloadCount = 0;
+AI_COPY_TEXT = "copy payload";
+AI_ANALYSIS = { status: "analyzing", scanId: "scan-1", model: "test-model" };
+renderAIAnalysis();
+assert.equal(reloadCount, 0, "analyzing must not reload the page");
+assert.ok(collectText(getRoot()).indexOf("AI 分析中") !== -1, "analyzing status missing");
+assert.ok(document.getElementById("copy-ai-input").hidden === false, "copy-to-AI must be offered while analyzing");
+assert.ok(document.getElementById("copy-ai-output").hidden === true, "copy-result must stay hidden while analyzing");
+
+// first probe load returns analyzing (worker still running): script removed, timers remain, no reload
+(function() {
+  var headScripts = headChildren.filter(function(n){ return n.tag === "script"; });
+  assert.equal(headScripts.length, 1, "first tick must append one probe script");
+  assert.ok(headScripts[0].src.indexOf("ai-live-scan-1.js?t=") !== -1, "probe src must target ai-live-scan-1.js");
+  window.DiskPulseAILive = { status: "analyzing", scanId: "scan-1" };
+  headScripts[0].onload();
+  assert.equal(headChildren.length, 0, "loaded probe script must be removed");
+  assert.equal(reloadCount, 0, "analyzing probe result must not reload");
+  assert.equal(timerCount(), 2, "interval + watchdog must remain while analyzing");
+})();
+
+// re-render must not duplicate the polling loop
+var timerCountAfterFirst = timerCount();
+renderAIAnalysis();
+assert.equal(timerCount(), timerCountAfterFirst, "re-render must not spawn a second polling loop");
+
+// next tick returns terminal success -> in-place update and full teardown
+window.DiskPulseAILive = { status: "success", scanId: "scan-1", format: "structured", analysis: { summary: "done summary", possibleCauses: [], confidence: "high", evidence: [], recommendations: [], cautions: [] }, model: "test-model" };
+fireIntervalTicks(1);
+var terminalScripts = headChildren.filter(function(n){ return n.tag === "script"; });
+assert.equal(terminalScripts.length, 1, "second tick must append one probe script");
+terminalScripts[0].onload();
+assert.equal(reloadCount, 0, "terminal result must never reload");
+assert.equal(timerCount(), 0, "terminal result must clear polling timers");
+assert.equal(headChildren.length, 0, "terminal probe script must be removed");
+assert.ok(collectText(getRoot()).indexOf("done summary") !== -1, "AI area must update in place without reload");
+assert.ok(document.getElementById("copy-ai-output").hidden === false, "copy-result must appear after success");
+
+// --- in-flight guard: a tick while a probe is still loading must not stack a second script ---
+allElements.length = 0;
+headChildren.length = 0;
+resetTimers();
+resetAiPollState();
+resetSessionStorage();
+reloadCount = 0;
+AI_COPY_TEXT = "copy payload";
+AI_ANALYSIS = { status: "analyzing", scanId: "scan-3" };
+renderAIAnalysis();
+assert.equal(headChildren.length, 1, "first probe must be in flight");
+fireIntervalTicks(1);
+assert.equal(headChildren.length, 1, "in-flight guard must prevent stacking probes");
+window.DiskPulseAILive = { status: "success", scanId: "scan-3", format: "structured", analysis: { summary: "in-flight done", possibleCauses: [], confidence: "low", evidence: [], recommendations: [], cautions: [] } };
+headChildren[0].onload();
+assert.ok(collectText(getRoot()).indexOf("in-flight done") !== -1, "in-flight load must apply terminal result");
+
+// --- watchdog: probe works but the worker is slow -> spaced refresh backoff ---
+allElements.length = 0;
+headChildren.length = 0;
+resetTimers();
+resetAiPollState();
+resetSessionStorage();
+reloadCount = 0;
+AI_COPY_TEXT = "copy payload";
+AI_ANALYSIS = { status: "analyzing", scanId: "scan-2" };
+renderAIAnalysis();
+window.DiskPulseAILive = { status: "analyzing", scanId: "scan-2" };
+headChildren[0].onload();
+assert.equal(aiProbeSupported, true, "probe mechanism must be detected as supported");
+firePendingTimeout(); // watchdog (~10s) -> immediate first fallback refresh
+assert.equal(reloadCount, 0, "fallback must not reload until the refresh delay elapses");
+assert.equal(sessionStorage.getItem("diskpulse-ai-refresh:scan-2"), "1", "refresh counter must increment once");
+firePendingTimeout(); // refresh delay -> reload
+assert.equal(reloadCount, 1, "fallback refresh must reload once");
+
+// --- probe unsupported (onerror) -> spaced refresh, at most 3 reloads then manual-refresh message ---
+allElements.length = 0;
+headChildren.length = 0;
+resetTimers();
+resetAiPollState();
+resetSessionStorage();
+function unsupportedPage() {
+  allElements.length = 0;
+  headChildren.length = 0;
+  resetTimers();
+  resetAiPollState();
+  reloadCount = 0; // each simulated reload is a fresh page; sessionStorage persists the counter
+  AI_COPY_TEXT = "copy payload";
+  AI_ANALYSIS = { status: "analyzing", scanId: "scan-4" };
   renderAIAnalysis();
+  assert.equal(headChildren.length, 1, "unsupported page must still attempt one probe");
+  headChildren[0].onerror();
 }
-assert.equal(reloadCount, 12, "analyzing must schedule at most 12 reloads");
-assert.ok(collectText(getRoot()).indexOf("AI 分析仍在进行或已中断，请手动刷新") !== -1, "analyzing cap message missing");
+unsupportedPage();
+firePendingTimeout();
+assert.equal(reloadCount, 1, "page 1 must reload exactly once");
+assert.equal(sessionStorage.getItem("diskpulse-ai-refresh:scan-4"), "1", "counter must be 1 after first refresh");
+unsupportedPage();
+firePendingTimeout();
+assert.equal(reloadCount, 1, "page 2 must reload exactly once");
+assert.equal(sessionStorage.getItem("diskpulse-ai-refresh:scan-4"), "2", "counter must be 2 after second refresh");
+unsupportedPage();
+firePendingTimeout();
+assert.equal(reloadCount, 1, "page 3 must reload exactly once");
+assert.equal(sessionStorage.getItem("diskpulse-ai-refresh:scan-4"), "3", "counter must reach the cap of 3");
+unsupportedPage(); // cap reached -> no more reload timers, message shown
+assert.equal(reloadCount, 0, "cap must stop further reloads");
+assert.equal(timerCount(), 0, "no reload timer may remain after cap");
+assert.ok(collectText(getRoot()).indexOf("AI 分析仍在进行或已中断，请手动刷新") !== -1, "cap message missing");
+
+// --- copy button availability depends on the payload, not on API config ---
+allElements.length = 0;
+headChildren.length = 0;
+resetTimers();
+resetAiPollState();
+resetSessionStorage();
+AI_COPY_TEXT = "";
+AI_ANALYSIS = { status: "not-configured", scanId: "scan-5" };
+renderAIAnalysis();
+assert.ok(document.getElementById("copy-ai-input").hidden === true, "no payload -> copy-to-AI must be hidden");
+AI_COPY_TEXT = "payload-available";
+renderAIAnalysis();
+assert.ok(document.getElementById("copy-ai-input").hidden === false, "payload exists -> copy-to-AI shows even without an API");
+assert.ok(document.getElementById("copy-ai-output").hidden === true, "no result -> copy-result stays hidden");
 
 // --- XSS tests ---
 var xssPayloads = [
