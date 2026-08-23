@@ -2729,8 +2729,8 @@ $html = @'
   .summary-card { transition: transform 160ms ease, border-color 160ms ease; }
   .summary-card:hover { transform: translateY(-2px); }
   .capacity-summary { grid-area: capacity; }
-  .latest-change { grid-area: change; background:linear-gradient(135deg,#fff 0%,#f2f6ff 100%); border-color:#8db0ff; box-shadow:0 12px 32px rgba(51,112,255,.12); }
-  [data-theme="dark"] .latest-change { background: linear-gradient(145deg,#16213a,#111a2b); border-color:#385b9b; }
+  .latest-change { grid-area: change; background:var(--panel); border-color:#8db0ff; box-shadow:0 8px 22px rgba(51,112,255,.10); }
+  [data-theme="dark"] .latest-change { background:var(--panel); border-color:#385b9b; }
   .comparison-confidence { grid-area: confidence; }
   .summary-label { color: var(--muted); font-size: 12px; font-weight: 700; margin-bottom: 14px; }
   .latest-change .summary-label, .latest-change .summary-note { color: var(--muted); }
@@ -2766,6 +2766,7 @@ $html = @'
   .change-main { min-width: 0; }
   .change-path { display: block; font-weight: 650; }
   .change-context { color: var(--muted); font-size: 11px; margin-top: 4px; }
+  .change-contribution { color: var(--subtle); font-weight: 650; white-space: nowrap; }
   .change-side { display: flex; gap: 9px; align-items: center; }
   .change-lists.only-growth, .change-lists.only-release, .change-lists.both-empty { grid-template-columns: minmax(0,1fr); }
   .change-lists.only-growth .release-panel, .change-lists.only-release .growth-panel, .change-lists.both-empty .release-panel { display: none; }
@@ -2848,6 +2849,15 @@ $html = @'
   [data-theme="dark"] .ai-analysis-content .ai-confidence-low { background: #450a0a; color: #fca5a5; }
   .ai-analysis-content .ai-status { color: var(--muted); font-size: 13px; }
   .ai-analysis-content .ai-meta { color: var(--subtle); font-size: 12px; margin-top: 12px; }
+  .ai-summary, .ai-findings, .ai-recommendations { border-left: 3px solid var(--blue); padding: 12px 14px; background: color-mix(in srgb,var(--blue) 5%,var(--panel)); border-radius: 8px; margin-bottom: 10px; }
+  .ai-summary { font-size: 16px; }
+  .ai-summary .ai-field-text { color: var(--text); font-weight: 650; }
+  .ai-findings { border-left-color: var(--orange); }
+  .ai-recommendations { border-left-color: var(--green); }
+  .ai-facts-note { color: var(--muted); font-size: 12px; line-height: 1.55; margin: 12px 0; }
+  .ai-evidence { border: 1px solid var(--line); border-radius: 8px; background: var(--track); }
+  .ai-evidence-summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; padding: 0 12px; color: var(--blue); font-size: 13px; font-weight: 700; }
+  .ai-evidence-body { border-top: 1px solid var(--line); padding: 12px; }
   .history-center { padding: 18px; }
   .history-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
   .history-head p, .history-range-note, .history-empty { color: var(--muted); font-size: 13px; line-height: 1.6; }
@@ -2895,6 +2905,7 @@ $html = @'
   .overview-scan-state.failed { color: var(--red); }
   .overview-scan-state.waiting, .overview-scan-state.unknown { color: var(--unknown); }
   .attention-strip { margin:0 20px; padding:0; border:1px solid color-mix(in srgb,var(--orange) 42%,var(--line)); border-radius:var(--radius); background:color-mix(in srgb,var(--orange) 5%,var(--panel)); }
+  .attention-strip.is-clear { border-color: color-mix(in srgb,var(--green) 28%,var(--line)); background: color-mix(in srgb,var(--green) 3%,var(--panel)); }
   .attention-strip .section-intro { display:none; }
   .attention-list { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; }
   .attention-list[data-count="1"] { grid-template-columns: minmax(0,1fr); }
@@ -2912,6 +2923,8 @@ $html = @'
   .attention-copy b { font-size: 14px; }
   .attention-copy small { margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
   .attention-arrow { color: var(--blue); font-size: 12px; font-weight: 700; }
+  .attention-empty .attention-marker { color: var(--green); background: color-mix(in srgb,var(--green) 10%,transparent); }
+  .attention-empty .attention-severity { color: var(--green); background: color-mix(in srgb,var(--green) 8%,transparent); border-color: color-mix(in srgb,var(--green) 22%,var(--line)); }
   .capacity-visuals { margin:0 20px; } .capacity-visuals .section-intro { margin-left:0; margin-right:0; }
   .capacity-visual-grid { display: grid; grid-template-columns: minmax(280px,25fr) minmax(0,75fr); gap: 16px; }
   .capacity-panel { min-width: 0; padding: 20px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); box-shadow:var(--shadow); }
@@ -3490,37 +3503,58 @@ function renderAIAnalysis() {
     if (copyOutputBtn) copyOutputBtn.hidden = false;
     if (AI_ANALYSIS.format === "structured" && AI_ANALYSIS.analysis) {
       const a = AI_ANALYSIS.analysis;
-      const fields = [
-        ["本次发生了什么", a.summary],
-        ["最可能的原因", a.possibleCauses],
-        ["证据", a.evidence],
-        ["建议怎么处理", a.recommendations],
-        ["证据边界", a.cautions]
-      ];
-      for (const [label, value] of fields) {
-        if (!value || (Array.isArray(value) && value.length === 0)) continue;
-        const field = element("div", "ai-field");
-        field.appendChild(element("div", "ai-field-label", label));
+      const hasValue = (value) => Boolean(value) && (!Array.isArray(value) || value.length > 0);
+      const appendValue = (parent, value) => {
         if (Array.isArray(value)) {
           const list = element("div", "ai-field-text");
-          for (const item of value) {
-            list.appendChild(element("div", undefined, "· " + String(item)));
-          }
-          field.appendChild(list);
+          value.forEach((item) => list.appendChild(element("div", undefined, "· " + String(item))));
+          parent.appendChild(list);
         } else {
-          field.appendChild(element("div", "ai-field-text", String(value)));
+          parent.appendChild(element("div", "ai-field-text", String(value)));
         }
-        root.appendChild(field);
-      }
+      };
+      const appendField = (parent, className, label, value) => {
+        if (!hasValue(value)) return;
+        const field = element("div", className);
+        field.appendChild(element("div", "ai-field-label", label));
+        appendValue(field, value);
+        parent.appendChild(field);
+      };
+      const summary = element("div", "ai-summary");
+      summary.appendChild(element("div", "ai-field-label", "结论"));
+      if (hasValue(a.summary)) appendValue(summary, a.summary);
+      else summary.appendChild(element("div", "ai-field-text", "AI 未提供简洁结论，请查看技术详情。"));
+      root.appendChild(summary);
+
+      const findings = element("div", "ai-findings");
+      appendField(findings, "ai-field", "可能原因 / 重要发现", a.possibleCauses);
+      if (hasValue(a.possibleCauses)) root.appendChild(findings);
+
+      const recommendations = element("div", "ai-recommendations");
+      appendField(recommendations, "ai-field", "建议检查", a.recommendations);
+      if (hasValue(a.recommendations)) root.appendChild(recommendations);
+
+      root.appendChild(element("div", "ai-facts-note", "以上是 AI 对扫描结果的解释，不是新的扫描事实；容量、路径和扫描状态请以本页原始数据为准。"));
+
+      const evidence = element("details", "ai-evidence");
+      evidence.appendChild(element("summary", "ai-evidence-summary", "查看证据与技术细节"));
+      const evidenceBody = element("div", "ai-evidence-body");
+      appendField(evidenceBody, "ai-field", "证据", a.evidence);
+      appendField(evidenceBody, "ai-field", "证据边界", a.cautions);
       const conf = (a.confidence || "low").toLowerCase();
       const confClass = ["high","medium"].includes(conf) ? conf : "low";
       const confEl = element("div", "ai-field");
       confEl.appendChild(element("span", "ai-field-label", "可信度："));
       confEl.appendChild(element("span", "ai-confidence ai-confidence-" + confClass, conf === "high" ? "高" : conf === "medium" ? "中等" : "低"));
-      root.appendChild(confEl);
+      evidenceBody.appendChild(confEl);
+      evidence.appendChild(evidenceBody);
+      root.appendChild(evidence);
     } else if (AI_ANALYSIS.rawText) {
-      root.appendChild(element("div", "ai-status", "AI 返回了非结构化内容："));
-      root.appendChild(element("div", "ai-field-text", AI_ANALYSIS.rawText));
+      root.appendChild(element("div", "ai-summary", "AI 返回了非结构化内容。"));
+      const evidence = element("details", "ai-evidence");
+      evidence.appendChild(element("summary", "ai-evidence-summary", "查看 AI 原文"));
+      evidence.appendChild(element("div", "ai-field-text", AI_ANALYSIS.rawText));
+      root.appendChild(evidence);
     }
     if (AI_ANALYSIS.model) {
       root.appendChild(element("div", "ai-meta", "模型：" + AI_ANALYSIS.model + (AI_ANALYSIS.generatedAt ? " · " + formatLocalDate(AI_ANALYSIS.generatedAt) : "")));
@@ -3875,7 +3909,10 @@ function changeRowNode(row, maxMagnitude, contributionBase) {
   const intensity = maxMagnitude ? Math.max(4, Math.abs(Number(row.deltaBytes)) / maxMagnitude * 100) : 0;
   const contribution = contributionBase ? `${(Math.abs(Number(row.deltaBytes)) / contributionBase * 100).toFixed(1)}%` : "-";
   const root=element("div","change-item"), main=element("div","change-main"), path=element("span","change-path expandable-path",row.displayPath);
-  path.title=String(row.displayPath ?? ""); main.append(path,element("div","change-context",`${row.drive} · ${row.level} 级 · 当前 ${fmtBytes(currentSizeBytes(row))} · 贡献 ${contribution}`));
+  path.title=String(row.displayPath ?? "");
+  const context=element("div","change-context");
+  context.append(element("span","",`${row.drive} · ${row.level} 级 · 当前 ${fmtBytes(currentSizeBytes(row))} ·`),element("span","change-contribution",`贡献 ${contribution}`));
+  main.append(path,context);
   const side=element("div","change-side"); side.append(element("b",valueClass,`${row.deltaBytes >= 0 ? "+" : ""}${fmtBytes(row.deltaBytes)}`));
   const copy=element("button","copy-path","复制路径"); copy.type="button"; copy.dataset.copyPath=String(row.displayPath ?? ""); copy.setAttribute("aria-label",`复制路径 ${row.displayPath}`); side.append(copy);
   const track=element("div",`intensity-track ${valueClass}`),fill=element("span","intensity-fill"); fill.style.setProperty("--intensity",`${Math.max(0,Math.min(100,intensity)).toFixed(1)}%`); track.append(fill);
@@ -3976,8 +4013,9 @@ function renderAttention(rankings) {
   const rows = [...rankings.growth,...rankings.release].sort((a,b) => Math.abs(Number(b.deltaBytes))-Math.abs(Number(a.deltaBytes)));
   const items = buildAttentionItems(DATA,DIRECTORY,rows);
   root.dataset.count = String(items.length);
+  root.parentElement.classList.toggle("is-clear", items.length === 1 && items[0].kind === "clear");
   items.forEach((item) => {
-    const link = element("a",`attention-item ${item.tone}`);
+    const link = element("a",`attention-item ${item.tone}${item.kind === "clear" ? " attention-empty" : ""}`);
     link.href = item.href;
     const marker = element("span","attention-marker","⚠");
     const label = element("span","attention-severity",item.tone === "critical" ? "高关注" : item.tone === "warning" ? "提醒" : "关注");

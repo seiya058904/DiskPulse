@@ -21,7 +21,17 @@ DiskPulse 是一个零依赖、离线运行的 Windows 磁盘容量与目录变�
 
 程序文件默认安装到 `%LOCALAPPDATA%\DiskPulse`，历史记录、快照、报告、日志和 AI 配置保存到 `%LOCALAPPDATA%\DiskPulse\data\runtime`。升级程序不会覆盖这些数据；卸载时默认保留历史数据。
 
-开发者可在项目根目录运行 `powershell -NoProfile -ExecutionPolicy Bypass -File build-installer.ps1`，生成 `dist\` 下带版本号的安装包（如 `DiskPulse-Setup-1.1.0.exe`）。GitHub Release 只需要上传这个安装包。
+开发者可在项目根目录运行 `powershell -NoProfile -ExecutionPolicy Bypass -File build-installer.ps1`，生成 `dist\` 下带版本号的安装包。NSIS 可通过 `-NsisPath`、`DISKPULSE_NSIS_PATH`、PATH 中的 `makensis.exe` 或现有本地开发机路径解析；没有可用编译器时脚本会明确报告尝试过的路径。
+
+开发者验证使用动态测试入口：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\Invoke-DiskPulseTestSuite.ps1
+pwsh -NoProfile -File tests\DiskPulse.Phase3.Tests.ps1
+pwsh -NoProfile -File tests\DiskPulse.Phase4.Tests.ps1
+```
+
+代码完成不会自动发布版本。完成测试和真实浏览器 QA 后，应先提出目标 SemVer、版本类型和摘要，并获得针对该版本的明确发布授权；未授权时不会创建 tag 或 GitHub Release。
 
 首次运行建立每个磁盘的目录基线；后续运行显示目录变化、解释率、扫描完整性、预期排除和无法访问路径。
 

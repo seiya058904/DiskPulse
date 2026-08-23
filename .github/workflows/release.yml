@@ -1,0 +1,93 @@
+name: DiskPulse Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: diskpulse-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Check out the tagged commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+
+      - name: Verify tag and main ancestry
+        shell: pwsh
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+          TAG_SHA: ${{ github.sha }}
+        run: |
+          $version = (Get-Content -Raw -Encoding UTF8 version.txt).Trim()
+          $expectedTag = "v$version"
+          if ($env:TAG_NAME -cne $expectedTag) {
+            throw "Tag $($env:TAG_NAME) does not match version.txt ($expectedTag)."
+          }
+          git fetch origin main --no-tags --force
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to fetch origin/main.' }
+          git merge-base --is-ancestor $env:TAG_SHA origin/main
+          if ($LASTEXITCODE -ne 0) {
+            throw "Tagged commit $($env:TAG_SHA) is not an ancestor of origin/main."
+          }
+          "DISKPULSE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Run the Windows PowerShell test suite
+        shell: pwsh
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\Invoke-DiskPulseTestSuite.ps1
+
+      - name: Run PowerShell 7 compatibility checks
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File tests\DiskPulse.Phase3.Tests.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'PowerShell 7 Phase3 check failed.' }
+          pwsh -NoProfile -File tests\DiskPulse.Phase4.Tests.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'PowerShell 7 Phase4 check failed.' }
+
+      - name: Install NSIS
+        shell: pwsh
+        run: choco install nsis -y --no-progress
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $nsis = (Get-Command makensis.exe -ErrorAction Stop).Source
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File build-installer.ps1 -OutputPath "$pwd\dist" -Version $env:DISKPULSE_VERSION -NsisPath $nsis
+          if ($LASTEXITCODE -ne 0) { throw 'Installer build failed.' }
+
+      - name: Verify installer and create checksum
+        shell: pwsh
+        run: |
+          $installer = Join-Path $pwd ("dist\DiskPulse-Setup-{0}.exe" -f $env:DISKPULSE_VERSION)
+          if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) { throw "Installer missing: $installer" }
+          $info = (Get-Item -LiteralPath $installer).VersionInfo
+          if ($info.FileVersion.Trim() -ne $env:DISKPULSE_VERSION) { throw "Installer FileVersion mismatch: $($info.FileVersion)" }
+          if ($info.ProductVersion.Trim() -ne $env:DISKPULSE_VERSION) { throw "Installer ProductVersion mismatch: $($info.ProductVersion)" }
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $installer).Hash.ToLowerInvariant()
+          $checksum = "$hash  DiskPulse-Setup-$($env:DISKPULSE_VERSION).exe"
+          $checksumPath = Join-Path $pwd ("dist\DiskPulse-Setup-{0}.sha256" -f $env:DISKPULSE_VERSION)
+          [IO.File]::WriteAllText($checksumPath, $checksum + [Environment]::NewLine, (New-Object System.Text.UTF8Encoding($false)))
+
+      - name: Create GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          $installer = "dist\DiskPulse-Setup-$($env:DISKPULSE_VERSION).exe"
+          $checksum = "dist\DiskPulse-Setup-$($env:DISKPULSE_VERSION).sha256"
+          gh release view $env:TAG_NAME --json tagName *> $null
+          if ($LASTEXITCODE -eq 0) {
+            throw "GitHub Release $($env:TAG_NAME) already exists; refusing to overwrite it."
+          }
+          gh release create $env:TAG_NAME $installer $checksum --verify-tag --title "DiskPulse v$($env:DISKPULSE_VERSION)" --generate-notes
+          if ($LASTEXITCODE -ne 0) { throw 'GitHub Release creation failed.' }

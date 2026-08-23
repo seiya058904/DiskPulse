@@ -11,6 +11,9 @@ $installerScript = Join-Path $root 'installer\DiskPulse.nsi'
 
 Assert-True (Test-Path -LiteralPath $buildScript) 'build-installer.ps1 is missing.'
 Assert-True (Test-Path -LiteralPath $installerScript) 'installer/DiskPulse.nsi is missing.'
+$buildSource = Get-Content -Raw -LiteralPath $buildScript -Encoding UTF8
+Assert-True ($buildSource -match '\[string\]\$NsisPath') 'Installer build must accept an explicit NSIS path.'
+Assert-True ($buildSource -match 'DISKPULSE_NSIS_PATH' -and $buildSource -match 'Get-Command makensis\.exe') 'Installer build must support portable NSIS discovery.'
 $installerSource = Get-Content -Raw -LiteralPath $installerScript -Encoding UTF8
 Assert-True ($installerSource -match 'InstallDir "\$LOCALAPPDATA\\DiskPulse"') 'Installer must use the DiskPulse folder as the application directory.'
 Assert-True ($installerSource -notmatch 'InstallDir "\$LOCALAPPDATA\\DiskPulse\\app"') 'Installer must not use a generic app folder.'
@@ -23,17 +26,16 @@ Assert-True ((Get-Content -Raw -LiteralPath (Join-Path $root 'check.bat') -Encod
 $output = Join-Path $env:TEMP ('DiskPulse-installer-test-' + [guid]::NewGuid().ToString('N'))
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $buildScript -OutputPath $output
 
-$setup = Join-Path $output 'DiskPulse-Setup-1.1.0.exe'
-Assert-True (Test-Path -LiteralPath $setup) 'DiskPulse-Setup-1.1.0.exe was not created.'
+$expectedVersion = (Get-Content -Raw -LiteralPath (Join-Path $root 'version.txt') -Encoding UTF8).Trim()
+$setup = Join-Path $output ('DiskPulse-Setup-' + $expectedVersion + '.exe')
+Assert-True (Test-Path -LiteralPath $setup) ('Expected installer was not created: ' + $setup)
 $bytes = [IO.File]::ReadAllBytes($setup)
 Assert-True ($bytes.Length -gt 2 -and $bytes[0] -eq 0x4D -and $bytes[1] -eq 0x5A) 'Installer is not a Windows executable.'
-$expectedVersion = (Get-Content -Raw -LiteralPath (Join-Path $root 'version.txt') -Encoding UTF8).Trim()
 $setupVersionInfo = (Get-Item -LiteralPath $setup).VersionInfo
 Assert-True ($setupVersionInfo.FileVersion -eq $expectedVersion) 'Setup FileVersion must match the canonical version.'
 Assert-True ($setupVersionInfo.ProductVersion -eq $expectedVersion) 'Setup ProductVersion must match the canonical version.'
 Assert-True ($installerSource -match [regex]::Escape('VIProductVersion "${VERSION4}"')) 'Installer must derive VIProductVersion from ${VERSION4}.'
 Assert-True ($installerSource -match [regex]::Escape('DisplayVersion" "${VERSION}"')) 'Installer must derive DisplayVersion from ${VERSION}.'
-Assert-True ($installerSource -notmatch '"1\.0\.0"') 'Installer must not hardcode version 1.0.0.'
-Assert-True ($installerSource -notmatch 'VIProductVersion "1\.1\.0') 'Installer must not hardcode version 1.1.0.'
+Assert-True ($installerSource -notmatch 'VIProductVersion\s+"[0-9]') 'Installer must not hardcode a numeric VIProductVersion.'
 
 Write-Output 'PASS: NSIS installer build'

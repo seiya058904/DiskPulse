@@ -63,14 +63,10 @@ configure-ai.bat
 
 ### Run Tests
 
-Tests are standalone PowerShell scripts, not Pester. All 5 must pass before committing:
+Tests are standalone PowerShell scripts, not Pester. Use the dynamic runner so every current `tests\*.Tests.ps1` file is included:
 
 ```powershell
-powershell.exe -NoProfile -File "tests\DiskPulse.Phase1.Tests.ps1"
-powershell.exe -NoProfile -File "tests\DiskPulse.Phase3.Tests.ps1"
-powershell.exe -NoProfile -File "tests\DiskPulse.Phase4.Tests.ps1"
-powershell.exe -NoProfile -File "tests\DiskPulse.Phase5.Tests.ps1"
-powershell.exe -NoProfile -File "tests\DiskPulse.Scanner.Tests.ps1"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "tests\Invoke-DiskPulseTestSuite.ps1"
 ```
 
 Also verify with PowerShell 7:
@@ -85,6 +81,8 @@ pwsh -NoProfile -File "tests\DiskPulse.Phase4.Tests.ps1"
 - Phase4: visual hierarchy, state behavior, embedded JavaScript, AI section markers, rendering fixtures
 - Phase5: history comparison center selection, semantics, trends, embedded JavaScript
 - Scanner: real directory scanner aggregation and edge cases
+
+The suite runner discovers test files at runtime; do not document or depend on a fixed test count. Phase 3 and Phase 4 remain the PowerShell 7 compatibility checks.
 
 ### Verify
 
@@ -141,14 +139,16 @@ Rules:
 1. **Read before writing.** Understand the file you are modifying before making changes.
 2. **Small, reviewable changes.** One concern per commit. Do not bundle unrelated fixes.
 3. **Do not touch unrelated files.** If a task says "modify check.bat", do not also rename tests or update README unless explicitly asked.
-4. **Run all 5 test suites** after any change to `check.bat`. Report failures honestly.
+4. **Run the dynamic test suite** after any change to `check.bat`. Report failures honestly.
 5. **Preserve semantics.** Do not change scanning logic, history retention, baseline selection, status thresholds, or dashboard data flow without explicit authorization.
 6. **Do not fabricate commands, files, or APIs.** If something does not exist, say so.
 7. **Do not overwrite user's uncommitted changes.** Check `git status` first.
 8. **Do not install dependencies, run auto-fixers, or format the entire codebase.**
-9. **Do not commit, push, deploy, publish, or create releases without explicit user authorization.**
+9. **Do not commit, push, deploy, publish, or create releases without explicit user authorization.** Completing implementation never authorizes a release.
 10. **Mark uncertain content.** If you cannot verify a claim, label it as needing confirmation.
 11. **AI feature constraints:** AI is opt-in, default off. Network requests are optional. Tests must use offline Transport fixtures. API Key uses DPAPI. AI content is untrusted input requiring safe serialization.
+
+12. **Release contract:** after implementation, tests, real-browser QA, and clean-state checks, propose the target SemVer, patch/minor/major classification, and summary. Ask once with a specific prompt such as `Ready to publish DiskPulse v1.2.0. Authorize release?`. Only explicit authorization for that release permits version metadata updates, release commit, main synchronization, push, tag, and GitHub Release automation. Stop for conflicts, force-push requests, credential failures, or ambiguous release state.
 
 ## Pre-Commit Checklist
 
@@ -163,7 +163,7 @@ When the user explicitly says the project/task is ready to “收工” or gives
 - [ ] `git status --short` — only intended files changed
 - [ ] `git diff --check` — no whitespace errors
 - [ ] `git diff` — changes are correct and complete
-- [ ] All 5 test suites pass (or failures explained)
+- [ ] `tests\Invoke-DiskPulseTestSuite.ps1` discovers and passes all current test suites (or failures explained)
 - [ ] PowerShell 7 tests also pass
 - [ ] `node --check` passes on extracted JavaScript
 - [ ] No secrets, tokens, or credentials in diff

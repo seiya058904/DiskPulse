@@ -25,7 +25,7 @@ $expectedVersion = (Get-Content -Raw -LiteralPath (Join-Path $root 'version.txt'
 $expectedVersion4 = if ($expectedVersion.Split('.').Count -ge 4) { $expectedVersion } else { $expectedVersion + '.0' * (4 - $expectedVersion.Split('.').Count) }
 $exeVersionInfo = (Get-Item -LiteralPath $exe).VersionInfo
 Assert-True ($exeVersionInfo.FileVersion -eq $expectedVersion4) 'DiskPulse.exe FileVersion must match the canonical version.'
-Assert-True ($exeVersionInfo.ProductVersion -eq $expectedVersion4) 'DiskPulse.exe ProductVersion must match the canonical version.'
+Assert-True ($exeVersionInfo.ProductVersion -eq $expectedVersion) 'DiskPulse.exe ProductVersion must match the canonical version.'
 
 $assembly = [Reflection.Assembly]::LoadFrom($exe)
 $dataType = $assembly.GetType('DataPaths', $true)

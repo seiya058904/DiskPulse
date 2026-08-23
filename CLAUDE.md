@@ -35,14 +35,10 @@ No build step. Requires Windows with PowerShell 5.1+.
 
 ## How to Run Tests
 
-Tests are standalone PowerShell scripts (not Pester). Run with Windows PowerShell:
+Tests are standalone PowerShell scripts (not Pester). Run the dynamic Windows PowerShell suite:
 
 ```powershell
-powershell.exe -NoProfile -File "tests\DiskPulse.Phase1.Tests.ps1"
-powershell.exe -NoProfile -File "tests\DiskPulse.Phase3.Tests.ps1"
-powershell.exe -NoProfile -File "tests\DiskPulse.Phase4.Tests.ps1"
-powershell.exe -NoProfile -File "tests\DiskPulse.Phase5.Tests.ps1"
-powershell.exe -NoProfile -File "tests\DiskPulse.Scanner.Tests.ps1"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "tests\Invoke-DiskPulseTestSuite.ps1"
 ```
 
 Also run with PowerShell 7 (pwsh) to verify cross-version compatibility:
@@ -52,7 +48,7 @@ pwsh -NoProfile -File "tests\DiskPulse.Phase3.Tests.ps1"
 pwsh -NoProfile -File "tests\DiskPulse.Phase4.Tests.ps1"
 ```
 
-All 5 must pass before committing. Phase4/5 extract embedded JavaScript from `check.bat` and run it through Node.js for fixture validation.
+The runner discovers every current `tests\*.Tests.ps1` file, so documentation does not depend on a fixed test count. Phase4/5 extract embedded JavaScript from `check.bat` and run it through Node.js for fixture validation. Completion does not authorize a release: propose the target SemVer and summary, then ask once for explicit authorization before changing version metadata, pushing, tagging, or publishing.
 
 ## Architecture
 

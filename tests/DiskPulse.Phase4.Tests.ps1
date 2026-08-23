@@ -212,6 +212,11 @@ foreach ($marker in @('id="ai-analysis"','ai-analysis-content','ai-analysis-note
     if ($source -notmatch [regex]::Escape($marker)) { throw "Missing AI section marker: $marker" }
 }
 
+# Progressive disclosure contract: concise interpretation stays visible while evidence remains secondary.
+foreach ($marker in @('ai-summary','ai-findings','ai-recommendations','ai-evidence','ai-facts-note','attention-empty','change-contribution')) {
+    if ($source -notmatch [regex]::Escape($marker)) { throw "Missing dashboard information hierarchy marker: $marker" }
+}
+
 # Three-axis scan semantics: explanation rate is an attribution ratio, NOT a scan fraction;
 # execution status is separate from scan limitations; no visibility-percentage claims allowed.
 foreach ($marker in @('不代表磁盘扫描比例','实际净变化','已定位净变化','未解释净变化','扫描执行：','按设计忽略','权限受限','扫描期间消失','transient-missing','扫描完成','部分完成','change-explanation-note')) {
