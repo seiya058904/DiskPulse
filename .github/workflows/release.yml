@@ -41,6 +41,10 @@ jobs:
           }
           "DISKPULSE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
+      - name: Install NSIS
+        shell: pwsh
+        run: choco install nsis -y --no-progress
+
       - name: Run the Windows PowerShell test suite
         shell: pwsh
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\Invoke-DiskPulseTestSuite.ps1
@@ -52,10 +56,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'PowerShell 7 Phase3 check failed.' }
           pwsh -NoProfile -File tests\DiskPulse.Phase4.Tests.ps1
           if ($LASTEXITCODE -ne 0) { throw 'PowerShell 7 Phase4 check failed.' }
-
-      - name: Install NSIS
-        shell: pwsh
-        run: choco install nsis -y --no-progress
 
       - name: Build installer
         shell: pwsh
