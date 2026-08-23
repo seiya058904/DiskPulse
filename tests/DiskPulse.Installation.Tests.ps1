@@ -14,6 +14,7 @@ Assert-True (Test-Path -LiteralPath $installerScript) 'installer/DiskPulse.nsi i
 $buildSource = Get-Content -Raw -LiteralPath $buildScript -Encoding UTF8
 Assert-True ($buildSource -match '\[string\]\$NsisPath') 'Installer build must accept an explicit NSIS path.'
 Assert-True ($buildSource -match 'DISKPULSE_NSIS_PATH' -and $buildSource -match 'Get-Command makensis\.exe') 'Installer build must support portable NSIS discovery.'
+Assert-True ($buildSource -match 'DEXE_PATH') 'Installer build must pass the generated launcher path to NSIS.'
 $installerSource = Get-Content -Raw -LiteralPath $installerScript -Encoding UTF8
 Assert-True ($installerSource -match 'InstallDir "\$LOCALAPPDATA\\DiskPulse"') 'Installer must use the DiskPulse folder as the application directory.'
 Assert-True ($installerSource -notmatch 'InstallDir "\$LOCALAPPDATA\\DiskPulse\\app"') 'Installer must not use a generic app folder.'
@@ -36,6 +37,7 @@ Assert-True ($setupVersionInfo.FileVersion -eq $expectedVersion) 'Setup FileVers
 Assert-True ($setupVersionInfo.ProductVersion -eq $expectedVersion) 'Setup ProductVersion must match the canonical version.'
 Assert-True ($installerSource -match [regex]::Escape('VIProductVersion "${VERSION4}"')) 'Installer must derive VIProductVersion from ${VERSION4}.'
 Assert-True ($installerSource -match [regex]::Escape('DisplayVersion" "${VERSION}"')) 'Installer must derive DisplayVersion from ${VERSION}.'
+Assert-True ($installerSource -match '\$\{EXE_PATH\}') 'Installer must use the generated launcher path.'
 Assert-True ($installerSource -notmatch 'VIProductVersion\s+"[0-9]') 'Installer must not hardcode a numeric VIProductVersion.'
 
 Write-Output 'PASS: NSIS installer build'

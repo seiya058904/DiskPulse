@@ -6,6 +6,9 @@ RequestExecutionLevel user
 !ifndef OUTPUT_PATH
 !define OUTPUT_PATH "${PROJECT_ROOT}\dist"
 !endif
+!ifndef EXE_PATH
+!define EXE_PATH "${PROJECT_ROOT}\dist\DiskPulse.exe"
+!endif
 Name "DiskPulse"
 Caption "DiskPulse Setup"
 OutFile "${OUTPUT_PATH}\DiskPulse-Setup-${VERSION}.exe"
@@ -44,7 +47,7 @@ VIAddVersionKey "LegalCopyright" "DiskPulse"
 Section "DiskPulse"
     SetShellVarContext current
     SetOutPath "$INSTDIR"
-    File "${PROJECT_ROOT}\dist\DiskPulse.exe"
+    File "${EXE_PATH}"
 
     CreateDirectory "$LOCALAPPDATA\DiskPulse\data\runtime"
     ${If} ${FileExists} "$EXEDIR\runtime\*.*"

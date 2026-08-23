@@ -43,6 +43,6 @@ if ([string]::IsNullOrWhiteSpace($makensis)) {
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'build-release.ps1') -OutputPath $output -Version $Version
 if ($LASTEXITCODE -ne 0) { throw 'Main EXE build failed.' }
 New-Item -ItemType Directory -Path $output -Force | Out-Null
-& $makensis "/DPROJECT_ROOT=$root" "/DOUTPUT_PATH=$output" "/DVERSION=$Version" "/DVERSION4=$version4" (Join-Path $root 'installer\DiskPulse.nsi')
+& $makensis "/DPROJECT_ROOT=$root" "/DOUTPUT_PATH=$output" "/DEXE_PATH=$(Join-Path $output 'DiskPulse.exe')" "/DVERSION=$Version" "/DVERSION4=$version4" (Join-Path $root 'installer\DiskPulse.nsi')
 if ($LASTEXITCODE -ne 0) { throw "NSIS build failed with exit code $LASTEXITCODE." }
 Write-Output "Built: $(Join-Path $output ("DiskPulse-Setup-" + $Version + ".exe"))"
