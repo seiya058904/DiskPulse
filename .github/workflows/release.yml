@@ -68,7 +68,8 @@ jobs:
       - name: Build installer
         shell: pwsh
         run: |
-          $nsis = (Get-Command makensis.exe -ErrorAction Stop).Source
+          $nsis = $env:DISKPULSE_NSIS_PATH
+          if (-not (Test-Path -LiteralPath $nsis -PathType Leaf)) { throw "NSIS compiler not found at DISKPULSE_NSIS_PATH: $nsis" }
           powershell.exe -NoProfile -ExecutionPolicy Bypass -File build-installer.ps1 -OutputPath "$pwd\dist" -Version $env:DISKPULSE_VERSION -NsisPath $nsis
           if ($LASTEXITCODE -ne 0) { throw 'Installer build failed.' }
 
