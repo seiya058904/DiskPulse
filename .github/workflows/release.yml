@@ -43,7 +43,15 @@ jobs:
 
       - name: Install NSIS
         shell: pwsh
-        run: choco install nsis -y --no-progress
+        run: |
+          choco install nsis -y --no-progress
+          $nsisCandidates = @(
+            (Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe'),
+            (Join-Path $env:ProgramFiles 'NSIS\makensis.exe')
+          )
+          $nsis = $nsisCandidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+          if (-not $nsis) { throw "NSIS installation completed but makensis.exe was not found. Tried: $($nsisCandidates -join ', ')" }
+          "DISKPULSE_NSIS_PATH=$nsis" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Run the Windows PowerShell test suite
         shell: pwsh
