@@ -339,7 +339,6 @@ function Add-FileAggregate {
         $Record.latestWriteTime = $writeTime
     }
 }
-
 if (-not ('DiskPulseFastScanner' -as [type])) {
 Add-Type -TypeDefinition @'
 using System;
@@ -911,7 +910,6 @@ function New-HistoryComparisonCenter {
     if ($profileMode) { Profile-Mark "history:buildOutput" }
     [object[]]$result
 }
-
 function Complete-InterruptedScans {
     param($Paths)
     if(-not(Test-Path -LiteralPath $Paths.Events)){return}

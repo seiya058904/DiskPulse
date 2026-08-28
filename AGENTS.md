@@ -55,6 +55,15 @@ installer/              NSIS installer script
 - Generated-`check.bat` scanner integration remains covered by the broader dynamic suite and generation tests.
 - The scanner contract is: fixed-drive scope, root files plus level-1/level-2 aggregation, reparse-point exclusion, transient-missing tolerance, and honest partial/failed status.
 
+## Packaged Lifecycle Invariants
+
+- Application payload under `%LOCALAPPDATA%\DiskPulse` is replaceable and is repaired from embedded resources when missing, stale, or corrupt.
+- Persistent user data under `%LOCALAPPDATA%\DiskPulse\data` must survive upgrades and uninstall.
+- Launcher payload extraction uses hash comparison and atomic temp/replace publication.
+- Migration is idempotent, non-destructive, and does not traverse reparse points.
+- Installer/uninstaller shortcuts and registry metadata are current-user scoped.
+- Full installer install/uninstall smoke testing is currently **extended Windows QA**, not required canonical CI, because it may touch Desktop/Start Menu.
+
 ## Browser QA
 
 - Canonical dashboard sources live under `src/dashboard/`.

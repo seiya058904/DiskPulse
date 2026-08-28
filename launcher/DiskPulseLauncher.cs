@@ -5,6 +5,7 @@ using System.Drawing;
 using System.IO;
 using System.Reflection;
 using System.Resources;
+using System.Security.Cryptography;
 using System.Threading;
 using System.Windows.Forms;
 
@@ -36,17 +37,68 @@ internal static class Payload
 
     internal static void EnsureExtracted()
     {
-        Directory.CreateDirectory(Root);
+        EnsureExtracted(Root);
+    }
+
+    internal static void EnsureExtracted(string root)
+    {
+        Directory.CreateDirectory(root);
+        string fullRoot = Path.GetFullPath(root);
         using (Stream stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("DiskPulse.Payload"))
         using (ResourceReader reader = new ResourceReader(stream))
         {
             foreach (DictionaryEntry entry in reader)
             {
-                string path = Path.Combine(Root, (string)entry.Key);
+                string key = (string)entry.Key;
+                string path = Path.Combine(root, key);
+                string fullPath = Path.GetFullPath(path);
+                if (!fullPath.StartsWith(fullRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException("Unsafe payload path: " + key);
+                }
+
                 string parent = Path.GetDirectoryName(path);
                 if (!String.IsNullOrEmpty(parent)) Directory.CreateDirectory(parent);
-                File.WriteAllBytes(path, (byte[])entry.Value);
+
+                byte[] data = (byte[])entry.Value;
+                if (File.Exists(path) && HashesEqual(File.ReadAllBytes(path), data))
+                {
+                    continue;
+                }
+
+                string temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                try
+                {
+                    File.WriteAllBytes(temp, data);
+                    if (File.Exists(path))
+                    {
+                        File.Replace(temp, path, null);
+                    }
+                    else
+                    {
+                        File.Move(temp, path);
+                    }
+                }
+                finally
+                {
+                    if (File.Exists(temp)) File.Delete(temp);
+                }
             }
+        }
+    }
+
+    private static bool HashesEqual(byte[] first, byte[] second)
+    {
+        using (SHA256 sha = SHA256.Create())
+        {
+            byte[] firstHash = sha.ComputeHash(first);
+            byte[] secondHash = sha.ComputeHash(second);
+            if (firstHash.Length != secondHash.Length) return false;
+            for (int i = 0; i < firstHash.Length; i++)
+            {
+                if (firstHash[i] != secondHash[i]) return false;
+            }
+            return true;
         }
     }
 }
@@ -80,14 +132,26 @@ internal static class DataPaths
     internal static void MigrateDirectory(string source, string destination)
     {
         if (!Directory.Exists(source)) return;
-        foreach (string file in Directory.GetFiles(source, "*", SearchOption.AllDirectories))
+        DirectoryInfo sourceInfo = new DirectoryInfo(source);
+        MigrateDirectoryRecursive(sourceInfo, destination, sourceInfo.FullName);
+    }
+
+    private static void MigrateDirectoryRecursive(DirectoryInfo source, string destinationRoot, string basePath)
+    {
+        foreach (FileInfo file in source.GetFiles())
         {
-            string relative = file.Substring(source.TrimEnd(Path.DirectorySeparatorChar).Length).TrimStart(Path.DirectorySeparatorChar);
-            string target = Path.Combine(destination, relative);
+            string relative = file.FullName.Substring(basePath.Length).TrimStart(Path.DirectorySeparatorChar);
+            string target = Path.Combine(destinationRoot, relative);
             if (File.Exists(target)) continue;
             string parent = Path.GetDirectoryName(target);
             if (!String.IsNullOrEmpty(parent)) Directory.CreateDirectory(parent);
-            File.Copy(file, target);
+            File.Copy(file.FullName, target);
+        }
+
+        foreach (DirectoryInfo subdirectory in source.GetDirectories())
+        {
+            if ((subdirectory.Attributes & FileAttributes.ReparsePoint) != 0) continue;
+            MigrateDirectoryRecursive(subdirectory, destinationRoot, basePath);
         }
     }
 }
