@@ -26,7 +26,14 @@ $command = Get-Command makensis.exe -ErrorAction SilentlyContinue
 if ($command -and $command.Path) {
     $nsisCandidates.Add([pscustomobject]@{ source = 'Get-Command makensis.exe'; path = $command.Path })
 }
-$nsisCandidates.Add([pscustomobject]@{ source = 'local developer fallback'; path = 'D:\xia zai\NSIS\makensis.exe' })
+$standardNsisPaths = @(
+    (Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe'),
+    (Join-Path $env:ProgramFiles 'NSIS\makensis.exe'),
+    (Join-Path $env:LOCALAPPDATA 'NSIS\makensis.exe')
+)
+foreach ($candidatePath in $standardNsisPaths) {
+    $nsisCandidates.Add([pscustomobject]@{ source = 'standard installation location'; path = $candidatePath })
+}
 
 $makensis = $null
 $attempted = New-Object System.Collections.Generic.List[string]

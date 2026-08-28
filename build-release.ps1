@@ -34,38 +34,58 @@ $compiler = if ([Environment]::Is64BitOperatingSystem) {
     Join-Path $env:WINDIR 'Microsoft.NET\Framework\v4.0.30319\csc.exe'
 }
 $output = [IO.Path]::GetFullPath($OutputPath)
+$generatedCheckBat = Join-Path $env:TEMP ('DiskPulse-check-' + [guid]::NewGuid().ToString('N') + '.bat')
 $resourceFile = Join-Path $env:TEMP ('DiskPulse-' + [guid]::NewGuid().ToString('N') + '.resources')
-$payload = @('check.bat', 'DiskPulse.vbs', 'configure-ai.bat', 'assets\DiskPulse.png')
 $iconPath = Join-Path $root 'assets\DiskPulse.ico'
 
-if (-not (Test-Path -LiteralPath $compiler)) { throw "C# compiler not found: $compiler" }
-foreach ($file in $payload) {
-    if (-not (Test-Path -LiteralPath (Join-Path $root $file))) { throw "Payload file not found: $file" }
-}
-if (-not (Test-Path -LiteralPath $iconPath)) { throw "Icon file not found: $iconPath" }
-
-New-Item -ItemType Directory -Path $output -Force | Out-Null
-$writer = New-Object System.Resources.ResourceWriter($resourceFile)
 try {
-    foreach ($file in $payload) {
-        $writer.AddResource($file, [IO.File]::ReadAllBytes((Join-Path $root $file)))
-    }
-} finally {
-    $writer.Close()
-}
+    $generator = Join-Path $root 'scripts\build-check.ps1'
+    if (-not (Test-Path -LiteralPath $generator)) { throw "Generator not found: $generator" }
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $generator -OutputPath $generatedCheckBat
+    if ($LASTEXITCODE -ne 0) { throw 'check.bat generation failed.' }
 
-$exe = Join-Path $output 'DiskPulse.exe'
-$arguments = @(
-    '/nologo', '/target:winexe', "/out:$exe",
-    "/win32icon:$iconPath",
-    "/resource:$resourceFile,DiskPulse.Payload",
-    "/reference:System.dll", '/reference:System.Core.dll',
-    '/reference:System.Drawing.dll', '/reference:System.Windows.Forms.dll',
-    $assemblyInfoFile,
-    (Join-Path $root 'launcher\DiskPulseLauncher.cs')
-)
-& $compiler @arguments
-if ($LASTEXITCODE -ne 0) { throw "Launcher compilation failed with exit code $LASTEXITCODE." }
-Remove-Item -LiteralPath $resourceFile -Force
-if (Test-Path -LiteralPath $assemblyInfoFile) { Remove-Item -LiteralPath $assemblyInfoFile -Force }
-Write-Output "Built: $exe"
+    $trackedCheckBat = Join-Path $root 'check.bat'
+    $trackedHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $trackedCheckBat).Hash
+    $generatedHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $generatedCheckBat).Hash
+    if ($trackedHash -ne $generatedHash) {
+        throw 'check.bat is stale; run scripts/build-check.ps1 and commit the regenerated artifact.'
+    }
+
+    $payload = @('check.bat', 'DiskPulse.vbs', 'configure-ai.bat', 'assets\DiskPulse-dashboard.png')
+    if (-not (Test-Path -LiteralPath $compiler)) { throw "C# compiler not found: $compiler" }
+    foreach ($file in $payload) {
+        $sourcePath = if ($file -eq 'check.bat') { $generatedCheckBat } else { Join-Path $root $file }
+        if (-not (Test-Path -LiteralPath $sourcePath)) { throw "Payload file not found: $file" }
+    }
+    if (-not (Test-Path -LiteralPath $iconPath)) { throw "Icon file not found: $iconPath" }
+
+    New-Item -ItemType Directory -Path $output -Force | Out-Null
+    $writer = New-Object System.Resources.ResourceWriter($resourceFile)
+    try {
+        foreach ($file in $payload) {
+            $sourcePath = if ($file -eq 'check.bat') { $generatedCheckBat } else { Join-Path $root $file }
+            $writer.AddResource($file, [IO.File]::ReadAllBytes($sourcePath))
+        }
+    } finally {
+        $writer.Close()
+    }
+
+    $exe = Join-Path $output 'DiskPulse.exe'
+    $arguments = @(
+        '/nologo', '/target:winexe', "/out:$exe",
+        "/win32icon:$iconPath",
+        "/resource:$resourceFile,DiskPulse.Payload",
+        "/reference:System.dll", '/reference:System.Core.dll',
+        '/reference:System.Drawing.dll', '/reference:System.Windows.Forms.dll',
+        $assemblyInfoFile,
+        (Join-Path $root 'launcher\DiskPulseLauncher.cs')
+    )
+    & $compiler @arguments
+    if ($LASTEXITCODE -ne 0) { throw "Launcher compilation failed with exit code $LASTEXITCODE." }
+    Write-Output "Built: $exe"
+}
+finally {
+    if (Test-Path -LiteralPath $generatedCheckBat) { Remove-Item -LiteralPath $generatedCheckBat -Force -ErrorAction SilentlyContinue }
+    if (Test-Path -LiteralPath $resourceFile) { Remove-Item -LiteralPath $resourceFile -Force -ErrorAction SilentlyContinue }
+    if (Test-Path -LiteralPath $assemblyInfoFile) { Remove-Item -LiteralPath $assemblyInfoFile -Force -ErrorAction SilentlyContinue }
+}

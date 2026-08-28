@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DiskPulse</title>
+<link rel="icon" href="INJECT_BRAND_DATA_URI">
+<style>
+__DISKPULSE_STYLE__
+</style>
+</head>
+<body>
+<main class="shell dashboard-shell">
+  <header class="product-header">
+    <div class="header-brand">
+      <img class="brand-image" src="INJECT_BRAND_DATA_URI" alt="DiskPulse 图标">
+      <svg class="brand-mark" viewBox="0 0 48 48" role="img" aria-labelledby="brand-title brand-desc"><title id="brand-title">DiskPulse</title><desc id="brand-desc">蓝色磁盘堆叠图标</desc><defs><linearGradient id="brand-gradient" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#73a7ff"/><stop offset="1" stop-color="#3370ff"/></linearGradient></defs><ellipse cx="21" cy="12" rx="12" ry="5.5" fill="url(#brand-gradient)"/><path d="M9 12v8c0 3 5.4 5.5 12 5.5S33 23 33 20v-8c0 3-5.4 5.5-12 5.5S9 15 9 12Z" fill="#4b83f5"/><path d="M9 20v8c0 3 5.4 5.5 12 5.5S33 31 33 28v-8c0 3-5.4 5.5-12 5.5S9 23 9 20Z" fill="#3b73ef"/><path d="M9 28v8c0 3 5.4 5.5 12 5.5S33 39 33 36v-8c0 3-5.4 5.5-12 5.5S9 31 9 28Z" fill="#2f66db"/><circle cx="36" cy="34" r="8" fill="#fff"/><path d="m32.5 34 2.2 2.2 4.6-5" fill="none" stroke="#20b982" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <div><h1>磁盘容量看板</h1><p class="product-subtitle">系统存储监控与分析报告</p><div class="timestamp" id="ts"></div></div>
+    </div>
+    <div class="actions">
+      <div class="action-group action-search" aria-label="搜索与排序">
+        <input class="search" id="search" type="search" placeholder="筛选盘符" aria-label="筛选磁盘盘符">
+        <select class="select" id="sort" aria-label="磁盘排序方式">
+          <option value="percent-desc">使用率高到低</option>
+          <option value="percent-asc">使用率低到高</option>
+          <option value="free-asc">剩余空间少到多</option>
+          <option value="name-asc">盘符排序</option>
+          <option value="change-desc">增长最多</option>
+        </select>
+      </div>
+      <div class="action-group action-display" aria-label="显示设置">
+        <label class="toggle"><input id="compact" type="checkbox">紧凑模式</label>
+        <button class="button" id="themeBtn" type="button" aria-label="切换主题">主题</button>
+      </div>
+      <div class="action-group action-report" aria-label="报告操作">
+        <button class="button" id="copy" type="button">复制磁盘摘要</button>
+        <button class="button" id="print-report" type="button">打印报告</button>
+        <a class="button" href="DiskPulse.csv" download>下载历史</a>
+      </div>
+    </div>
+  </header>
+
+  <nav class="section-nav" id="section-nav" aria-label="看板分区导航">
+    <a href="#overview-section">总览</a>
+    <a href="#attention-center">关注</a>
+    <a href="#change-details">本次变化</a>
+    <a href="#ai-analysis">AI 解释</a>
+    <a href="#capacity-visuals">容量趋势</a>
+    <a href="#history-center">历史对比</a>
+    <a href="#drive-details-section">磁盘详情</a>
+    <a href="#scan-completeness">扫描信息</a>
+  </nav>
+
+  <section class="overview" id="overview-section" aria-label="磁盘摘要">
+    <div class="summary-grid hero-grid" id="summary-grid">
+      <article class="summary-card hero-card capacity-summary" id="capacity-summary"></article>
+      <article class="summary-card hero-card hero-card-primary latest-change" id="latest-change"></article>
+      <article class="summary-card hero-card comparison-confidence" id="comparison-confidence"></article>
+    </div>
+  </section>
+  <section class="attention-section attention-strip" id="attention-center" aria-labelledby="attention-title">
+    <div class="section-intro"><div><h2 id="attention-title">关注中心</h2><p>容量压力、可靠变化与扫描完整性</p></div></div>
+    <div class="attention-list" id="attention-list"></div>
+  </section>
+
+  <section class="capacity-visuals" id="capacity-visuals" aria-labelledby="capacity-visuals-title">
+    <div class="section-intro"><div><h2 id="capacity-visuals-title">容量趋势</h2><p>选择磁盘并查看真实历史样本</p></div></div>
+    <div class="capacity-visual-grid">
+      <article class="capacity-panel" aria-labelledby="capacity-drive-list-title">
+        <div class="panel-heading"><div><h3 id="capacity-drive-list-title">磁盘选择与使用率</h3><p>按容量状态与使用率排列</p></div></div>
+        <div class="capacity-drive-list" id="capacity-drive-select"></div>
+      </article>
+      <article class="capacity-panel trend-panel" aria-labelledby="capacity-trend-title">
+        <div class="panel-heading trend-heading">
+          <div><h3 id="capacity-trend-title">容量趋势</h3><p id="capacity-trend-caption">选择磁盘查看趋势</p></div>
+          <div class="range-buttons" id="capacity-range" role="group" aria-label="容量趋势时间范围">
+            <button type="button" data-capacity-range="7" aria-pressed="false">7 天</button>
+            <button type="button" data-capacity-range="30" aria-pressed="true">30 天</button>
+            <button type="button" data-capacity-range="90" aria-pressed="false">90 天</button>
+            <button type="button" data-capacity-range="all" aria-pressed="false">全部</button>
+          </div>
+        </div>
+        <div class="capacity-trend-stats" id="capacity-trend-stats"></div>
+        <div class="capacity-trend-chart" id="capacity-trend-chart"></div>
+      </article>
+    </div>
+  </section>
+
+  <div class="section-intro"><div><h2>本次变化</h2><p>按可靠变化大小排序</p></div></div>
+  <section class="directory-overview" id="change-details">
+    <div class="change-controls">
+      <label>磁盘<select class="select" id="change-drive-filter" aria-label="筛选磁盘"></select></label>
+      <label>目录层级<select class="select" id="change-level-filter" aria-label="筛选目录层级"><option value="1">一级目录</option><option value="2">二级目录</option><option value="all">全部层级</option></select></label>
+      <label>变化方向<select class="select" id="change-direction-filter" aria-label="筛选变化方向"><option value="all">全部变化</option><option value="growth">仅增长</option><option value="release">仅释放</option></select></label>
+      <label>数据状态<select class="select" id="change-state-filter" aria-label="筛选数据状态"><option value="reliable">可靠变化</option><option value="unknown">未知</option><option value="unavailable">不可用</option></select></label>
+      <label>路径搜索<input class="search" id="change-path-filter" type="search" placeholder="筛选目录路径" aria-label="筛选目录路径"></label>
+    </div>
+    <div class="change-lists">
+      <div class="change-list change-ranking growth-panel"><div class="change-list-heading"><h3>Top 增长</h3><span class="list-empty-note" id="release-empty-note" hidden>本次没有明显释放</span></div><div id="growth-list"></div></div>
+      <div class="change-list change-ranking release-panel"><div class="change-list-heading"><h3>Top 释放</h3><span class="list-empty-note" id="growth-empty-note" hidden>本次没有明显增长</span></div><div id="release-list"></div></div>
+    </div>
+    <div class="change-list state-change-list" id="state-change-list" hidden><h3 id="state-change-title">数据状态</h3><div id="state-change-body"></div></div>
+  </section>
+
+  <section class="ai-analysis-section" id="ai-analysis" aria-label="AI 变化解释">
+    <div class="section-intro"><div><h2 id="ai-analysis-title">AI 变化解释</h2><p class="ai-analysis-note" id="ai-analysis-note">根据本次目录变化和历史趋势生成。AI 内容属于推测，请以原始磁盘数据为准。</p></div>
+      <div class="ai-actions" id="ai-actions" role="group" aria-label="AI 操作">
+        <button class="button" id="copy-ai-input" type="button" hidden>复制给 AI</button>
+        <button class="button" id="copy-ai-output" type="button" hidden>复制 AI 结果</button>
+      </div></div>
+    <div class="ai-analysis-content" id="ai-analysis-content"></div>
+  </section>
+
+  <div class="section-intro history-intro"><div><h2>历史对比</h2><p>从既有完整快照比较累计变化</p></div></div>
+  <section class="history-summary-overview history-summary-strip" id="history-summary-overview" aria-label="历史对比摘要">
+    <div class="history-summary" id="history-summary"></div>
+  </section>
+  <details class="history-details" id="history-details">
+    <summary>查看完整历史对比</summary>
+  <section class="history-center history-summary-strip" id="history-center" aria-label="历史对比中心">
+    <div class="history-head">
+      <div><h3>比较范围</h3><p class="history-range-note" id="history-range-note"></p></div>
+      <div class="history-controls"><label>时间范围<select class="select" id="history-range"><option value="previous">上一次完整扫描</option><option value="day">约 24 小时前</option><option value="week">约 7 天前</option><option value="earliest">最早可用快照</option><option value="custom">自选历史快照</option></select></label><div class="history-custom" id="history-custom"></div></div>
+    </div>
+    <div class="history-tabs" id="history-tabs" role="tablist" aria-label="历史榜单">
+      <button class="history-tab is-active" id="history-growth-tab" type="button" role="tab" aria-selected="true" aria-controls="history-growth-panel" data-history-tab="growth">持续增长</button>
+      <button class="history-tab" id="history-release-tab" type="button" role="tab" aria-selected="false" aria-controls="history-release-panel" data-history-tab="release">持续释放</button>
+      <button class="history-tab" id="history-trend-tab" type="button" role="tab" aria-selected="false" aria-controls="history-trend-panel" data-history-tab="trend">历史变化</button>
+    </div>
+    <div class="history-panels">
+      <div class="history-column" id="history-growth-panel" role="tabpanel" aria-labelledby="history-growth-tab"><h3>持续增长榜</h3><div id="sustained-growth-list"></div><button class="history-expand" type="button" data-history-list="growth">展开全部</button></div>
+      <div class="history-column" id="history-release-panel" role="tabpanel" aria-labelledby="history-release-tab" hidden><h3>持续释放榜</h3><div id="sustained-release-list"></div><button class="history-expand" type="button" data-history-list="release">展开全部</button></div>
+      <div class="history-column" id="history-trend-panel" role="tabpanel" aria-labelledby="history-trend-tab" hidden><h3>历史变化趋势</h3><div id="history-trend-list"></div><button class="history-expand" type="button" data-history-list="trend">展开全部</button></div>
+    </div>
+  </section>
+  </details>
+
+  <div class="disk-scan-layout" id="drive-details-section">
+    <section class="disk-detail-panel"><div class="section-intro"><div><h2>磁盘详情</h2><p>容量摘要与近期变化</p></div><a class="summary-link" href="#grid">查看全部磁盘</a></div><section class="disk-card-grid"><section class="grid" id="grid"></section></section><div class="empty" id="empty">没有匹配的磁盘</div></section>
+    <section class="scan-summary-panel" aria-label="扫描信息"><div class="section-intro"><div><h2>扫描信息</h2><p>本次扫描状态与范围</p></div></div><section class="scan-metadata" id="scan-metadata" aria-label="扫描元数据"></section><details class="scan-details" id="scan-completeness"><summary>查看扫描详情</summary><div id="scan-detail-body"></div></details></section>
+  </div>
+  <div class="print-meta" id="print-meta" aria-hidden="true"></div>
+  <div class="sr-only" id="live-status" aria-live="polite"></div>
+  <footer class="dashboard-footer" id="footer"></footer>
+</main>
+
+<script>
+__DISKPULSE_SCRIPT__
+</script>
+</body>
+</html>

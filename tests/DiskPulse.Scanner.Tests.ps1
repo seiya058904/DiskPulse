@@ -1,12 +1,15 @@
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+. (Join-Path $PSScriptRoot 'TestHelpers.ps1')
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$source = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'check.bat') -Encoding UTF8
-$env:DISKPULSE_TEST_MODE = '1'
-$env:DISKPULSE_ROOT = $projectRoot
-$env:DISKPULSE_SCRIPT_PATH = Join-Path $projectRoot 'check.bat'
-Invoke-Expression $source.Substring($source.IndexOf('#>') + 2)
+$canonicalTestSource = New-DiskPulseCanonicalTestSource -Components @('Common', 'Scanner', 'History', 'Progress', 'Persistence')
+try {
+    . $canonicalTestSource
+}
+finally {
+    if (Test-Path -LiteralPath $canonicalTestSource) { Remove-Item -LiteralPath $canonicalTestSource -Force }
+}
 
 if (-not (Get-Command Invoke-DirectoryScan -ErrorAction SilentlyContinue)) {
     throw 'Invoke-DirectoryScan is missing.'
@@ -171,6 +174,176 @@ finally {
     foreach ($directory in @($u1, $unicode, $a1, $alpha, $empty, $locked, $temp)) {
         if (Test-Path -LiteralPath $directory) { [IO.Directory]::Delete($directory) }
     }
+}
+
+# --- Arithmetic, special characters, hidden/read-only, zero-byte ---
+$specialRoot = Join-Path ([IO.Path]::GetTempPath()) ('DiskPulse-ScannerSpecial-' + [guid]::NewGuid().ToString('N'))
+$dirA = Join-Path $specialRoot 'A (1) # & [x]'
+$dirB = Join-Path $specialRoot 'B 测试'
+$subA = Join-Path $dirA 'Sub'
+New-Item -ItemType Directory -Path $dirA -Force | Out-Null
+New-Item -ItemType Directory -Path $dirB -Force | Out-Null
+New-Item -ItemType Directory -Path $subA -Force | Out-Null
+$hiddenFile = $null
+$readOnlyFile = $null
+try {
+    [IO.File]::WriteAllBytes((Join-Path $specialRoot 'root.bin'), ([byte[]](1..11)))
+    [IO.File]::WriteAllBytes((Join-Path $dirA 'a.bin'), ([byte[]](1..23)))
+    [IO.File]::WriteAllBytes((Join-Path $subA 'sub.bin'), ([byte[]](1..37)))
+    [IO.File]::WriteAllBytes((Join-Path $dirB 'zero.bin'), ([byte[]]@()))
+    $hiddenFile = Join-Path $specialRoot 'hidden.bin'
+    [IO.File]::WriteAllBytes($hiddenFile, ([byte[]](1..5)))
+    Set-ItemProperty -LiteralPath $hiddenFile -Name Attributes -Value ([IO.FileAttributes]::Hidden)
+    $readOnlyFile = Join-Path $dirA 'readonly.bin'
+    [IO.File]::WriteAllBytes($readOnlyFile, ([byte[]](1..7)))
+    Set-ItemProperty -LiteralPath $readOnlyFile -Name Attributes -Value ([IO.FileAttributes]::ReadOnly)
+
+    $specialScan = Invoke-DirectoryScan -Drive 'S:' -RootPath $specialRoot
+    if ($specialScan.status -ne 'complete') { throw "Special-character fixture scan must complete, got $($specialScan.status)" }
+    $rootRec = @($specialScan.records | Where-Object { $_.kind -eq 'rootFiles' })[0]
+    $aRec = @($specialScan.records | Where-Object { $_.level -eq 1 -and $_.displayPath -eq $dirA })[0]
+    $bRec = @($specialScan.records | Where-Object { $_.level -eq 1 -and $_.displayPath -eq $dirB })[0]
+    $subRec = @($specialScan.records | Where-Object { $_.level -eq 2 -and $_.displayPath -eq $subA })[0]
+    if ($rootRec.sizeBytes -ne 16) { throw "Root files must count root.bin + hidden.bin (16), got $($rootRec.sizeBytes)" }
+    if ($aRec.sizeBytes -ne 67) { throw "Level-1 A must include a.bin + readonly.bin + Sub/sub.bin (67), got $($aRec.sizeBytes)" }
+    if ($bRec.sizeBytes -ne 0 -or $bRec.fileCount -ne 1) { throw "Zero-byte file must preserve file count and contribute zero bytes." }
+    if ($subRec.sizeBytes -ne 37) { throw "Level-2 Sub must be 37 bytes, got $($subRec.sizeBytes)" }
+    if (@($specialScan.records | Where-Object { $_.key -eq (Normalize-PathKey $dirA) }).Count -ne 1) { throw 'Directory aggregation must not create duplicate logical keys.' }
+}
+finally {
+    foreach ($file in @((Join-Path $specialRoot 'root.bin'), (Join-Path $dirA 'a.bin'), (Join-Path $subA 'sub.bin'), (Join-Path $dirB 'zero.bin'), $hiddenFile, $readOnlyFile)) {
+        if (Test-Path -LiteralPath $file) {
+            Set-ItemProperty -LiteralPath $file -Name Attributes -Value Normal -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue
+        }
+    }
+    if (Test-Path -LiteralPath $specialRoot) { Remove-Item -LiteralPath $specialRoot -Recurse -Force -ErrorAction SilentlyContinue }
+}
+
+# --- Reparse-point matrix: junction always, symlinks when supported ---
+$linkBase = Join-Path ([IO.Path]::GetTempPath()) ('DiskPulse-ScannerLinks-' + [guid]::NewGuid().ToString('N'))
+$linkRoot = Join-Path $linkBase 'scanroot'
+$linkTarget = Join-Path $linkBase 'target'
+$linkJunction = Join-Path $linkRoot 'junction'
+$linkSymDir = Join-Path $linkRoot 'symdir'
+$linkSymFile = Join-Path $linkRoot 'symfile.bin'
+New-Item -ItemType Directory -Path $linkRoot -Force | Out-Null
+New-Item -ItemType Directory -Path $linkTarget -Force | Out-Null
+[IO.File]::WriteAllBytes((Join-Path $linkTarget 'inside.bin'), ([byte[]](1..9)))
+$symlinkSupported = $true
+try {
+    cmd /c mklink /J "$linkJunction" "$linkTarget" | Out-Null
+    try {
+        New-Item -ItemType SymbolicLink -Path $linkSymDir -Target $linkTarget | Out-Null
+        New-Item -ItemType SymbolicLink -Path $linkSymFile -Target (Join-Path $linkTarget 'inside.bin') | Out-Null
+    } catch {
+        $symlinkSupported = $false
+    }
+
+    $linkScan = Invoke-DirectoryScan -Drive 'L:' -RootPath $linkRoot
+    if ($linkScan.status -ne 'complete') { throw "Link fixture scan must complete, got $($linkScan.status)" }
+    if (@($linkScan.excluded | Where-Object { $_.path -eq $linkJunction -and $_.reason -eq 'reparse-point' }).Count -ne 1) {
+        throw 'Directory junction must be excluded as a reparse point.'
+    }
+    if (@($linkScan.records | Where-Object { $_.displayPath -like '*target*' -or $_.displayPath -like '*inside.bin*' }).Count -ne 0) {
+        throw 'Scanner must not traverse into linked target content.'
+    }
+    if ($symlinkSupported) {
+        if (@($linkScan.excluded | Where-Object { $_.path -eq $linkSymDir -or $_.path -eq $linkSymFile -and $_.reason -eq 'reparse-point' }).Count -lt 1) {
+            throw 'Supported symbolic links must be excluded as reparse points.'
+        }
+    } else {
+        Write-Host 'SKIP: symbolic-link fixture not available without required privilege/developer mode.'
+    }
+}
+finally {
+    foreach ($link in @($linkJunction, $linkSymDir, $linkSymFile)) {
+        if (Test-Path -LiteralPath $link) {
+            Remove-Item -LiteralPath $link -Force -Recurse -ErrorAction SilentlyContinue
+        }
+    }
+    if (Test-Path -LiteralPath $linkBase) { Remove-Item -LiteralPath $linkBase -Recurse -Force -ErrorAction SilentlyContinue }
+}
+
+# --- Very long path: conditional on host/filesystem support ---
+$longRoot = Join-Path ([IO.Path]::GetTempPath()) ('DiskPulse-ScannerLong-' + [guid]::NewGuid().ToString('N'))
+$longCurrent = $longRoot
+$longSegments = New-Object 'System.Collections.Generic.List[string]'
+$longSupported = $true
+try {
+    while ($longCurrent.Length -lt 280) {
+        $longNext = Join-Path $longCurrent ('seg-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        [IO.Directory]::CreateDirectory($longNext) | Out-Null
+        $longSegments.Add($longNext)
+        $longCurrent = $longNext
+    }
+    [IO.File]::WriteAllBytes((Join-Path $longCurrent 'deep.bin'), ([byte[]](1..3)))
+}
+catch {
+    $longSupported = $false
+    Write-Host 'SKIP: very long path fixture could not be created on this host.'
+}
+if ($longSupported) {
+    try {
+        $longScan = Invoke-DirectoryScan -Drive 'L:' -RootPath $longRoot
+        if ($longScan.status -eq 'failed' -and @($longScan.errors).Count -gt 0) {
+            Write-Host 'SKIP: scanner does not guarantee long-path support on this host.'
+        } else {
+            $longRootRec = @($longScan.records | Where-Object { $_.kind -eq 'rootFiles' })[0]
+            if ($longScan.status -ne 'complete' -or $longRootRec.sizeBytes -ne 3) {
+                throw "Long-path scan did not preserve the deep file: status=$($longScan.status), root=$($longRootRec.sizeBytes)"
+            }
+        }
+    }
+    finally {
+        if (Test-Path -LiteralPath $longRoot) { Remove-Item -LiteralPath $longRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+}
+
+# --- Numeric type audit ---
+$csharpSource = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'src\scanner\DiskPulseFastScanner.cs') -Encoding UTF8
+if ($csharpSource -notmatch 'long sizeBytes' -or $csharpSource -notmatch 'long length') {
+    throw 'C# scanner must use 64-bit long for file/aggregate byte accounting.'
+}
+$numericRecord = New-DirectoryRecord 'T:\numeric' 1
+$numericRecord.sizeBytes = [int64]::MaxValue
+if ($numericRecord.sizeBytes.GetType().Name -ne 'Int64') { throw 'PowerShell aggregate record size must remain Int64.' }
+
+# --- Scanner to snapshot integration ---
+$snapRoot = Join-Path ([IO.Path]::GetTempPath()) ('DiskPulse-ScannerSnapshot-' + [guid]::NewGuid().ToString('N'))
+$snapRuntime = Join-Path $snapRoot 'runtime'
+$snapSnapshots = Join-Path $snapRuntime 'snapshots'
+New-Item -ItemType Directory -Path $snapSnapshots -Force | Out-Null
+$snapPaths = [pscustomobject]@{ Runtime=$snapRuntime; Snapshots=$snapSnapshots; Events=Join-Path $snapRuntime 'scans.jsonl' }
+try {
+    [IO.File]::WriteAllBytes((Join-Path $snapRoot 'snap.bin'), ([byte[]](1..42)))
+    $snapScan = Invoke-DirectoryScan -Drive 'T:' -RootPath $snapRoot
+    $snapDrive = [pscustomobject]@{
+        drive = 'T:'
+        rootPath = $snapRoot
+        status = $snapScan.status
+        usedBytes = 42
+        records = $snapScan.records
+        excluded = $snapScan.excluded
+        unavailable = $snapScan.unavailable
+        errors = $snapScan.errors
+    }
+    $snapshot = [pscustomobject]@{
+        scanId = 'scanner-snapshot-integration'
+        startedAt = '2026-01-01T00:00:00Z'
+        completedAt = '2026-01-01T00:01:00Z'
+        status = 'complete'
+        drives = @($snapDrive)
+    }
+    Write-AtomicJson (Join-Path $snapSnapshots ($snapshot.scanId + '.json')) $snapshot
+    Write-ScanEvent $snapPaths ([pscustomobject]@{ scanId = $snapshot.scanId; status = 'complete'; completedAt = $snapshot.completedAt })
+    $readSnapshots = Read-Snapshots $snapPaths
+    if (@($readSnapshots | Where-Object scanId -eq $snapshot.scanId).Count -ne 1) {
+        throw 'Scanner-produced snapshot must survive snapshot persistence and Read-Snapshots.'
+    }
+}
+finally {
+    if (Test-Path -LiteralPath $snapRoot) { Remove-Item -LiteralPath $snapRoot -Recurse -Force -ErrorAction SilentlyContinue }
 }
 
 Write-Host "PASS: real directory scanner aggregation and root failure behavior."

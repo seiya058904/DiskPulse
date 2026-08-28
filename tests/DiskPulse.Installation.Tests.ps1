@@ -14,6 +14,7 @@ Assert-True (Test-Path -LiteralPath $installerScript) 'installer/DiskPulse.nsi i
 $buildSource = Get-Content -Raw -LiteralPath $buildScript -Encoding UTF8
 Assert-True ($buildSource -match '\[string\]\$NsisPath') 'Installer build must accept an explicit NSIS path.'
 Assert-True ($buildSource -match 'DISKPULSE_NSIS_PATH' -and $buildSource -match 'Get-Command makensis\.exe') 'Installer build must support portable NSIS discovery.'
+Assert-True ($buildSource -notmatch [regex]::Escape('D:\xia zai\NSIS\makensis.exe')) 'Installer build must not contain a machine-specific NSIS fallback path.'
 Assert-True ($buildSource -match 'DEXE_PATH') 'Installer build must pass the generated launcher path to NSIS.'
 $installerSource = Get-Content -Raw -LiteralPath $installerScript -Encoding UTF8
 Assert-True ($installerSource -match 'InstallDir "\$LOCALAPPDATA\\DiskPulse"') 'Installer must use the DiskPulse folder as the application directory.'
@@ -21,11 +22,29 @@ Assert-True ($installerSource -notmatch 'InstallDir "\$LOCALAPPDATA\\DiskPulse\\
 Assert-True ($installerSource -match '!include "MUI2\.nsh"') 'Installer must use the NSIS Modern UI.'
 Assert-True ($installerSource -match 'MUI_PAGE_WELCOME' -and $installerSource -match 'MUI_PAGE_FINISH') 'Installer must include welcome and finish pages.'
 Assert-True (Test-Path -LiteralPath (Join-Path $root 'assets\DiskPulse.png')) 'assets/DiskPulse.png is missing.'
+Assert-True (Test-Path -LiteralPath (Join-Path $root 'assets\DiskPulse-dashboard.png')) 'assets/DiskPulse-dashboard.png is missing.'
 Assert-True (Test-Path -LiteralPath (Join-Path $root 'assets\DiskPulse.ico')) 'assets/DiskPulse.ico is missing.'
 Assert-True ((Get-Content -Raw -LiteralPath (Join-Path $root 'check.bat') -Encoding UTF8) -match 'DISKPULSE_DATA_ROOT') 'check.bat does not support a separate data root.'
 
 $output = Join-Path $env:TEMP ('DiskPulse-installer-test-' + [guid]::NewGuid().ToString('N'))
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $buildScript -OutputPath $output
+$nsisPath = $env:DISKPULSE_NSIS_PATH
+if ([string]::IsNullOrWhiteSpace($nsisPath)) {
+    $nsisCommand = Get-Command makensis.exe -ErrorAction SilentlyContinue
+    if ($nsisCommand -and $nsisCommand.Path) { $nsisPath = $nsisCommand.Path }
+}
+if ([string]::IsNullOrWhiteSpace($nsisPath)) {
+    $standardNsisPaths = @(
+        (Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe'),
+        (Join-Path $env:ProgramFiles 'NSIS\makensis.exe'),
+        (Join-Path $env:LOCALAPPDATA 'NSIS\makensis.exe')
+    )
+    $nsisPath = $standardNsisPaths | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+}
+if ([string]::IsNullOrWhiteSpace($nsisPath)) {
+    Write-Output 'SKIP: NSIS compiler not found. Set DISKPULSE_NSIS_PATH or provide makensis.exe on PATH to run the installer build test.'
+    exit 0
+}
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $buildScript -OutputPath $output -NsisPath $nsisPath
 
 $expectedVersion = (Get-Content -Raw -LiteralPath (Join-Path $root 'version.txt') -Encoding UTF8).Trim()
 $setup = Join-Path $output ('DiskPulse-Setup-' + $expectedVersion + '.exe')

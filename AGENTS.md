@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-DiskPulse is a zero-dependency Windows disk capacity and directory change monitor. A single polyglot BAT/PowerShell script (`check.bat`, ~3500 lines) scans local fixed disks, records usage history to CSV, and generates a self-contained HTML dashboard with dark mode, trend analysis, and accessibility support.
+DiskPulse is a zero-dependency Windows disk capacity and directory change monitor. The canonical source lives under `src/`; the single-file polyglot runtime artifact `check.bat` is generated from that source by `scripts/build-check.ps1`. The generated `check.bat` contains the core scanner, persistence, comparison, history, AI, report and entry-point logic. A C# launcher (`launcher/DiskPulseLauncher.cs`) and an NSIS installer layer (`installer/DiskPulse.nsi`) provide the packaged Windows application.
 
 - **Language:** PowerShell 5.1+ (embedded in a BAT wrapper), C# compiled inline via `Add-Type`, HTML/CSS/JS in a here-string template
 - **Runtime:** Windows only, no external dependencies
@@ -16,13 +16,19 @@ check.bat              Main program (BAT preamble + PowerShell + embedded C#/HTM
 DiskPulse.vbs          Silent launcher (VBScript, hidden window)
 check-profile.bat      Performance diagnostics launcher
 configure-ai.bat       AI configuration entry point (interactive menu)
-tests/                 Standalone PowerShell test scripts (5 files)
+tests/                 Standalone PowerShell test scripts (dynamic `tests/*.Tests.ps1` discovery)
 runtime/               Generated data (gitignored): CSV, HTML, snapshots, scans, logs, AI config
 docs/                  Design documentation
 PRODUCT.md             Product requirements and design principles
 DESIGN.md              Visual design constraints
 README.md              User-facing documentation
 CLAUDE.md              Claude Code integration guide
+build-release.ps1       Builds the single-file `DiskPulse.exe` launcher (payload includes generated `check.bat`)
+build-installer.ps1     Builds the NSIS installer around `DiskPulse.exe`
+scripts/build-check.ps1 Regenerates `check.bat` from canonical `src/`
+src/                    Canonical editable source (PowerShell, C# scanner, dashboard)
+launcher/               C# WinForms launcher source
+installer/              NSIS installer script
 ```
 
 ## Architecture
@@ -41,6 +47,41 @@ CLAUDE.md              Claude Code integration guide
 10. **Open browser** — `Start-Process` (skipped when `DISKPULSE_NO_OPEN=1`)
 
 **Key constraint:** The here-string closing delimiter `'@` must appear at the start of a line. The HTML template body must not contain a line starting with `'@`.
+
+## Scanner and Test Architecture
+
+- Canonical C# scanner source lives in `src/scanner/DiskPulseFastScanner.cs`; the PowerShell wrapper is `src/powershell/Scanner.ps1`.
+- Scanner-focused tests can load canonical source directly through `tests/TestHelpers.ps1` instead of loading the entire generated `check.bat`.
+- Generated-`check.bat` scanner integration remains covered by the broader dynamic suite and generation tests.
+- The scanner contract is: fixed-drive scope, root files plus level-1/level-2 aggregation, reparse-point exclusion, transient-missing tolerance, and honest partial/failed status.
+
+## Browser QA
+
+- Canonical dashboard sources live under `src/dashboard/`.
+- Browser QA is currently an **extended/local verification** step, not a required canonical CI stage.
+- Run it with:
+  ```powershell
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File testsrowser\Invoke-DiskPulseBrowserQA.ps1 -HtmlPath <generated-DiskPulse.html>
+  ```
+- The browser harness uses headless Chrome/Edge, monitors console errors, checks desktop/mobile overflow, toggles theme/compact controls, and captures screenshots under a temporary output directory.
+- Canonical dashboard source tests (`DiskPulse.DashboardSource.Tests.ps1`) run in the normal suite.
+
+## AI Security Invariants
+
+- AI is opt-in and never required for scans/reports.
+- API keys are stored only as DPAPI CurrentUser-protected values; plaintext keys must never appear in HTML, logs, snapshots, CSV, diagnostics, or command lines.
+- Remote AI endpoints must use HTTPS; localhost/loopback may use HTTP.
+- AI HTTP redirects are disabled (`-MaximumRedirection 0`); redirects are rejected and Authorization is never forwarded to a redirect target.
+- Provider responses are untrusted and must pass through safe JSON/HTML serialization.
+- AI result publication uses atomic writes; a failed write must preserve the previous valid result.
+- Focused AI tests load canonical source through `tests/TestHelpers.ps1`; tests must never contact real AI providers.
+
+## Persistence Invariants
+
+- `DiskPulse.csv` and `DiskPulse.html` are published through atomic temp/replace helpers; a failed write must preserve the previous valid file.
+- Snapshot JSON is written through `Write-AtomicJson`; a final snapshot file appears only when the complete JSON is valid.
+- `scans.jsonl` is compacted at startup and after final scan publication. Compaction keeps unresolved/running records and event records for scan IDs that still have snapshot files, so retained snapshots remain valid baseline candidates.
+- Stale DiskPulse-owned temporary files are cleaned conservatively after 24 hours.
 
 ## Build, Test & Development Commands
 
@@ -61,15 +102,45 @@ check-profile.bat
 configure-ai.bat
 ```
 
-### Run Tests
+### Build
 
-Tests are standalone PowerShell scripts, not Pester. Use the dynamic runner so every current `tests\*.Tests.ps1` file is included:
+```powershell
+# Regenerate check.bat from canonical source under src/
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-check.ps1
+
+# Build the launcher executable (DiskPulse.exe)
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File build-release.ps1
+
+# Build the NSIS installer. NSIS is discovered via -NsisPath,
+# DISKPULSE_NSIS_PATH, PATH/Get-Command, or standard install locations.
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File build-installer.ps1
+```
+
+### Full Verification
+
+Use the canonical verifier for the complete local/CI verification contract:
+
+```powershell
+# Core verification (skips installer if NSIS is unavailable)
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\verify.ps1
+
+# Full verification including installer build (requires NSIS)
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\verify.ps1 -IncludeInstaller
+```
+
+The verifier runs repository hygiene checks, the Windows PowerShell dynamic test suite, PowerShell 7 compatibility checks, and isolated launcher/installer builds. It never modifies user runtime data and uses temporary output directories.
+
+Do not hand-edit application sections of `check.bat`; edit the corresponding file under `src/` and regenerate with `scripts/build-check.ps1`.
+
+### Targeted Tests
+
+Use the dynamic runner when you only need the Windows PowerShell suite:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "tests\Invoke-DiskPulseTestSuite.ps1"
 ```
 
-Also verify with PowerShell 7:
+For PowerShell 7 compatibility checks:
 
 ```powershell
 pwsh -NoProfile -File "tests\DiskPulse.Phase3.Tests.ps1"
@@ -84,7 +155,7 @@ pwsh -NoProfile -File "tests\DiskPulse.Phase4.Tests.ps1"
 
 The suite runner discovers test files at runtime; do not document or depend on a fixed test count. Phase 3 and Phase 4 remain the PowerShell 7 compatibility checks.
 
-### Verify
+### Quick Verify
 
 ```powershell
 git status --short
@@ -163,9 +234,10 @@ When the user explicitly says the project/task is ready to “收工” or gives
 - [ ] `git status --short` — only intended files changed
 - [ ] `git diff --check` — no whitespace errors
 - [ ] `git diff` — changes are correct and complete
-- [ ] `tests\Invoke-DiskPulseTestSuite.ps1` discovers and passes all current test suites (or failures explained)
-- [ ] PowerShell 7 tests also pass
-- [ ] `node --check` passes on extracted JavaScript
+- [ ] `scripts/verify.ps1` passes (use `-IncludeInstaller` when NSIS is available/required)
+- [ ] `scripts/build-check.ps1` freshness passes (included via generation tests)
+- [ ] PowerShell 7 compatibility checks pass (included in the canonical verifier)
+- [ ] Embedded JavaScript syntax checks pass (included via Phase4/Phase5 tests)
 - [ ] No secrets, tokens, or credentials in diff
 - [ ] No `runtime/` files staged
 - [ ] No API Key in generated HTML or test output

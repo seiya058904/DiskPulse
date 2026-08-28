@@ -986,7 +986,7 @@ if($src -notmatch '(?s)else \{ AddEvidence\(result\.errors,directory,ex\.Message
 $liveProbeStart=$src.IndexOf('function Write-DiskPulseAILiveProbe')
 if($liveProbeStart -lt 0){throw 'Write-DiskPulseAILiveProbe must exist for atomicity check.'}
 $liveProbeBody=$src.Substring($liveProbeStart, $src.IndexOf('function Update-DiskPulseAIHtmlResult') - $liveProbeStart)
-if($liveProbeBody -notmatch '\[IO\.File\]::Replace'){throw 'Live probe write must be atomic (File.Replace).'}
+if($liveProbeBody -notmatch '\[IO\.File\]::Replace' -and $liveProbeBody -notmatch 'Write-DiskPulseAtomicText'){throw 'Live probe write must be atomic (File.Replace or shared atomic helper).'}
 if($liveProbeBody -match 'Remove-Item -LiteralPath \$LivePath -Force'){throw 'Live probe write must not use remove-then-move.'}
 if($src -match '\[IO\.Path\]::GetTempFileName\(\)'){throw 'HTML replacement must not use system TEMP files.'}
 if($src -match '\$jsPath\s*=|WriteAllText\(\$jsPath|Test-Path -LiteralPath \$jsPath'){throw 'Production HTML update must not create a temporary JS file.'}

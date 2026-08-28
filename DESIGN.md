@@ -1,6 +1,6 @@
 # DiskPulse Design
 
-本文件记录当前看板的设计约束。详细基础规格见 `docs/DiskPulse-dashboard-visual-hierarchy-design.md`；本轮增强只扩展信息层级、容量可视化、历史趋势、打印和可访问性，不改变其中的数据与语义边界。
+本文件记录当前看板的设计约束，是当前 UI/设计约束的权威说明。历史设计过程如需追溯，可参考 `docs/superpowers/plans/2026-07-13-dashboard-visual-hierarchy.md`；本文不依赖本地未跟踪文件。
 
 ## Direction
 
@@ -22,6 +22,6 @@
 
 ## Implementation Constraints
 
-- PowerShell 5.1、单文件 `check.bat`、离线、零依赖。
+- PowerShell 5.1、核心运行时单文件 `check.bat`、离线、零依赖。
 - 不修改 CSV、快照 JSON、目录比较、基线、保留或告警阈值。
 - 动态扫描内容通过 JSON 和安全 DOM API 渲染。

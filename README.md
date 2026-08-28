@@ -21,9 +21,21 @@ DiskPulse 是一个零依赖、离线运行的 Windows 磁盘容量与目录变�
 
 程序文件默认安装到 `%LOCALAPPDATA%\DiskPulse`，历史记录、快照、报告、日志和 AI 配置保存到 `%LOCALAPPDATA%\DiskPulse\data\runtime`。升级程序不会覆盖这些数据；卸载时默认保留历史数据。
 
-开发者可在项目根目录运行 `powershell -NoProfile -ExecutionPolicy Bypass -File build-installer.ps1`，生成 `dist\` 下带版本号的安装包。NSIS 可通过 `-NsisPath`、`DISKPULSE_NSIS_PATH`、PATH 中的 `makensis.exe` 或现有本地开发机路径解析；没有可用编译器时脚本会明确报告尝试过的路径。
+开发者可在项目根目录运行 `powershell -NoProfile -ExecutionPolicy Bypass -File build-installer.ps1`，生成 `dist\` 下带版本号的安装包。NSIS 可通过 `-NsisPath`、`DISKPULSE_NSIS_PATH`、PATH 中的 `makensis.exe` 或标准安装位置解析；没有可用编译器时脚本会明确报告尝试过的路径。
 
-开发者验证使用动态测试入口：
+`check.bat` 是从 `src/` 生成的运行时工件。开发者修改 `src/` 后运行 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-check.ps1` 重新生成；不要直接手改 `check.bat` 中的应用代码段。
+
+开发者完整验证使用统一入口：
+
+```powershell
+# 核心验证（本机没有 NSIS 时会跳过安装包构建）
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify.ps1
+
+# 包含安装包构建的完整验证（需要 NSIS）
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify.ps1 -IncludeInstaller
+```
+
+需要单独调试时仍可直接运行：
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\Invoke-DiskPulseTestSuite.ps1

@@ -4,15 +4,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-DiskPulse is a zero-dependency Windows disk storage monitor. A single polyglot BAT/PowerShell script scans local fixed disks, appends usage data to a CSV log, and generates a self-contained HTML dashboard (titled "磁盘容量看板").
+DiskPulse is a zero-dependency Windows disk storage monitor. The canonical source lives under `src/`; `check.bat` is a generated polyglot runtime artifact that scans local fixed disks, appends usage data to a CSV log, and generates a self-contained HTML dashboard (titled "磁盘容量看板").
 
 ## Files
 
-- `check.bat` — the entire backend (polyglot: BAT preamble invokes PowerShell). All CSS/JS/HTML is embedded as a here-string template.
+- `check.bat` — generated runtime artifact (polyglot: BAT preamble invokes PowerShell). Do not hand-edit application sections; regenerate with `scripts/build-check.ps1`.
+- `src/` — canonical PowerShell, C# scanner, and dashboard source.
 - `DiskPulse.vbs` — silent launcher (hidden window, error dialog on failure)
 - `check-profile.bat` — performance diagnostics launcher (generates `runtime/last-profile.json`)
 - `configure-ai.bat` — interactive AI configuration entry point (calls check.bat with DISKPULSE_AI_CONFIGURE=1)
 - `runtime/` — all generated data: `DiskPulse.csv`, `DiskPulse.html`, `snapshots/`, `scans.jsonl`, `last-run.log`, `last-profile.json`, `ai-config.local.json`, `last-ai-analysis.json`
+- `build-release.ps1` / `build-installer.ps1` — developer packaging scripts for `DiskPulse.exe` and the NSIS setup
+- `launcher/` / `installer/` — small C# launcher and NSIS script used by packaged builds
 
 ## How to Run
 
@@ -31,24 +34,26 @@ check-profile.bat
 configure-ai.bat
 ```
 
-No build step. Requires Windows with PowerShell 5.1+.
+Requires Windows with PowerShell 5.1+. Running from source needs no build step because `check.bat` is committed; if canonical `src/` changes, regenerate with `scripts/build-check.ps1`. Launcher/installer packaging is documented in `AGENTS.md`.
 
-## How to Run Tests
+## How to Verify
 
-Tests are standalone PowerShell scripts (not Pester). Run the dynamic Windows PowerShell suite:
+Use the canonical verifier for the full repository verification contract:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\verify.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\verify.ps1 -IncludeInstaller
+```
+
+For targeted debugging, the standalone PowerShell tests remain available:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "tests\Invoke-DiskPulseTestSuite.ps1"
-```
-
-Also run with PowerShell 7 (pwsh) to verify cross-version compatibility:
-
-```powershell
 pwsh -NoProfile -File "tests\DiskPulse.Phase3.Tests.ps1"
 pwsh -NoProfile -File "tests\DiskPulse.Phase4.Tests.ps1"
 ```
 
-The runner discovers every current `tests\*.Tests.ps1` file, so documentation does not depend on a fixed test count. Phase4/5 extract embedded JavaScript from `check.bat` and run it through Node.js for fixture validation. Completion does not authorize a release: propose the target SemVer and summary, then ask once for explicit authorization before changing version metadata, pushing, tagging, or publishing.
+The dynamic runner discovers every current `tests\*.Tests.ps1` file, so documentation does not depend on a fixed test count. Phase4/5 extract embedded JavaScript from `check.bat` and run it through Node.js for fixture validation. Completion does not authorize a release: propose the target SemVer and summary, then ask once for explicit authorization before changing version metadata, pushing, tagging, or publishing.
 
 ## Architecture
 
@@ -109,7 +114,7 @@ When `DISKPULSE_PROFILE=1`, phase timing is recorded via `Profile-Mark` calls an
 
 ## Constraints
 
-- Single-file architecture: all code in `check.bat`
+- Runtime remains single-file: the shipped core logic is in `check.bat`; a small C# launcher and NSIS installer exist for packaged builds
 - Zero runtime dependencies
 - No external network requests by default; AI is opt-in
 - Do not use `innerHTML` — all DOM updates via `element()` helper or `textContent`

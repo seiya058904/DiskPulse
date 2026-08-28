@@ -7,6 +7,7 @@ set "DISKPULSE_ROOT=%~dp0"
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-Content -Raw -LiteralPath $env:DISKPULSE_SCRIPT_PATH -Encoding UTF8 | Invoke-Expression"
 exit /b %ERRORLEVEL%
 #>
+# GENERATED FILE - edit canonical source under src/ and run scripts/build-check.ps1
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -204,16 +205,92 @@ function Write-ScanEvent {
     Add-Content -LiteralPath $Paths.Events -Value (ConvertTo-Json -InputObject $Event -Depth 12 -Compress) -Encoding UTF8
 }
 
+function New-DiskPulseTempPath {
+    param([string] $FinalPath)
+    $directory = Split-Path -Parent $FinalPath
+    if (-not (Test-Path -LiteralPath $directory)) {
+        [IO.Directory]::CreateDirectory($directory) | Out-Null
+    }
+    $name = [IO.Path]::GetFileName($FinalPath)
+    return Join-Path $directory ('.diskpulse-' + $name + '-' + [guid]::NewGuid().ToString('N') + '.tmp')
+}
+
+function Publish-DiskPulseAtomicFile {
+    param([string] $FinalPath, [string] $TemporaryPath)
+    if (-not (Test-Path -LiteralPath $TemporaryPath -PathType Leaf)) {
+        throw "Temporary file not found: $TemporaryPath"
+    }
+    $directory = Split-Path -Parent $FinalPath
+    if (-not (Test-Path -LiteralPath $directory)) {
+        [IO.Directory]::CreateDirectory($directory) | Out-Null
+    }
+    if (Test-Path -LiteralPath $FinalPath -PathType Leaf) {
+        $backupPath = Join-Path $directory ('.diskpulse-backup-' + [IO.Path]::GetFileName($FinalPath) + '-' + [guid]::NewGuid().ToString('N') + '.bak')
+        try {
+            [IO.File]::Replace($TemporaryPath, $FinalPath, $backupPath, $true)
+        }
+        finally {
+            if (Test-Path -LiteralPath $TemporaryPath) { Remove-Item -LiteralPath $TemporaryPath -Force -ErrorAction SilentlyContinue }
+            if (Test-Path -LiteralPath $backupPath) { Remove-Item -LiteralPath $backupPath -Force -ErrorAction SilentlyContinue }
+        }
+    }
+    else {
+        try {
+            [IO.File]::Move($TemporaryPath, $FinalPath)
+        }
+        finally {
+            if (Test-Path -LiteralPath $TemporaryPath) { Remove-Item -LiteralPath $TemporaryPath -Force -ErrorAction SilentlyContinue }
+        }
+    }
+}
+
+function Write-DiskPulseAtomicText {
+    param([string] $FinalPath, [string] $Content, [scriptblock] $Validate = $null)
+    $temporaryPath = New-DiskPulseTempPath $FinalPath
+    try {
+        [IO.File]::WriteAllText($temporaryPath, $Content, (New-Object Text.UTF8Encoding $false))
+        if ($Validate) {
+            $valid = & $Validate $temporaryPath
+            if ($valid -ne $true) {
+                throw "Atomic write validation failed: $FinalPath"
+            }
+        }
+        Publish-DiskPulseAtomicFile -FinalPath $FinalPath -TemporaryPath $temporaryPath
+    }
+    finally {
+        if (Test-Path -LiteralPath $temporaryPath) { Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue }
+    }
+}
+
+function Write-DiskPulseAtomicCsv {
+    param([string] $FinalPath, $Rows)
+    $temporaryPath = New-DiskPulseTempPath $FinalPath
+    try {
+        $Rows | Export-Csv -LiteralPath $temporaryPath -NoTypeInformation -Encoding UTF8
+        Import-Csv -LiteralPath $temporaryPath | Out-Null
+        Publish-DiskPulseAtomicFile -FinalPath $FinalPath -TemporaryPath $temporaryPath
+    }
+    finally {
+        if (Test-Path -LiteralPath $temporaryPath) { Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue }
+    }
+}
+
 function Write-AtomicJson {
     param([string] $FinalPath, $Value)
-    $temporaryPath = [IO.Path]::ChangeExtension($FinalPath, ".tmp")
     if (Test-Path -LiteralPath $FinalPath) {
         throw "目标 JSON 已存在：$FinalPath"
     }
     $json = ConvertTo-Json -InputObject $Value -Depth 12 -Compress
-    [IO.File]::WriteAllText($temporaryPath, $json, (New-Object Text.UTF8Encoding $false))
-    Get-Content -Raw -LiteralPath $temporaryPath -Encoding UTF8 | ConvertFrom-Json | Out-Null
-    [IO.File]::Move($temporaryPath, $FinalPath)
+    Write-DiskPulseAtomicText -FinalPath $FinalPath -Content $json -Validate {
+        param($Path)
+        try {
+            Get-Content -Raw -LiteralPath $Path -Encoding UTF8 | ConvertFrom-Json | Out-Null
+            return $true
+        }
+        catch {
+            return $false
+        }
+    }
     return $FinalPath
 }
 
@@ -378,7 +455,6 @@ public static class DiskPulseFastScanner {
 '@
 Profile-Mark "addType"
 }
-
 function Invoke-DirectoryScan {
     param(
         [string] $Drive,
@@ -614,7 +690,6 @@ function Invoke-DirectoryScan {
         errors                      = $errorValues
     }
 }
-
 function Read-Snapshots {
     param($Paths)
     $finalStatus = @{}
@@ -624,11 +699,12 @@ function Read-Snapshots {
         }
     }
     @((Get-ChildItem -LiteralPath $Paths.Snapshots -Filter '*.json' -File -ErrorAction SilentlyContinue | ForEach-Object {
+        $snapshotFile = $_
         try {
-            $snapshot = Get-Content -Raw -LiteralPath $_.FullName -Encoding UTF8 | ConvertFrom-Json
+            $snapshot = Get-Content -Raw -LiteralPath $snapshotFile.FullName -Encoding UTF8 | ConvertFrom-Json
             if ($finalStatus[[string]$snapshot.scanId] -in @('complete','partial')) { $snapshot }
         }
-        catch { Write-Warning "无法读取快照 $($_.Name)" }
+        catch { Write-Warning "无法读取快照 $($snapshotFile.Name)" }
     }))
 }
 
@@ -843,9 +919,79 @@ function Complete-InterruptedScans {
     foreach($e in $latest.Values){if($e.status-eq'running'){Write-ScanEvent $Paths ([pscustomobject]@{scanId=$e.scanId;status='failed';reason='interrupted';completedAt=(Get-Date).ToUniversalTime().ToString('o')})}}
 }
 
+function Compact-ScanEvents {
+    param($Paths, [int]$MaxLines = 1000, [int]$RecentFinalizedScans = 100)
+    if (-not (Test-Path -LiteralPath $Paths.Events -PathType Leaf)) { return }
+    $lines = @(Get-Content -LiteralPath $Paths.Events -Encoding UTF8 | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    if ($lines.Count -le $MaxLines) { return }
+
+    $events = New-Object 'System.Collections.Generic.List[object]'
+    $latest = @{}
+    $order = New-Object 'System.Collections.Generic.List[string]'
+    foreach ($line in $lines) {
+        try {
+            $event = $line | ConvertFrom-Json
+            if ($null -eq $event -or [string]::IsNullOrWhiteSpace([string]$event.scanId)) { continue }
+            $scanId = [string]$event.scanId
+            if (-not $latest.ContainsKey($scanId)) { $order.Add($scanId) }
+            $latest[$scanId] = $event
+            $events.Add($event)
+        } catch { }
+    }
+
+    $protected = @{}
+    foreach ($snapshotFile in @(Get-ChildItem -LiteralPath $Paths.Snapshots -Filter '*.json' -File -ErrorAction SilentlyContinue)) {
+        $protected[[IO.Path]::GetFileNameWithoutExtension($snapshotFile.Name)] = $true
+    }
+    foreach ($scanId in $order) {
+        if ([string]$latest[$scanId].status -eq 'running') { $protected[$scanId] = $true }
+    }
+
+    $recent = @($order | Where-Object {
+        -not $protected.ContainsKey($_) -and [string]$latest[$_].status -in @('complete','partial','failed')
+    } | Sort-Object {
+        $event = $latest[$_]
+        $time = if ($event.completedAt) { $event.completedAt } else { $event.startedAt }
+        if ($time) { try { [datetime]$time } catch { [datetime]::MinValue } } else { [datetime]::MinValue }
+    } -Descending | Select-Object -First $RecentFinalizedScans)
+    foreach ($scanId in $recent) { $protected[$scanId] = $true }
+
+    $kept = @($events | Where-Object { $protected.ContainsKey([string]$_.scanId) })
+    if ($kept.Count -ge $lines.Count) { return }
+
+    $temporaryPath = New-DiskPulseTempPath $Paths.Events
+    try {
+        $contentLines = @($kept | ForEach-Object { ConvertTo-Json -InputObject $_ -Depth 12 -Compress })
+        $content = ($contentLines -join [Environment]::NewLine)
+        if ($content) { $content += [Environment]::NewLine }
+        [IO.File]::WriteAllText($temporaryPath, $content, (New-Object Text.UTF8Encoding $true))
+        Get-Content -LiteralPath $temporaryPath -Encoding UTF8 | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object {
+            $_ | ConvertFrom-Json | Out-Null
+        }
+        Publish-DiskPulseAtomicFile -FinalPath $Paths.Events -TemporaryPath $temporaryPath
+    }
+    finally {
+        if (Test-Path -LiteralPath $temporaryPath) { Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue }
+    }
+}
+
 function Remove-StaleTemporaryFiles {
     param($Paths)
-    $cutoff=(Get-Date).AddHours(-24);foreach($file in Get-ChildItem -LiteralPath $Paths.Snapshots -Filter '*.tmp' -File -ErrorAction SilentlyContinue){if($file.LastWriteTime-lt$cutoff){try{Remove-Item -LiteralPath $file.FullName -Force}catch{Write-Warning "无法清理临时文件 $($file.Name)"}}}
+    $cutoff=(Get-Date).AddHours(-24)
+    $candidates = @()
+    if ($Paths.PSObject.Properties.Name -contains 'Runtime' -and (Test-Path -LiteralPath $Paths.Runtime)) {
+        $candidates += @(Get-ChildItem -LiteralPath $Paths.Runtime -Filter '.diskpulse-*.tmp' -File -ErrorAction SilentlyContinue)
+        $candidates += @(Get-ChildItem -LiteralPath $Paths.Runtime -Filter '.diskpulse-backup-*.bak' -File -ErrorAction SilentlyContinue)
+    }
+    if ($Paths.PSObject.Properties.Name -contains 'Snapshots' -and (Test-Path -LiteralPath $Paths.Snapshots)) {
+        $candidates += @(Get-ChildItem -LiteralPath $Paths.Snapshots -Filter '*.tmp' -File -ErrorAction SilentlyContinue)
+        $candidates += @(Get-ChildItem -LiteralPath $Paths.Snapshots -Filter '.diskpulse-backup-*.bak' -File -ErrorAction SilentlyContinue)
+    }
+    foreach($file in $candidates) {
+        if($file.LastWriteTime -lt $cutoff){
+            try{Remove-Item -LiteralPath $file.FullName -Force}catch{Write-Warning "无法清理临时文件 $($file.Name)"}
+        }
+    }
 }
 
 function Invoke-SnapshotRetention {
@@ -854,7 +1000,6 @@ function Invoke-SnapshotRetention {
     $files=@(Get-ChildItem -LiteralPath $Paths.Snapshots -Filter '*.json' -File|ForEach-Object{$s=try{Get-Content -Raw $_.FullName -Encoding UTF8|ConvertFrom-Json}catch{$null};if($s){[pscustomobject]@{File=$_;Snapshot=$s;Partial=(@($s.drives|Where-Object{$_.status-eq'partial'}).Count-gt 0)}}})
     foreach($candidate in @($files|Where-Object{-not$protected.ContainsKey([string]$_.Snapshot.scanId)}|Sort-Object @{e='Partial';Descending=$true},@{e={$_.Snapshot.completedAt};Ascending=$true})){if($files.Count-le$Limit){break};try{Remove-Item -LiteralPath $candidate.File.FullName -Force;$files=@($files|Where-Object{$_.File.FullName-ne$candidate.File.FullName})}catch{Write-Warning "无法清理快照 $($candidate.File.Name)"}}
 }
-
 function Should-RenderConsoleProgress {
     param(
         [Parameter(Mandatory=$true)] $Progress,
@@ -898,7 +1043,6 @@ function Format-ScanProgressLine {
     }
     return $prefix + $path
 }
-
 # ═══════════════════════════════════════════════════════════════
 # AI Configuration & Security (Optional)
 # ═══════════════════════════════════════════════════════════════
@@ -953,9 +1097,12 @@ function Test-DiskPulseAILocalEndpoint {
     param([string]$Endpoint)
     if ([string]::IsNullOrWhiteSpace($Endpoint)) { return $false }
     try {
-        $uri = [System.Uri]::new($Endpoint.Trim())
+        $trimmed = $Endpoint.Trim()
+        if ($trimmed -match '[\x00-\x1f\x7f]') { return $false }
+        $uri = [System.Uri]::new($trimmed)
         if (-not $uri.IsAbsoluteUri) { return $false }
         if ($uri.Scheme -ne 'http') { return $false }
+        if (-not [string]::IsNullOrEmpty($uri.UserInfo)) { return $false }
         $uriHost = $uri.Host.Trim('[', ']')
         return ($uriHost -eq 'localhost' -or $uriHost -eq '127.0.0.1' -or $uriHost -eq '::1' -or $uriHost -match '^(0+:){7}0*1$')
     }
@@ -966,8 +1113,15 @@ function Test-DiskPulseAIEndpoint {
     param([string]$Endpoint)
     if ([string]::IsNullOrWhiteSpace($Endpoint)) { return $false }
     $trimmed = $Endpoint.Trim()
+    if ($trimmed -match '[\x00-\x1f\x7f]') { return $false }
     if ($trimmed.ToLowerInvariant().StartsWith('https://')) {
-        try { $uri = [System.Uri]::new($trimmed); return $uri.IsAbsoluteUri } catch { return $false }
+        try {
+            $uri = [System.Uri]::new($trimmed)
+            if (-not $uri.IsAbsoluteUri -or $uri.Scheme -ne 'https') { return $false }
+            if (-not [string]::IsNullOrEmpty($uri.UserInfo)) { return $false }
+            return $true
+        }
+        catch { return $false }
     }
     return (Test-DiskPulseAILocalEndpoint $Endpoint)
 }
@@ -1099,7 +1253,7 @@ function Invoke-DiskPulseAIConfigure {
                     protectedApiKey = $protectedKey
                     timeoutSeconds  = $timeout
                     updatedAt       = (Get-Date).ToUniversalTime().ToString('o')
-                } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $configPath -Encoding UTF8
+                } | ConvertTo-Json -Depth 4 | Write-DiskPulseAtomicText -FinalPath $configPath
                 Write-Host 'AI configuration saved. / AI 配置已保存。' -ForegroundColor Green
                 Show-DiskPulseAIConnectionResult (Test-DiskPulseAIConnection -Config (Get-DiskPulseAIConfig -ConfigPath $configPath))
             }
@@ -1144,14 +1298,14 @@ function Invoke-DiskPulseAIConfigure {
                     protectedApiKey = $protectedKey
                     timeoutSeconds  = $currentTimeout
                     updatedAt       = (Get-Date).ToUniversalTime().ToString('o')
-                } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $configPath -Encoding UTF8
+                } | ConvertTo-Json -Depth 4 | Write-DiskPulseAtomicText -FinalPath $configPath
                 Write-Host 'Configuration updated.' -ForegroundColor Green
                 Show-DiskPulseAIConnectionResult (Test-DiskPulseAIConnection -Config (Get-DiskPulseAIConfig -ConfigPath $configPath))
             }
             '3' {
                 if (-not $existing -or -not $existing.enabled) { Write-Host 'AI is not enabled.' -ForegroundColor Yellow; break }
                 $existing.enabled = $false
-                $existing | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $configPath -Encoding UTF8
+                $existing | ConvertTo-Json -Depth 4 | Write-DiskPulseAtomicText -FinalPath $configPath
                 Write-Host 'AI disabled.' -ForegroundColor Green
             }
             '4' {
@@ -1421,7 +1575,7 @@ function Invoke-DiskPulseAIRequest {
             $response = & $Transport $uri $headers $bodyBytes $timeout
         }
         else {
-            $webResponse = Invoke-WebRequest -Uri $uri -Method Post -Headers $headers -Body $bodyBytes -ContentType 'application/json; charset=utf-8' -TimeoutSec $timeout -UseBasicParsing
+            $webResponse = Invoke-WebRequest -Uri $uri -Method Post -Headers $headers -Body $bodyBytes -ContentType 'application/json; charset=utf-8' -TimeoutSec $timeout -UseBasicParsing -MaximumRedirection 0
             $response = $webResponse.RawContentStream.ToArray()
         }
         return [PSCustomObject]@{ ok = $true; response = $response }
@@ -1434,7 +1588,9 @@ function Invoke-DiskPulseAIRequest {
         catch {}
         $errMsg = $_.Exception.Message
         $category = 'unknown-error'
-        if ($errMsg -match 'timeout|timed out|The operation has timed out') { $category = 'timeout' }
+        if ($statusCode -ge 300 -and $statusCode -lt 400) { $category = 'redirect-rejected' }
+        elseif ($_.FullyQualifiedErrorId -match 'MaximumRedirectExceeded' -or ($_.ErrorDetails -and $_.ErrorDetails.Message -match 'redirect|redirection')) { $category = 'redirect-rejected' }
+        elseif ($errMsg -match 'timeout|timed out|The operation has timed out') { $category = 'timeout' }
         elseif ($statusCode -eq 401 -or $statusCode -eq 403 -or $errMsg -match '(^|\D)40[13](\D|$)') { $category = 'authentication-failed' }
         elseif ($statusCode -eq 429 -or $errMsg -match '(^|\D)429(\D|$)') { $category = 'rate-limited' }
         elseif ($errMsg -match 'DNS|resolve|connect|refused|Name or service not known') { $category = 'connection-failed' }
@@ -1903,13 +2059,7 @@ function Write-DiskPulseAIResult {
     )
     $result = New-DiskPulseAIStatus -ScanId $ScanId -Status $Status -Model $Model -Analysis $Analysis -RawText $RawText -Format $Format
     $json = ConvertTo-Json -InputObject $result -Depth 8
-    $utf8NoBom = New-Object System.Text.UTF8Encoding $false
-    $tmpPath = $OutputPath + '.tmp'
-    [System.IO.File]::WriteAllText($tmpPath, $json, $utf8NoBom)
-    if (Test-Path -LiteralPath $OutputPath) {
-        Remove-Item -LiteralPath $OutputPath -Force
-    }
-    [IO.File]::Move($tmpPath, $OutputPath)
+    Write-DiskPulseAtomicText -FinalPath $OutputPath -Content $json
 }
 
 function Write-DiskPulseAILiveProbe {
@@ -1921,22 +2071,7 @@ function Write-DiskPulseAILiveProbe {
     if ([string]::IsNullOrWhiteSpace($ScanId) -or [string]::IsNullOrWhiteSpace($LivePath)) { return }
     $json = ConvertTo-DiskPulseSafeJSON $Result
     $content = "/* DiskPulse live AI probe */`nwindow.DiskPulseAILive = $json;`n"
-    $utf8NoBom = New-Object System.Text.UTF8Encoding $false
-    $tmpPath = $LivePath + '.tmp'
-    [System.IO.File]::WriteAllText($tmpPath, $content, $utf8NoBom)
-    try {
-        if (Test-Path -LiteralPath $LivePath) {
-            # True atomic replace: readers of the probe never observe a "file missing" window.
-            $backupPath = $LivePath + '.bak'
-            [IO.File]::Replace($tmpPath, $LivePath, $backupPath)
-            if (Test-Path -LiteralPath $backupPath) { Remove-Item -LiteralPath $backupPath -Force }
-        } else {
-            [IO.File]::Move($tmpPath, $LivePath)
-        }
-    }
-    finally {
-        if (Test-Path -LiteralPath $tmpPath) { Remove-Item -LiteralPath $tmpPath -Force }
-    }
+    Write-DiskPulseAtomicText -FinalPath $LivePath -Content $content
 }
 
 function Update-DiskPulseAIHtmlResult {
@@ -2075,13 +2210,13 @@ function Invoke-DiskPulseAIAnalysis {
     }
     return $statusObj
 }
-
 function Invoke-DiskPulse {
 $paths = Get-DiskPulsePaths
 Ensure-Directory $paths.Runtime
 Ensure-Directory $paths.Legacy
 Ensure-Directory $paths.Snapshots
 Complete-InterruptedScans $paths
+Compact-ScanEvents $paths
 Remove-StaleTemporaryFiles $paths
 Remove-StaleDiskPulseAIInputs $paths.Runtime
 $legacyFile = Copy-LegacyHistory $paths
@@ -2323,7 +2458,7 @@ $historyRows = [System.Collections.Generic.List[PSObject]](($historyRows |
     Sort-Object Timestamp))
 Profile-Mark "historySort"
 
-$historyRows | Export-Csv $logFile -NoTypeInformation -Force -Encoding UTF8
+Write-DiskPulseAtomicCsv -FinalPath $logFile -Rows $historyRows
 Profile-Mark "csvExport"
 
 $jsonArray = ConvertTo-JsonArray $currentResults
@@ -2338,7 +2473,7 @@ $scanMetaJson = $snapshot | Select-Object scanId,startedAt,completedAt,status,@{
 $timestampJson = ConvertTo-Json -InputObject ([string]$timestamp) -Compress
 $systemDriveJson = ConvertTo-Json -InputObject ([string]$env:SystemDrive) -Compress
 $aiAnalysisJson = if ($aiAnalysisResult) { ConvertTo-DiskPulseSafeJSON $aiAnalysisResult } else { '{}' }
-$brandAssetPath = Join-Path $paths.Root 'assets\DiskPulse.png'
+$brandAssetPath = Join-Path $paths.Root 'assets\DiskPulse-dashboard.png'
 if (-not (Test-Path -LiteralPath $brandAssetPath)) { throw "图标文件不存在：$brandAssetPath" }
 $brandDataUri = 'data:image/png;base64,' + [Convert]::ToBase64String([IO.File]::ReadAllBytes($brandAssetPath))
 Profile-Mark "json:META"
@@ -4509,7 +4644,7 @@ $html = [regex]::Replace($html, $placeholderPattern, { param($match) [string]$re
 Profile-Mark "htmlReplace"
 
 $utf8NoBom = New-Object System.Text.UTF8Encoding $false
-[System.IO.File]::WriteAllText($htmlFile, $html, $utf8NoBom)
+Write-DiskPulseAtomicText -FinalPath $htmlFile -Content $html
 Profile-Mark "htmlWrite"
 $reportStopwatch.Stop()
 $scanStage = "生成报告"
@@ -4546,6 +4681,7 @@ Write-ScanEvent $paths ([PSCustomObject]@{
     startedAt = $startedAt
     completedAt = (Get-Date).ToUniversalTime().ToString("o")
 })
+Compact-ScanEvents $paths
 $lockReleased = $false
 try { Release-DiskPulseLock $paths $owner; $lockReleased = $true } catch {}
 $owner = $null
@@ -4644,6 +4780,7 @@ if ($silent) {
             completedAt = (Get-Date).ToUniversalTime().ToString("o")
             reason = $_.Exception.Message
         })
+        Compact-ScanEvents $paths
     } catch {}
     throw
 }

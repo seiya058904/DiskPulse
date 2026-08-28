@@ -53,17 +53,9 @@ jobs:
           if (-not $nsis) { throw "NSIS installation completed but makensis.exe was not found. Tried: $($nsisCandidates -join ', ')" }
           "DISKPULSE_NSIS_PATH=$nsis" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Run the Windows PowerShell test suite
+      - name: Run canonical verification
         shell: pwsh
-        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\Invoke-DiskPulseTestSuite.ps1
-
-      - name: Run PowerShell 7 compatibility checks
-        shell: pwsh
-        run: |
-          pwsh -NoProfile -File tests\DiskPulse.Phase3.Tests.ps1
-          if ($LASTEXITCODE -ne 0) { throw 'PowerShell 7 Phase3 check failed.' }
-          pwsh -NoProfile -File tests\DiskPulse.Phase4.Tests.ps1
-          if ($LASTEXITCODE -ne 0) { throw 'PowerShell 7 Phase4 check failed.' }
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify.ps1 -IncludeInstaller
 
       - name: Build installer
         shell: pwsh
