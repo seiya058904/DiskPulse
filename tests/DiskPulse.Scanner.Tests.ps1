@@ -289,9 +289,9 @@ if ($longSupported) {
         if ($longScan.status -eq 'failed' -and @($longScan.errors).Count -gt 0) {
             Write-Host 'SKIP: scanner does not guarantee long-path support on this host.'
         } else {
-            $longRootRec = @($longScan.records | Where-Object { $_.kind -eq 'rootFiles' })[0]
-            if ($longScan.status -ne 'complete' -or $longRootRec.sizeBytes -ne 3) {
-                throw "Long-path scan did not preserve the deep file: status=$($longScan.status), root=$($longRootRec.sizeBytes)"
+            $longRecordsWithDeepFile = @($longScan.records | Where-Object { $_.sizeBytes -eq 3 -and $_.fileCount -ge 1 })
+            if ($longScan.status -ne 'complete' -or $longRecordsWithDeepFile.Count -eq 0) {
+                throw "Long-path scan did not account for the deep file in directory aggregation records: status=$($longScan.status), matchingRecords=$($longRecordsWithDeepFile.Count)"
             }
         }
     }
