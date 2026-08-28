@@ -71,6 +71,23 @@ try {
     [IO.File]::WriteAllText((Join-Path $outsideSentinelDir 'sentinel.txt'), 'do-not-copy', (New-Object Text.UTF8Encoding $false))
     $migrate.Invoke($null, [object[]]@([string]$legacySource, [string]$currentDestination)) | Out-Null
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $currentDestination 'escape\sentinel.txt'))) 'Migration must not traverse reparse points.'
+
+    # File reparse-point safety: when the environment permits creating a file
+    # symlink, migration must skip the link rather than copy through it.
+    $fileLink = Join-Path $legacySource 'escape-file.txt'
+    $fileLinkCreated = $false
+    try {
+        cmd /c mklink "$fileLink" "$outsideSentinelDir\sentinel.txt" 2>$null | Out-Null
+        if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $fileLink)) { $fileLinkCreated = $true }
+    }
+    catch { $fileLinkCreated = $false }
+    if ($fileLinkCreated) {
+        $migrate.Invoke($null, [object[]]@([string]$legacySource, [string]$currentDestination)) | Out-Null
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $currentDestination 'escape-file.txt'))) 'Migration must not copy file reparse points.'
+    }
+    else {
+        Write-Host 'SKIP: file reparse-point migration test requires symlink privilege/developer mode.'
+    }
 }
 finally {
     if (Test-Path -LiteralPath $migrationBase) { Remove-Item -LiteralPath $migrationBase -Recurse -Force -ErrorAction SilentlyContinue }

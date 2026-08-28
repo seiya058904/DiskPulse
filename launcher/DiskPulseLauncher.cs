@@ -140,6 +140,7 @@ internal static class DataPaths
     {
         foreach (FileInfo file in source.GetFiles())
         {
+            if ((file.Attributes & FileAttributes.ReparsePoint) != 0) continue;
             string relative = file.FullName.Substring(basePath.Length).TrimStart(Path.DirectorySeparatorChar);
             string target = Path.Combine(destinationRoot, relative);
             if (File.Exists(target)) continue;
