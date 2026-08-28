@@ -41,6 +41,84 @@ $safeJson = ConvertTo-DiskPulseSafeJSON ([pscustomobject]@{ text = $hostile })
 Assert-True ($safeJson -notmatch '</script>') 'Safe JSON must escape HTML closing script tags.'
 Assert-True ($safeJson -notmatch [string][char]0x2028 -and $safeJson -notmatch [string][char]0x2029) 'Safe JSON must escape U+2028/U+2029.'
 
+# --- Request-sink endpoint enforcement ---
+$remoteHttpsCfg = [pscustomobject]@{
+    endpoint = 'https://api.example.com/v1/chat/completions'
+    model = 'm'
+    protectedApiKey = (Protect-DiskPulseSecret 'DISKPULSE_TEST_SECRET_REMOTE')
+    timeoutSeconds = 5
+    temperature = [double]::NaN
+}
+$remoteHttpCfg = [pscustomobject]@{
+    endpoint = 'http://api.example.com/v1/chat/completions'
+    model = 'm'
+    protectedApiKey = (Protect-DiskPulseSecret 'DISKPULSE_TEST_SECRET_HTTP')
+    timeoutSeconds = 5
+    temperature = [double]::NaN
+}
+$localhostHttpCfg = [pscustomobject]@{
+    endpoint = 'http://localhost:1234/v1'
+    model = 'm'
+    protectedApiKey = $null
+    timeoutSeconds = 5
+    temperature = [double]::NaN
+}
+$loopbackHttpCfg = [pscustomobject]@{
+    endpoint = 'http://127.0.0.1:1234/v1'
+    model = 'm'
+    protectedApiKey = $null
+    timeoutSeconds = 5
+    temperature = [double]::NaN
+}
+$unsafeTransportCalled = $false
+$unsafeResult = Invoke-DiskPulseAIRequest -Config $remoteHttpCfg -Prompt ([pscustomobject]@{ system = 's'; user = 'u' }) -Transport {
+    param($u, $h, $b, $t)
+    $script:unsafeTransportCalled = $true
+    return [pscustomobject]@{ content = 'must-not-run' }
+}
+Assert-True (-not $unsafeResult.ok) 'Remote plaintext HTTP must be rejected by Invoke-DiskPulseAIRequest.'
+Assert-True ($unsafeResult.error -eq 'invalid-endpoint') 'Remote plaintext HTTP rejection must return a formal invalid-endpoint result.'
+Assert-True (-not $unsafeTransportCalled) 'Rejected endpoint must never invoke the network Transport.'
+
+$httpsResult = Invoke-DiskPulseAIRequest -Config $remoteHttpsCfg -Prompt ([pscustomobject]@{ system = 's'; user = 'u' }) -Transport {
+    param($u, $h, $b, $t)
+    $script:httpsHeaders = $h
+    $m = [pscustomobject]@{ content = 'ok' }
+    return [pscustomobject]@{ choices = @([pscustomobject]@{ message = $m }) }
+}
+Assert-True ($httpsResult.ok) 'Remote HTTPS endpoint must still succeed.'
+Assert-True ($script:httpsHeaders['Authorization'] -like 'Bearer *') 'Remote HTTPS request must still forward the configured API key.'
+
+$localHttpResult = Invoke-DiskPulseAIRequest -Config $localhostHttpCfg -Prompt ([pscustomobject]@{ system = 's'; user = 'u' }) -Transport {
+    param($u, $h, $b, $t)
+    return [pscustomobject]@{ choices = @([pscustomobject]@{ message = [pscustomobject]@{ content = 'ok' } }) }
+}
+Assert-True ($localHttpResult.ok) 'Localhost HTTP endpoint must remain allowed by Invoke-DiskPulseAIRequest.'
+
+$loopbackHttpResult = Invoke-DiskPulseAIRequest -Config $loopbackHttpCfg -Prompt ([pscustomobject]@{ system = 's'; user = 'u' }) -Transport {
+    param($u, $h, $b, $t)
+    return [pscustomobject]@{ choices = @([pscustomobject]@{ message = [pscustomobject]@{ content = 'ok' } }) }
+}
+Assert-True ($loopbackHttpResult.ok) '127.0.0.1 HTTP endpoint must remain allowed by Invoke-DiskPulseAIRequest.'
+
+foreach ($unsafeEndpoint in @('ftp://example.com/v1', 'https://user:pass@api.example.com/v1', "https://api.example.com/`nX")) {
+    $unsafeCfg = [pscustomobject]@{
+        endpoint = $unsafeEndpoint
+        model = 'm'
+        protectedApiKey = (Protect-DiskPulseSecret 'DISKPULSE_TEST_SECRET_UNSAFE')
+        timeoutSeconds = 5
+        temperature = [double]::NaN
+    }
+    $script:called = $false
+    $result = Invoke-DiskPulseAIRequest -Config $unsafeCfg -Prompt ([pscustomobject]@{ system = 's'; user = 'u' }) -Transport {
+        param($u, $h, $b, $t)
+        $script:called = $true
+        return [pscustomobject]@{ content = 'must-not-run' }
+    }
+    Assert-True (-not $result.ok) "Unsafe endpoint must be rejected by Invoke-DiskPulseAIRequest: $unsafeEndpoint"
+    Assert-True (-not $script:called) "Unsafe endpoint must not invoke Transport: $unsafeEndpoint"
+}
+
 # --- Response validation ---
 $validEnvelope = [pscustomobject]@{
     choices = @([pscustomobject]@{ message = [pscustomobject]@{ content = '{"summary":"ok","confidence":"medium","possibleCauses":[],"evidence":[],"recommendations":[],"cautions":[]}' } })

@@ -486,10 +486,14 @@ function Invoke-DiskPulseAIRequest {
         $Prompt,
         [scriptblock]$Transport
     )
+    $endpoint = [string]$Config.endpoint
+    if (-not (Test-DiskPulseAIEndpoint $endpoint)) {
+        return [PSCustomObject]@{ ok = $false; error = 'invalid-endpoint' }
+    }
     $plainKey = $null
     $savedProtocol = [Net.ServicePointManager]::SecurityProtocol
     try {
-        $uri = [string]$Config.endpoint
+        $uri = $endpoint
         $headers = @{}
         $isLocal = Test-DiskPulseAILocalEndpoint $uri
         if ($Config.protectedApiKey) {
@@ -588,6 +592,7 @@ function Get-DiskPulseAIErrorMessage {
         'timeout'               { return '连接超时，请检查网络或稍后再试。' }
         'connection-failed'     { return '无法连接服务商接口，请检查网络和接口地址。' }
         'invalid-response'      { return '接口已连接，但返回的数据格式无法识别。' }
+        'invalid-endpoint'      { return 'AI endpoint 不安全或格式无效，请使用 HTTPS（本地回环可 HTTP）。' }
         default                 { return 'API 连接失败，请检查配置或查看日志。' }
     }
 }
