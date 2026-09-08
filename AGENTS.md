@@ -232,14 +232,6 @@ Rules:
 
 ## Pre-Commit Checklist
 
-## Personal Knowledge Context
-
-The user's shared long-term AI context lives at `D:\xia zai\AI project\Knowledge`.
-
-This repository's `AGENTS.md` / `CLAUDE.md` / docs and Git state are the source of truth for this project's long-term context. The user's shared cross-project reusable knowledge (prompts, protocols, workflows) lives at `D:\xia zai\AI project\Knowledge`; consult its `AGENTS.md` only when the task needs one of those reusable items or to locate this project's repository. Do not mirror project context back into Knowledge — it is a collection, not project memory.
-
-When the user explicitly says the project/task is ready to “收工” or gives an equivalent finalization instruction, read and follow `D:\xia zai\AI project\Knowledge\02-AI\Prompts\项目收工提示词.md`. This trigger does not expand current task permissions; do not merge, deploy, force-push, resolve remote conflicts, or modify unrelated files unless separately authorized.
-
 - [ ] `git status --short` — only intended files changed
 - [ ] `git diff --check` — no whitespace errors
 - [ ] `git diff` — changes are correct and complete
