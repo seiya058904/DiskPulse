@@ -112,6 +112,11 @@ try {
         '{"scanId":"new","status":"complete","completedAt":"2026-01-02T00:00:00Z"}'
     )
     Set-Content -LiteralPath $eventPaths.Events -Value ($eventLines -join [Environment]::NewLine) -Encoding UTF8
+    $originalEvents=[IO.File]::ReadAllText($eventPaths.Events)
+    try { Complete-InterruptedScans $eventPaths; throw 'Middle corruption accepted.' }
+    catch { Assert-True ($_.Exception.Message -ne 'Middle corruption accepted.') 'Middle corruption must be diagnosed.' }
+    Assert-True ([IO.File]::ReadAllText($eventPaths.Events) -eq $originalEvents) 'Recovery must preserve a corrupt journal.'
+    Set-Content -LiteralPath $eventPaths.Events -Value (($eventLines | Where-Object { $_ -ne '{bad json' }) -join [Environment]::NewLine) -Encoding UTF8
     Complete-InterruptedScans $eventPaths
     $eventsAfterFirst = @(Get-Content -LiteralPath $eventPaths.Events -Encoding UTF8 | Where-Object { $_.Trim() } | ForEach-Object { try { $_ | ConvertFrom-Json } catch { $null } } | Where-Object { $_ })
     Assert-True (@($eventsAfterFirst | Where-Object { $_.status -eq 'failed' -and $_.reason -eq 'interrupted' }).Count -eq 1) 'Interrupted scan must be finalized once.'

@@ -3,13 +3,16 @@ $paths = Get-DiskPulsePaths
 Ensure-Directory $paths.Runtime
 Ensure-Directory $paths.Legacy
 Ensure-Directory $paths.Snapshots
+$scanId = New-ScanId
+$owner = Acquire-DiskPulseLock $paths $scanId
+try {
+Invoke-DiskPulsePublication $paths.Runtime {
 Complete-InterruptedScans $paths
 Compact-ScanEvents $paths
 Remove-StaleTemporaryFiles $paths
 Remove-StaleDiskPulseAIInputs $paths.Runtime
-$legacyFile = Copy-LegacyHistory $paths
-$scanId = New-ScanId
-$owner = Acquire-DiskPulseLock $paths $scanId
+}
+$legacyFile = Invoke-DiskPulsePublication $paths.Runtime { Copy-LegacyHistory $paths }
 Profile-Mark "init"
 $startedAt = (Get-Date).ToUniversalTime().ToString("o")
 $runStopwatch = [Diagnostics.Stopwatch]::StartNew()
@@ -232,12 +235,13 @@ $aiPlan = Get-DiskPulseAIAnalysisState -DirectoryResults $directoryResults -Hist
 $aiInputEligible = Test-DiskPulseAIInputEligible -DirectoryResults $directoryResults
 $copyInput = if ($aiPlan.ready -and $null -ne $aiPlan.input) { $aiPlan.input } elseif ($aiInputEligible) { New-DiskPulseAIInput -DirectoryResults $directoryResults -HistoryCenter $historyCenter -Snapshot $snapshot } else { $null }
 $copyText = if ($copyInput) { New-DiskPulseAICopyText -AIInput $copyInput } else { '' }
-$aiWorkerInputPath = Join-Path $paths.Runtime ("ai-input-{0}.json" -f $scanId)
+$analysisId = [guid]::NewGuid().ToString('N')
+$aiWorkerInputPath = Join-Path $paths.Runtime ("ai-input-{0}-{1}.json" -f $scanId,$analysisId)
 $aiOutputPath = Join-Path $paths.Runtime 'last-ai-analysis.json'
 $aiAnalysisResult = if ($aiPlan.ready) {
-    [PSCustomObject]@{ status = 'analyzing'; format = 'none'; analysis = $null; rawText = $null; model = [string]$aiPlan.model; scanId = $scanId; generatedAt = ''; error = $null }
+    [PSCustomObject]@{ status = 'analyzing'; format = 'none'; analysis = $null; rawText = $null; model = [string]$aiPlan.model; scanId = $scanId; analysisId = $analysisId; generatedAt = ''; error = $null }
 } else {
-    [PSCustomObject]@{ status = [string]$aiPlan.status; format = 'none'; analysis = $null; rawText = $null; model = [string]$aiPlan.model; scanId = $scanId; generatedAt = ''; error = $null }
+    [PSCustomObject]@{ status = [string]$aiPlan.status; format = 'none'; analysis = $null; rawText = $null; model = [string]$aiPlan.model; scanId = $scanId; analysisId = $analysisId; generatedAt = ''; error = $null }
 }
 
 $historyRows = [System.Collections.Generic.List[PSObject]](($historyRows |
@@ -246,7 +250,7 @@ $historyRows = [System.Collections.Generic.List[PSObject]](($historyRows |
     Sort-Object Timestamp))
 Profile-Mark "historySort"
 
-Write-DiskPulseAtomicCsv -FinalPath $logFile -Rows $historyRows
+Invoke-DiskPulsePublication $paths.Runtime { Write-DiskPulseAtomicCsv -FinalPath $logFile -Rows $historyRows }
 Profile-Mark "csvExport"
 
 $jsonArray = ConvertTo-JsonArray $currentResults
@@ -290,67 +294,46 @@ $html = [regex]::Replace($html, $placeholderPattern, { param($match) [string]$re
 Profile-Mark "htmlReplace"
 
 $utf8NoBom = New-Object System.Text.UTF8Encoding $false
-Write-DiskPulseAtomicText -FinalPath $htmlFile -Content $html
+Invoke-DiskPulsePublication $paths.Runtime {
+    Write-DiskPulseAtomicText -FinalPath (Join-Path $paths.Runtime 'ai-current.json') -Content (ConvertTo-Json @{scanId=$scanId;analysisId=$analysisId})
+    Write-DiskPulseAtomicText -FinalPath $htmlFile -Content $html
+    Write-DiskPulseAtomicText -FinalPath $aiOutputPath -Content (ConvertTo-Json -InputObject $aiAnalysisResult -Depth 12)
+    $liveProbePath = Join-Path $paths.Runtime ("ai-live-{0}-{1}.js" -f $scanId,$analysisId)
+    if ($aiPlan.ready) { Write-DiskPulseAILiveProbe -ScanId $scanId -LivePath $liveProbePath -Result $aiAnalysisResult }
+    Write-ScanEvent $paths ([PSCustomObject]@{
+        scanId=$scanId; status=$snapshot.status; startedAt=$startedAt
+        completedAt=(Get-Date).ToUniversalTime().ToString('o')
+    })
+    Compact-ScanEvents $paths
+}
 Profile-Mark "htmlWrite"
 $reportStopwatch.Stop()
 $scanStage = "生成报告"
-
-# Publish the "analyzing" live probe BEFORE the browser opens, so the first probe attempt
-# proves the dynamic-script mechanism works on file:// and the page polls instead of reloading.
-$liveProbePath = Join-Path $paths.Runtime ("ai-live-{0}.js" -f $scanId)
-if ($aiPlan.ready) {
-    try { Write-DiskPulseAILiveProbe -ScanId $scanId -LivePath $liveProbePath -Result $aiAnalysisResult } catch {}
-}
-
 if ($env:DISKPULSE_NO_OPEN -ne "1") {
-    try {
-        Start-Process $htmlFile
-    }
-    catch {
-        Write-Warning "Generated $htmlFile. Open it manually if the browser did not launch."
-    }
+    try { Start-Process $htmlFile } catch { Write-Warning "Generated $htmlFile. Open it manually." }
 }
 Profile-Mark "browserOpen"
-
-if (-not $aiPlan.ready) {
-    try {
-        Write-DiskPulseAIResult -ScanId $scanId -Status $aiAnalysisResult.status -Model $aiAnalysisResult.model -Format $aiAnalysisResult.format -Analysis $null -RawText $null -OutputPath $aiOutputPath
-        if (-not (Update-DiskPulseAIHtmlResult -HtmlPath $htmlFile -ExpectedScanId $scanId -AnalysisResult $aiAnalysisResult)) { throw 'AI HTML update failed.' }
-    }
-    catch {}
-}
 Profile-Mark "aiAnalysis"
-
-Write-ScanEvent $paths ([PSCustomObject]@{
-    scanId = $scanId
-    status = $snapshot.status
-    startedAt = $startedAt
-    completedAt = (Get-Date).ToUniversalTime().ToString("o")
-})
-Compact-ScanEvents $paths
-$lockReleased = $false
-try { Release-DiskPulseLock $paths $owner; $lockReleased = $true } catch {}
+Release-DiskPulseLock $paths $owner
 $owner = $null
 
 if ($aiPlan.ready) {
     try {
-        $aiAnalysisResult = New-DiskPulseAIStatus -ScanId $scanId -Status 'analyzing' -Model ([string]$aiPlan.model) -Analysis $null -RawText $null -Format 'none'
-        Write-DiskPulseAIResult -ScanId $scanId -Status $aiAnalysisResult.status -Model $aiAnalysisResult.model -Format $aiAnalysisResult.format -Analysis $null -RawText $null -OutputPath $aiOutputPath
         $aiInputPayload = [PSCustomObject]@{
             scanId       = $scanId
+            analysisId   = $analysisId
             outputPath   = $aiOutputPath
-            tempOutputPath = ($aiOutputPath + '.' + $scanId + '.tmp')
+            tempOutputPath = ($aiOutputPath + '.' + $scanId + '.' + $analysisId + '.tmp')
             model        = [string]$aiPlan.model
             aiInput      = $aiPlan.input
         }
-        $aiInputPayload | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $aiWorkerInputPath -Encoding UTF8
+        Write-DiskPulseAtomicText -FinalPath $aiWorkerInputPath -Content (ConvertTo-Json -InputObject $aiInputPayload -Depth 12)
         $workerScriptPath = if ([string]::IsNullOrWhiteSpace($env:DISKPULSE_SCRIPT_PATH)) { Join-Path $paths.Root 'check.bat' } else { $env:DISKPULSE_SCRIPT_PATH }
         Start-DiskPulseAIWorker -ScriptPath $workerScriptPath -RootPath $paths.Root -ScanId $scanId -InputPath $aiWorkerInputPath -OutputPath $aiOutputPath -HtmlPath $htmlFile
     }
     catch {
-        $aiAnalysisResult = [PSCustomObject]@{ status = 'unknown-error'; format = 'none'; analysis = $null; rawText = $null; model = [string]$aiPlan.model; scanId = $scanId; generatedAt = (Get-Date).ToUniversalTime().ToString('o'); error = $null }
-        Write-DiskPulseAIResult -ScanId $scanId -Status $aiAnalysisResult.status -Model $aiAnalysisResult.model -Format $aiAnalysisResult.format -Analysis $null -RawText $null -OutputPath $aiOutputPath
-        Update-DiskPulseAIHtmlResult -HtmlPath $htmlFile -ExpectedScanId $scanId -AnalysisResult $aiAnalysisResult | Out-Null
+        $aiAnalysisResult = [PSCustomObject]@{ status = 'unknown-error'; format = 'none'; analysis = $null; rawText = $null; model = [string]$aiPlan.model; scanId = $scanId; analysisId = $analysisId; generatedAt = (Get-Date).ToUniversalTime().ToString('o'); error = $null }
+        Submit-DiskPulseAIResult -Paths $paths -HtmlPath $htmlFile -Result $aiAnalysisResult | Out-Null
         if (Test-Path -LiteralPath $aiWorkerInputPath) { Remove-Item -LiteralPath $aiWorkerInputPath -Force }
     }
 }
@@ -418,7 +401,7 @@ if ($silent) {
     Write-Host ("已用时间：{0:N1} 秒" -f $runStopwatch.Elapsed.TotalSeconds)
     Write-Host "错误：$($_.Exception.Message)" -ForegroundColor Red
 }
-    try {
+    if ($owner) { try {
         Write-ScanEvent $paths ([PSCustomObject]@{
             scanId = $scanId
             status = "failed"
@@ -427,13 +410,19 @@ if ($silent) {
             reason = $_.Exception.Message
         })
         Compact-ScanEvents $paths
-    } catch {}
+    } catch {} }
     throw
 }
 finally {
     & $clearConsoleProgress
-    if ($owner) { Release-DiskPulseLock $paths $owner }
 }
+} finally { if ($owner) { Release-DiskPulseLock $paths $owner } }
+}
+
+if ($env:DISKPULSE_MIGRATE -eq '1') {
+    $migrationPaths = Get-DiskPulsePaths
+    Invoke-DiskPulseMigration -Paths $migrationPaths -Sources @($env:DISKPULSE_MIGRATION_SOURCES -split "`n") -MarkerPath (Join-Path (Split-Path -Parent $migrationPaths.Runtime) 'migration-sources.txt')
+    return
 }
 
 if ($env:DISKPULSE_AI_WORKER -eq "1") {

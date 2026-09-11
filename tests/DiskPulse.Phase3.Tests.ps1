@@ -42,7 +42,7 @@ try{
     if(-not(Test-Path (Join-Path $paths.Snapshots 'oldcomplete.json'))){throw 'Complete snapshot must remain while partial cleanup satisfies the limit.'}
 }finally{
     foreach($name in 'oldpartial.json','oldcomplete.json','newcomplete.json','current.json','failed-snapshot.json','old.tmp'){ $p=Join-Path $paths.Snapshots $name;if(Test-Path $p){Remove-Item -LiteralPath $p -Force}}
-    if(Test-Path $paths.Events){Remove-Item -LiteralPath $paths.Events -Force};[IO.Directory]::Delete($paths.Snapshots);[IO.Directory]::Delete($temp)
+    if(Test-Path $paths.Events){Remove-Item -LiteralPath $paths.Events -Force};[IO.Directory]::Delete($paths.Snapshots);[IO.File]::Delete((Join-Path $temp 'publish.lock'));[IO.Directory]::Delete($temp)
 }
 if($source-notmatch 'exit /b %ERRORLEVEL%'){throw 'BAT must return the PowerShell exit code.'}
 Write-Host ($counts|ConvertTo-Json -Compress);Write-Host 'PASS: Phase 3 comparison states, baseline selection, and coverage.'
@@ -201,6 +201,7 @@ $current=[pscustomobject]@{drive='C:';status='complete';rootPath='C:\';usedBytes
     [pscustomobject]@{key='c- new';displayPath='C:\NewDir';kind='directory';level=1;sizeBytes=30}
 );excluded=@();unavailable=@();errors=@()}
 $baselineDrive=$baseline.drives[0]
+foreach($record in @($current.records)+@($baselineDrive.records)) { $record | Add-Member -NotePropertyName enumerationComplete -NotePropertyValue $true; $record | Add-Member -NotePropertyName childrenEnumerationComplete -NotePropertyValue $true }
 $dirResults=@([pscustomobject]@{
     drive='C:';status='complete';baselineScanId='base';baselineCompletedAt='2026-07-13T10:00:00Z'
     changes=Compare-DriveRecords $current $baselineDrive
@@ -990,7 +991,7 @@ if($liveProbeBody -notmatch '\[IO\.File\]::Replace' -and $liveProbeBody -notmatc
 if($liveProbeBody -match 'Remove-Item -LiteralPath \$LivePath -Force'){throw 'Live probe write must not use remove-then-move.'}
 if($src -match '\[IO\.Path\]::GetTempFileName\(\)'){throw 'HTML replacement must not use system TEMP files.'}
 if($src -match '\$jsPath\s*=|WriteAllText\(\$jsPath|Test-Path -LiteralPath \$jsPath'){throw 'Production HTML update must not create a temporary JS file.'}
-if($src -notmatch '(?s)if \(\$aiPlan\.ready\).*?Write-DiskPulseAIResult -ScanId \$scanId -Status \$aiAnalysisResult\.status'){throw 'Ready scans must persist analyzing before worker startup.'}
+if($src -notmatch '(?s)ai-current.json.*?Write-DiskPulseAtomicText -FinalPath \$aiOutputPath.*?Release-DiskPulseLock'){throw 'Ready scans must publish identity and initial state before releasing ownership.'}
 if($src -notmatch '(?s)function Invoke-DiskPulseAIConfigure.*?ConvertFrom-DiskPulseAIRequestResult \$reqResult'){throw 'Configure connection test must use unified parser.'}
 $workerCmd=New-DiskPulseAIWorkerCommand -ScriptPath 'C:\DiskPulse\check.bat' -RootPath 'C:\DiskPulse' -ScanId 'scan-1' -InputPath 'C:\DiskPulse\runtime\ai-input.json' -OutputPath 'C:\DiskPulse\runtime\last-ai-analysis.json' -HtmlPath 'C:\DiskPulse\runtime\DiskPulse.html'
 if($workerCmd -notmatch '\$env:DISKPULSE_AI_WORKER=''1'''){throw 'Worker command must set worker mode.'}
@@ -1007,7 +1008,7 @@ try{
     $workerEvents=Join-Path $workerRuntime 'scans.jsonl'
     $workerOut=Join-Path $workerRuntime 'last-ai-analysis.json'
     $workerCfg=Join-Path $workerRuntime 'ai-config.local.json'
-    $workerInput=Join-Path $workerRuntime 'ai-input-scan-1.json'
+    $workerInput=Join-Path $workerRuntime 'ai-input-scan-1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json'
     $htmlTemplate=@"
 <!DOCTYPE html><html><body>
 <script>
@@ -1025,11 +1026,13 @@ function renderAIAnalysis(){ return AI_ANALYSIS.status; }
     $realWorkerInput=New-DiskPulseAIInput -DirectoryResults @([pscustomobject]@{drive='C:';status='complete';baselineScanId='base';changes=@([pscustomobject]@{state='changed';level=1;displayPath='C:\A';deltaBytes=1;sizeBytes=1;key='a'});coverage=[pscustomobject]@{actualNetBytes=1;locatedNetBytes=1;rate=100};errors=@();unavailable=@();excluded=@()}) -HistoryCenter @() -Snapshot ([pscustomobject]@{scanId='scan-1';status='complete';completedAt='2026-07-14T10:30:00Z'})
     $workerInputObj=[pscustomobject]@{
         scanId='scan-1'
+        analysisId='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
         outputPath=$workerOut
         tempOutputPath=($workerOut + '.scan-1.tmp')
         model='test-model'
         aiInput=$realWorkerInput
     }
+    Write-DiskPulseAtomicText -FinalPath (Join-Path $workerRuntime 'ai-current.json') -Content '{"scanId":"scan-1","analysisId":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
     $workerInputObj | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $workerInput -Encoding UTF8
     $env:DISKPULSE_ROOT=$workerRoot
     $env:DISKPULSE_AI_WORKER_SCANID='scan-1'
@@ -1092,7 +1095,7 @@ function renderAIAnalysis(){ return AI_ANALYSIS.status; }
     $html=Get-Content -Raw -LiteralPath $workerHtml -Encoding UTF8
     if($html-notmatch'Worker ok'){throw 'Worker complete must update HTML.'}
     # Terminal result must publish a live probe (success or any failure status), never only analyzing.
-    $workerLiveProbe=Join-Path $workerRuntime 'ai-live-scan-1.js'
+    $workerLiveProbe=Join-Path $workerRuntime 'ai-live-scan-1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.js'
     if(-not(Test-Path -LiteralPath $workerLiveProbe)){throw 'Worker complete must publish an ai-live probe.'}
     $liveProbeText=Get-Content -Raw -LiteralPath $workerLiveProbe -Encoding UTF8
     if($liveProbeText -notmatch 'window\.DiskPulseAILive'){throw 'Live probe must expose window.DiskPulseAILive.'}

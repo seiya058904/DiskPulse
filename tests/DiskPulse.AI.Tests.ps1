@@ -202,7 +202,9 @@ $redirectJob1 = Start-Job -ArgumentList $redirectPort1, $redirectPort2 -ScriptBl
     $listener = [Net.HttpListener]::new()
     $listener.Prefixes.Add("http://127.0.0.1:$p1/")
     $listener.Start()
-    $context = $listener.GetContext()
+    $pending = $listener.GetContextAsync()
+    if (-not $pending.Wait(10000)) { $listener.Stop(); return }
+    $context = $pending.Result
     $context.Response.StatusCode = 302
     $context.Response.RedirectLocation = "http://127.0.0.1:$p2/target"
     $context.Response.Close()
@@ -213,7 +215,9 @@ $redirectJob2 = Start-Job -ArgumentList $redirectPort2, $redirectCounter -Script
     $listener = [Net.HttpListener]::new()
     $listener.Prefixes.Add("http://127.0.0.1:$p2/")
     $listener.Start()
-    $context = $listener.GetContext()
+    $pending = $listener.GetContextAsync()
+    if (-not $pending.Wait(10000)) { $listener.Stop(); return }
+    $context = $pending.Result
     [IO.File]::WriteAllText($counter, 'hit')
     $context.Response.StatusCode = 200
     $context.Response.Close()

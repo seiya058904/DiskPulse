@@ -63,7 +63,8 @@ try {
         if ($_.Exception.Message -eq 'A live lock must reject a second owner.') { throw }
     }
     Release-DiskPulseLock $paths $owner
-    if (Test-Path -LiteralPath $paths.Lock) { throw 'The owning process must release its lock.' }
+    $nextOwner = Acquire-DiskPulseLock $paths 'after-release'
+    Release-DiskPulseLock $paths $nextOwner
 
     Write-ScanEvent $paths ([pscustomobject]@{ scanId='event'; status='running' })
     Write-ScanEvent $paths ([pscustomobject]@{ scanId='event'; status='complete' })
@@ -86,6 +87,7 @@ finally {
         (Join-Path $paths.Runtime 'atomic.json'),
         $paths.Events,
         $paths.Lock,
+        (Join-Path $paths.Runtime 'publish.lock'),
         (Join-Path $paths.Runtime '.legacy-imported'),
         (Join-Path $paths.Legacy 'DiskPulse-v1.csv'),
         (Join-Path $temp 'DiskPulse.csv')

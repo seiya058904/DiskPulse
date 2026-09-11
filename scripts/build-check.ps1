@@ -38,6 +38,7 @@ $history      = Read-CanonicalSource 'src/powershell/History.ps1'
 $persistence  = Read-CanonicalSource 'src/powershell/Persistence.ps1'
 $progress     = Read-CanonicalSource 'src/powershell/Progress.ps1'
 $ai           = Read-CanonicalSource 'src/powershell/AI.ps1'
+$migration    = Read-CanonicalSource 'src/powershell/Migration.ps1'
 $app          = Read-CanonicalSource 'src/powershell/App.ps1'
 
 $scannerBlockLines = @(
@@ -60,7 +61,7 @@ $app = $app.Replace('__DISKPULSE_DASHBOARD__', $dashboardBody)
 if (-not $app.EndsWith("`n")) { $app += "`n" }
 
 $header = "# GENERATED FILE - edit canonical source under src/ and run scripts/build-check.ps1`n`n"
-$content = $bootstrap + $header + $common + $scannerBlock + $scannerPs + $history + $persistence + $progress + $ai + $app
+$content = $bootstrap + $header + $common + $scannerBlock + $scannerPs + $history + $persistence + $progress + $ai + $migration + $app
 $content = ConvertTo-CrLf $content
 
 $directory = Split-Path -Parent $OutputPath

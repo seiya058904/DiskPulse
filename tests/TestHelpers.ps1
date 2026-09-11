@@ -47,6 +47,9 @@ function New-DiskPulseCanonicalTestSource {
     if ($Components -contains 'AI') {
         $lines.Add((Read-CanonicalTestSource 'powershell\AI.ps1'))
     }
+    if ($Components -contains 'Migration') {
+        $lines.Add((Read-CanonicalTestSource 'powershell\Migration.ps1'))
+    }
 
     $tempPath = Join-Path $env:TEMP ('DiskPulse-CanonicalTest-' + [guid]::NewGuid().ToString('N') + '.ps1')
     [IO.File]::WriteAllText($tempPath, ($lines -join [Environment]::NewLine), (New-Object Text.UTF8Encoding $true))

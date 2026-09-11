@@ -162,7 +162,7 @@ let aiLiveWatchdog = null;
 let aiFallbackScheduled = false;
 
 function aiProbeSrc(scanId) {
-  return "ai-live-" + scanId + ".js?t=" + Date.now();
+  return "ai-live-" + scanId + (AI_ANALYSIS.analysisId ? "-" + AI_ANALYSIS.analysisId : "") + ".js?t=" + Date.now();
 }
 
 function aiRemoveProbeNode(node) {
@@ -195,7 +195,7 @@ function aiProbeTick(scanId) {
     aiRemoveProbeNode(s);
     aiProbeSupported = true;
     const live = window.DiskPulseAILive;
-    if (live && live.scanId === scanId && live.status && live.status !== "analyzing") {
+    if (live && live.scanId === scanId && live.analysisId === AI_ANALYSIS.analysisId && live.status && live.status !== "analyzing") {
       aiApplyLiveResult(live);
     }
   };
@@ -616,7 +616,7 @@ function selectedHistoryState() {
 }
 
 function historyTrendNode(row) {
-  const recent = (row.samples || []).filter((sample) => sample?.[1] !== null && sample?.[1] !== undefined).slice(-5).map((sample) => fmtBytes(sample[1])).join(" → ");
+  const recent = (row.samples || []).slice(-5).map((sample) => sample?.[1] == null ? "未知" : fmtBytes(sample[1])).join(" → ");
   const root = element("div","history-row");
   const main = element("div","history-row-main"); const path=element("span","",`${row.drive} · ${row.displayPath}`); path.title=String(row.displayPath ?? "");
   main.append(path,element("b",Number(row.cumulativeBytes)>=0?"growth-value":"release-value",`累计 ${Number(row.cumulativeBytes)>0?"+":""}${fmtBytes(row.cumulativeBytes)}`));
@@ -627,11 +627,12 @@ function historyTrendNode(row) {
 }
 
 function sizeSparklineNode(samples) {
-  const values = (samples || []).filter((sample) => sample?.[1] !== null && sample?.[1] !== undefined).map((sample) => Number(sample[1]));
+  const values = (samples || []).map((sample) => sample?.[1] == null ? null : Number(sample[1]));
+  const known = values.filter((value) => value !== null);
   const svg = document.createElementNS(svgNs,"svg"); svg.classList.add("history-spark"); svg.setAttribute("viewBox","0 0 160 26"); svg.setAttribute("aria-hidden","true");
-  if (values.length < 2) return svg;
-  const min=Math.min(...values),max=Math.max(...values),span=max-min||1;
-  const path=document.createElementNS(svgNs,"path"); path.setAttribute("d",values.map((value,index)=>`${index?"L":"M"}${(index/(values.length-1)*158+1).toFixed(1)} ${(24-(value-min)/span*22).toFixed(1)}`).join(" ")); svg.append(path);
+  if (known.length < 2) return svg;
+  const min=Math.min(...known),max=Math.max(...known),span=max-min||1;
+  const path=document.createElementNS(svgNs,"path"); path.setAttribute("d",values.map((value,index)=>value === null ? "" : `${index && values[index-1] !== null?"L":"M"}${(index/(values.length-1)*158+1).toFixed(1)} ${(24-(value-min)/span*22).toFixed(1)}`).join(" ")); svg.append(path);
   return svg;
 }
 
@@ -722,8 +723,9 @@ function changeRowNode(row, maxMagnitude, contributionBase) {
 
 function stateChangeRowNode(row) {
   const label = row.state === "unknown" ? "未知变化" : "当前不可用";
+  const reason = {"scan-incomplete":"扫描范围不完整", "scope-mismatch":"与基线的扫描范围不同", "legacy-evidence-missing":"历史完整性证据不足", "no-baseline":"尚无比较基线"}[row.reason] || label;
   const root=element("div","change-item"), main=element("div","change-main"), path=element("span","change-path expandable-path",row.displayPath); path.title=String(row.displayPath ?? "");
-  main.append(path,element("div","change-context",`${row.drive} · ${row.level} 级 · ${label}`)); root.append(main,element("span","status-badge waiting",label)); return root;
+  main.append(path,element("div","change-context",`${row.drive} · ${row.level} 级 · ${reason}`)); root.append(main,element("span","status-badge waiting",label)); return root;
 }
 
 function currentChangeFilters() {

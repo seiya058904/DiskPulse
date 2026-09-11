@@ -19,7 +19,10 @@ $assembly = [Reflection.Assembly]::LoadFrom($exe)
 $payloadType = $assembly.GetType('Payload', $true)
 $dataPathsType = $assembly.GetType('DataPaths', $true)
 $ensureExtracted = $payloadType.GetMethod('EnsureExtracted', [Reflection.BindingFlags]'NonPublic,Static', $null, [Type[]]@([string]), $null)
-$migrate = $dataPathsType.GetMethod('MigrateDirectory', [Reflection.BindingFlags]'NonPublic,Static')
+. (Join-Path $PSScriptRoot 'TestHelpers.ps1')
+$canonical = New-DiskPulseCanonicalTestSource -Components @('Common','History','AI','Migration')
+. $canonical
+[IO.File]::Delete($canonical)
 
 # --- Payload extraction ---
 $payloadRoot = Join-Path $env:TEMP ('DiskPulse-PayloadRoot-' + [guid]::NewGuid().ToString('N'))
@@ -55,21 +58,23 @@ New-Item -ItemType Directory -Path (Join-Path $legacySource 'snapshots') -Force 
 New-Item -ItemType Directory -Path $currentDestination -Force | Out-Null
 New-Item -ItemType Directory -Path $outsideSentinelDir -Force | Out-Null
 try {
-    [IO.File]::WriteAllText((Join-Path $legacySource 'DiskPulse.csv'), 'old-csv', (New-Object Text.UTF8Encoding $false))
-    [IO.File]::WriteAllText((Join-Path $legacySource 'snapshots\one.json'), 'old-snapshot', (New-Object Text.UTF8Encoding $false))
+    [IO.File]::WriteAllText((Join-Path $legacySource 'DiskPulse.csv'), "Timestamp,ID,Total,Free,Used,Percent`r`n2026-01-01,T:,100,90,10,10`r`n", (New-Object Text.UTF8Encoding $false))
+    [IO.File]::WriteAllText((Join-Path $legacySource 'snapshots\one.json'), '{"scanId":"one","completedAt":"2026-01-01T00:00:00Z","drives":[]}', (New-Object Text.UTF8Encoding $false))
 
+    [IO.File]::WriteAllText((Join-Path $legacySource 'scans.jsonl'), '{"scanId":"one","status":"complete"}')
+    $migrationPaths=[pscustomobject]@{Runtime=$currentDestination;Snapshots=(Join-Path $currentDestination 'snapshots');Events=(Join-Path $currentDestination 'scans.jsonl');Lock=(Join-Path $currentDestination 'DiskPulse.lock')}
     # New-only destination must remain untouched.
     [IO.File]::WriteAllText((Join-Path $currentDestination 'keep.txt'), 'new-data', (New-Object Text.UTF8Encoding $false))
-    $migrate.Invoke($null, [object[]]@([string]$legacySource, [string]$currentDestination)) | Out-Null
+    Invoke-DiskPulseMigration $migrationPaths @($legacySource)
     Assert-True ((Get-Content -Raw -LiteralPath (Join-Path $currentDestination 'keep.txt') -Encoding UTF8) -eq 'new-data') 'Migration must not overwrite existing destination data.'
-    Assert-True ((Get-Content -Raw -LiteralPath (Join-Path $currentDestination 'DiskPulse.csv') -Encoding UTF8) -eq 'old-csv') 'Legacy-only file should migrate.'
-    Assert-True ((Get-Content -Raw -LiteralPath (Join-Path $currentDestination 'snapshots\one.json') -Encoding UTF8) -eq 'old-snapshot') 'Nested legacy files should migrate preserving relative paths.'
+    Assert-True ((Import-Csv -LiteralPath (Join-Path $currentDestination 'DiskPulse.csv')).ID -eq 'T:') 'Legacy-only file should migrate.'
+    Assert-True ((Get-Content -Raw -LiteralPath (Join-Path $currentDestination 'snapshots\one.json') -Encoding UTF8) -eq '{"scanId":"one","completedAt":"2026-01-01T00:00:00Z","drives":[]}') 'Nested legacy files should migrate preserving relative paths.'
 
     # Reparse-point safety: a junction inside legacy points outside and must not be traversed.
     $junction = Join-Path $legacySource 'escape'
     cmd /c mklink /J "$junction" "$outsideSentinelDir" | Out-Null
     [IO.File]::WriteAllText((Join-Path $outsideSentinelDir 'sentinel.txt'), 'do-not-copy', (New-Object Text.UTF8Encoding $false))
-    $migrate.Invoke($null, [object[]]@([string]$legacySource, [string]$currentDestination)) | Out-Null
+    Invoke-DiskPulseMigration $migrationPaths @($legacySource)
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $currentDestination 'escape\sentinel.txt'))) 'Migration must not traverse reparse points.'
 
     # File reparse-point safety: when the environment permits creating a file
@@ -82,7 +87,7 @@ try {
     }
     catch { $fileLinkCreated = $false }
     if ($fileLinkCreated) {
-        $migrate.Invoke($null, [object[]]@([string]$legacySource, [string]$currentDestination)) | Out-Null
+        Invoke-DiskPulseMigration $migrationPaths @($legacySource)
         Assert-True (-not (Test-Path -LiteralPath (Join-Path $currentDestination 'escape-file.txt'))) 'Migration must not copy file reparse points.'
     }
     else {

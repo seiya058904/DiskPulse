@@ -51,9 +51,13 @@ Section "DiskPulse"
 
     CreateDirectory "$LOCALAPPDATA\DiskPulse\data\runtime"
     ${If} ${FileExists} "$EXEDIR\runtime\*.*"
-        FileOpen $0 "$LOCALAPPDATA\DiskPulse\data\migration-sources.txt" w
-        FileWrite $0 "$EXEDIR\runtime$\r$\n"
+        ; A new marker must never overwrite an unresolved marker from an earlier install.
+        GetTempFileName $1 "$LOCALAPPDATA\DiskPulse\data"
+        FileOpen $0 "$1" w
+        FileWriteWord $0 0xFEFF
+        FileWriteUTF16LE $0 "$EXEDIR\runtime$\r$\n"
         FileClose $0
+        Rename "$1" "$1.migration-source"
     ${EndIf}
 
     CreateDirectory "$SMPROGRAMS\DiskPulse"

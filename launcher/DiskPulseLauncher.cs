@@ -113,46 +113,35 @@ internal static class DataPaths
 
     internal static void EnsureMigrated(string appRoot)
     {
-        Directory.CreateDirectory(Runtime);
-        MigrateDirectory(Path.Combine(appRoot, "runtime"), Runtime);
-        MigrateDirectory(Path.Combine(appRoot, "app", "runtime"), Runtime);
-        MigrateDirectory(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "runtime"), Runtime);
-
-        string marker = Path.Combine(Root, "migration-sources.txt");
-        if (File.Exists(marker))
-        {
-            foreach (string source in File.ReadAllLines(marker))
-            {
-                if (!String.IsNullOrWhiteSpace(source)) MigrateDirectory(source.Trim(), Runtime);
-            }
-            File.Delete(marker);
-        }
+        string diagnostics = RunMigration(appRoot, Root, new [] {
+            Path.Combine(appRoot, "runtime"), Path.Combine(appRoot, "app", "runtime"),
+            Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "runtime") });
+        if (!String.IsNullOrWhiteSpace(diagnostics))
+            MessageBox.Show(diagnostics, "DiskPulse migration", MessageBoxButtons.OK, MessageBoxIcon.Warning);
     }
 
-    internal static void MigrateDirectory(string source, string destination)
+    internal static string RunMigration(string appRoot, string dataRoot, string[] sources)
     {
-        if (!Directory.Exists(source)) return;
-        DirectoryInfo sourceInfo = new DirectoryInfo(source);
-        MigrateDirectoryRecursive(sourceInfo, destination, sourceInfo.FullName);
-    }
-
-    private static void MigrateDirectoryRecursive(DirectoryInfo source, string destinationRoot, string basePath)
-    {
-        foreach (FileInfo file in source.GetFiles())
+        // Keep JSON validation and lock/atomic-write semantics in the canonical runtime.
+        ProcessStartInfo info = new ProcessStartInfo
         {
-            if ((file.Attributes & FileAttributes.ReparsePoint) != 0) continue;
-            string relative = file.FullName.Substring(basePath.Length).TrimStart(Path.DirectorySeparatorChar);
-            string target = Path.Combine(destinationRoot, relative);
-            if (File.Exists(target)) continue;
-            string parent = Path.GetDirectoryName(target);
-            if (!String.IsNullOrEmpty(parent)) Directory.CreateDirectory(parent);
-            File.Copy(file.FullName, target);
-        }
-
-        foreach (DirectoryInfo subdirectory in source.GetDirectories())
+            FileName = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe"),
+            Arguments = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"$ErrorActionPreference='Stop'; [Console]::OutputEncoding = New-Object Text.UTF8Encoding $false; try { Get-Content -Raw -LiteralPath $env:DISKPULSE_SCRIPT_PATH -Encoding UTF8 | Invoke-Expression } catch { Write-Output 'DiskPulse migration state unavailable; existing data preserved.'; exit 1 }\"",
+            WorkingDirectory = appRoot, UseShellExecute = false, CreateNoWindow = true,
+            WindowStyle = ProcessWindowStyle.Hidden, RedirectStandardOutput = true,
+            StandardOutputEncoding = System.Text.Encoding.UTF8
+        };
+        info.EnvironmentVariables["DISKPULSE_ROOT"] = appRoot;
+        info.EnvironmentVariables["DISKPULSE_DATA_ROOT"] = dataRoot;
+        info.EnvironmentVariables["DISKPULSE_SCRIPT_PATH"] = Path.Combine(appRoot, "check.bat");
+        info.EnvironmentVariables["DISKPULSE_MIGRATE"] = "1";
+        info.EnvironmentVariables["DISKPULSE_MIGRATION_SOURCES"] = String.Join("\n", sources);
+        using (Process process = Process.Start(info))
         {
-            if ((subdirectory.Attributes & FileAttributes.ReparsePoint) != 0) continue;
-            MigrateDirectoryRecursive(subdirectory, destinationRoot, basePath);
+            string diagnostics = process.StandardOutput.ReadToEnd();
+            process.WaitForExit();
+            if (process.ExitCode != 0 && String.IsNullOrWhiteSpace(diagnostics)) return "Migration state unavailable; existing data preserved.";
+            return diagnostics;
         }
     }
 }

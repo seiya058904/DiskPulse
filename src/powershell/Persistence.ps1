@@ -1,14 +1,15 @@
 function Complete-InterruptedScans {
     param($Paths)
     if(-not(Test-Path -LiteralPath $Paths.Events)){return}
-    $latest=@{};Get-Content -LiteralPath $Paths.Events -Encoding UTF8|Where-Object{$_.Trim()}|ForEach-Object{try{$e=$_|ConvertFrom-Json;$latest[[string]$e.scanId]=$e}catch{}}
+    $latest=@{}; Read-DiskPulseScanEvents $Paths.Events | ForEach-Object { $latest[[string]$_.scanId]=$_ }
     foreach($e in $latest.Values){if($e.status-eq'running'){Write-ScanEvent $Paths ([pscustomobject]@{scanId=$e.scanId;status='failed';reason='interrupted';completedAt=(Get-Date).ToUniversalTime().ToString('o')})}}
 }
 
 function Compact-ScanEvents {
     param($Paths, [int]$MaxLines = 1000, [int]$RecentFinalizedScans = 100)
+    Invoke-DiskPulsePublication (Split-Path -Parent $Paths.Events) {
     if (-not (Test-Path -LiteralPath $Paths.Events -PathType Leaf)) { return }
-    $lines = @(Get-Content -LiteralPath $Paths.Events -Encoding UTF8 | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    $lines = @(Read-DiskPulseScanEvents $Paths.Events | ForEach-Object { ConvertTo-Json -InputObject $_ -Depth 12 -Compress })
     if ($lines.Count -le $MaxLines) { return }
 
     $events = New-Object 'System.Collections.Generic.List[object]'
@@ -58,6 +59,7 @@ function Compact-ScanEvents {
     }
     finally {
         if (Test-Path -LiteralPath $temporaryPath) { Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue }
+    }
     }
 }
 

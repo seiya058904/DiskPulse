@@ -3,7 +3,7 @@ Set-StrictMode -Version Latest
 
 . (Join-Path $PSScriptRoot 'TestHelpers.ps1')
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$canonicalTestSource = New-DiskPulseCanonicalTestSource -Components @('Common', 'Scanner', 'History', 'Progress', 'Persistence')
+$canonicalTestSource = New-DiskPulseCanonicalTestSource -Components @('Common', 'Scanner', 'History', 'Progress', 'Persistence', 'AI')
 try {
     . $canonicalTestSource
 }
@@ -101,7 +101,7 @@ try {
     if ($finalProgress.completedTopLevel -ne $finalProgress.totalTopLevel -or $finalProgress.totalTopLevel -ne 4) {
         throw "Every top-level subtree must be complete in final progress."
     }
-    $expectedScanProperties = @('childrenEnumerationComplete','drive','enumerationComplete','errors','excluded','records','rootPath','status','unavailable')
+    $expectedScanProperties = @('childrenEnumerationComplete','drive','enumerationComplete','errors','excluded','records','rootPath','scopeSignature','scopeVersion','status','unavailable')
     $actualScanProperties = @($scan.PSObject.Properties.Name | Sort-Object)
     if (($actualScanProperties -join ',') -ne ($expectedScanProperties -join ',')) {
         throw "Progress support must not change the snapshot drive structure."
@@ -131,6 +131,40 @@ try {
         throw "A child permission denial must be an explicit expected exclusion without making the drive partial."
     }
     & icacls.exe $locked /remove:d $env:USERNAME /inheritance:e | Out-Null
+
+    # Three real native scans: a still-present parent must not report ACL loss as freed bytes.
+    $full = Invoke-DirectoryScan -Drive 'T:' -RootPath $temp
+    try {
+        & icacls.exe $a1 /inheritance:r /deny "$($env:USERNAME):(OI)(CI)F" | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'Nested ACL fixture failed.' }
+        $denied = Invoke-DirectoryScan -Drive 'T:' -RootPath $temp
+        $loss = @(Compare-DriveRecords $denied $full)
+        $parentLoss = $loss | Where-Object displayPath -eq $alpha
+        if ($parentLoss.state -ne 'unknown' -or $null -ne $parentLoss.deltaBytes) { throw 'ACL denial must not manufacture reliable release.' }
+        if (@($loss | Where-Object { $_.displayPath -eq $unicode -and $_.state -eq 'unchanged' }).Count -ne 1) { throw 'ACL failure contaminated unrelated directory.' }
+    } finally { & icacls.exe $a1 /remove:d $env:USERNAME /inheritance:e | Out-Null }
+    $restored = Invoke-DirectoryScan -Drive 'T:' -RootPath $temp
+    $gain = @(Compare-DriveRecords $restored $denied)
+    if (@($gain | Where-Object { $_.displayPath -eq $alpha -and $_.state -eq 'unknown' }).Count -ne 1) { throw 'Incomplete baseline must not manufacture growth.' }
+    if (@(Compare-DriveRecords $restored $full | Where-Object { $_.state -in @('created','changed','removed') }).Count) { throw 'Stable exclusions must allow unchanged comparison.' }
+    $changedScope = $restored | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+    $changedScope.scopeSignature = 'changed-policy'
+    if (@(Compare-DriveRecords $changedScope $full | Where-Object state -ne 'unknown').Count) { throw 'Different policy must not produce reliable deltas.' }
+    $legacy = $full | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+    foreach($record in $legacy.records) { $record.PSObject.Properties.Remove('enumerationComplete') }
+    if (@(Compare-DriveRecords $restored $legacy | Where-Object state -ne 'unknown').Count) { throw 'Missing legacy evidence must be explicit.' }
+    foreach($drive in @($full,$denied,$restored)) { $drive | Add-Member usedBytes ([int64]1000) }
+    $before=[pscustomobject]@{scanId='before-acl';startedAt='2026-01-01T00:00:00Z';completedAt='2026-01-01T00:01:00Z';status='complete';drives=@($full)}
+    $during=[pscustomobject]@{scanId='during-acl';startedAt='2026-01-02T00:00:00Z';completedAt='2026-01-02T00:01:00Z';status='complete';drives=@($denied)}
+    $after=[pscustomobject]@{scanId='after-acl';startedAt='2026-01-03T00:00:00Z';completedAt='2026-01-03T00:01:00Z';status='complete';drives=@($restored)}
+    $center=@(New-HistoryComparisonCenter @($before) $during)
+    $trend=$center[0].trends | Where-Object displayPath -eq $alpha
+    if ($null -ne $trend.samples[-1][1] -or $trend.cumulativeBytes -ne 0) { throw 'History trend must leave a gap for incomplete aggregates.' }
+    $baseline=Find-DriveBaseline @($before,$during) 'T:' $after
+    $comparison=New-HistoryComparison $restored $baseline.drives[0] $baseline
+    if ($comparison.coverage.addedBytes -ne 0 -or $comparison.coverage.releasedBytes -ne 0) { throw 'ACL recovery polluted coverage.' }
+    $directory=@([pscustomobject]@{drive='T:';status='complete';baselineScanId=$baseline.scanId;changes=$comparison.changes;coverage=$comparison.coverage;errors=@();excluded=@();unavailable=@()})
+    if (Test-DiskPulseAIInputEligible $directory) { throw 'ACL-only differences must not qualify as AI evidence.' }
 
     $callbackFailureScan = Invoke-DirectoryScan -Drive "T:" -RootPath $temp -ProgressCallback { throw "progress failure" }
     if ($callbackFailureScan.status -ne "complete") { throw "Progress callback errors must not change scan status." }

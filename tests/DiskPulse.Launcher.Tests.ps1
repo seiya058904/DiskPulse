@@ -29,15 +29,21 @@ Assert-True ($exeVersionInfo.ProductVersion -eq $expectedVersion) 'DiskPulse.exe
 
 $assembly = [Reflection.Assembly]::LoadFrom($exe)
 $dataType = $assembly.GetType('DataPaths', $true)
-$migrate = $dataType.GetMethod('MigrateDirectory', [Reflection.BindingFlags]'NonPublic,Static')
+$migrate = $dataType.GetMethod('RunMigration', [Reflection.BindingFlags]'NonPublic,Static')
+$payloadRoot = Join-Path $output 'payload'
+$extract = $assembly.GetType('Payload').GetMethod('EnsureExtracted', [Reflection.BindingFlags]'NonPublic,Static', $null, [Type[]]@([string]), $null)
+$extract.Invoke($null, [object[]]@([string]$payloadRoot)) | Out-Null
 $source = Join-Path $env:TEMP ('DiskPulse-migrate-source-' + [guid]::NewGuid().ToString('N'))
 $destination = Join-Path $env:TEMP ('DiskPulse-migrate-destination-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path (Join-Path $source 'snapshots') -Force | Out-Null
-New-Item -ItemType Directory -Path $destination -Force | Out-Null
-Set-Content -LiteralPath (Join-Path $source 'snapshots\one.json') -Value 'old' -Encoding UTF8
-Set-Content -LiteralPath (Join-Path $destination 'keep.txt') -Value 'new' -Encoding UTF8
-$migrate.Invoke($null, [object[]]@([string]$source, [string]$destination)) | Out-Null
-Assert-True (Test-Path -LiteralPath (Join-Path $destination 'snapshots\one.json')) 'Migration did not copy nested history files.'
-Assert-True ((Get-Content -Raw -LiteralPath (Join-Path $destination 'keep.txt') -Encoding UTF8).Trim() -eq 'new') 'Migration overwrote existing data.'
+$runtime = Join-Path $destination 'runtime'
+New-Item -ItemType Directory -Path $runtime -Force | Out-Null
+Set-Content -LiteralPath (Join-Path $source 'snapshots\one.json') -Value '{"scanId":"one","completedAt":"2026-01-01T00:00:00Z","drives":[]}' -Encoding UTF8
+Set-Content -LiteralPath (Join-Path $source 'scans.jsonl') -Value '{"scanId":"one","status":"complete"}' -Encoding UTF8
+Set-Content -LiteralPath (Join-Path $runtime 'keep.txt') -Value 'new' -Encoding UTF8
+$diagnostics = $migrate.Invoke($null, [object[]]@([string]$payloadRoot, [string]$destination, [string[]]@($source)))
+Assert-True ([string]::IsNullOrWhiteSpace($diagnostics)) 'Packaged migration returned an error.'
+Assert-True (Test-Path -LiteralPath (Join-Path $runtime 'snapshots\one.json')) 'Migration did not import nested history files.'
+Assert-True ((Get-Content -Raw -LiteralPath (Join-Path $runtime 'keep.txt') -Encoding UTF8).Trim() -eq 'new') 'Migration overwrote existing data.'
 
 Write-Output 'PASS: single-file launcher build'

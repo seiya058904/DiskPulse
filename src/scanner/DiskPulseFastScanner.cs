@@ -99,11 +99,17 @@ public static class DiskPulseFastScanner {
                 else if(ex is DirectoryNotFoundException) { AddEvidence(result.errors,directory,ex.Message,"transient-missing"); AddEvidence(result.unavailable,directory,"transient-missing"); }
                 else if(ex is FileNotFoundException) { AddEvidence(result.errors,directory,ex.Message,"transient-missing"); AddEvidence(result.unavailable,directory,"transient-missing"); }
                 else { AddEvidence(result.errors,directory,ex.Message,"enumeration-failed"); AddEvidence(result.unavailable,directory,"enumeration-failed"); result.status="partial"; }
-                foreach(var record in records.Values) if(record.kind=="directory" && directory.StartsWith(record.displayPath,StringComparison.OrdinalIgnoreCase)) record.childrenEnumerationComplete=false;
+                foreach(var record in records.Values) if(record.kind=="directory" && (directory.Equals(record.displayPath,StringComparison.OrdinalIgnoreCase) || directory.StartsWith(record.displayPath.TrimEnd('\\')+"\\",StringComparison.OrdinalIgnoreCase))) record.childrenEnumerationComplete=false;
             }
             if(top!=null && pending.ContainsKey(top) && --pending[top]==0) { completed++; emit("scanning",directory,false); }
         }
         watch.Stop(); emit(result.status=="failed"?"failed":"complete",current,true);
+        var failures=new List<DiskPulseFastEvidence>(result.unavailable);
+        failures.AddRange(result.excluded.FindAll(e=>e.reason=="access-denied"));
+        foreach(var evidence in failures) foreach(var record in records.Values) {
+            if(record.kind=="directory" && (evidence.path.Equals(record.displayPath,StringComparison.OrdinalIgnoreCase) || evidence.path.StartsWith(record.displayPath.TrimEnd('\\')+"\\",StringComparison.OrdinalIgnoreCase))) record.childrenEnumerationComplete=false;
+            if(record.kind=="rootFiles" && (evidence.path.Equals(root,StringComparison.OrdinalIgnoreCase) || (!records.ContainsKey(Key(evidence.path)) && String.Equals(Path.GetDirectoryName(evidence.path),root.TrimEnd('\\'),StringComparison.OrdinalIgnoreCase)))) record.childrenEnumerationComplete=false;
+        }
         result.records.AddRange(records.Values); result.enumerationComplete=result.status=="complete"; result.childrenEnumerationComplete=result.status=="complete";
         return result;
     }

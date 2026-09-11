@@ -2,9 +2,7 @@ function Read-Snapshots {
     param($Paths)
     $finalStatus = @{}
     if (Test-Path -LiteralPath $Paths.Events) {
-        Get-Content -LiteralPath $Paths.Events -Encoding UTF8 | Where-Object { $_.Trim() } | ForEach-Object {
-            try { $event = $_ | ConvertFrom-Json; $finalStatus[[string]$event.scanId] = [string]$event.status } catch {}
-        }
+        Read-DiskPulseScanEvents $Paths.Events | ForEach-Object { $finalStatus[[string]$_.scanId] = [string]$_.status }
     }
     @((Get-ChildItem -LiteralPath $Paths.Snapshots -Filter '*.json' -File -ErrorAction SilentlyContinue | ForEach-Object {
         $snapshotFile = $_
@@ -68,6 +66,58 @@ function Test-PathEvidenceMatch {
     return $false
 }
 
+function Test-DiskPulseRelatedPath {
+    param([string]$First,[string]$Second)
+    $a=$First.TrimEnd('\'); $b=$Second.TrimEnd('\')
+    return $a -and $b -and ($a.Equals($b,[StringComparison]::OrdinalIgnoreCase) -or
+        $a.StartsWith($b+'\',[StringComparison]::OrdinalIgnoreCase) -or $b.StartsWith($a+'\',[StringComparison]::OrdinalIgnoreCase))
+}
+
+function Get-DiskPulseRecordConfidence {
+    param($Drive,$Record,[string]$Path)
+    if (-not $Drive) { return 'no-baseline' }
+    if ($Drive.status -eq 'failed') { return 'scan-incomplete' }
+    if ($Record) {
+        foreach($field in @('enumerationComplete','childrenEnumerationComplete')) {
+            if ($Record.PSObject.Properties.Name -notcontains $field) { return 'legacy-evidence-missing' }
+            if (-not $Record.$field) { return 'scan-incomplete' }
+        }
+    }
+    $unavailable=if($Drive.PSObject.Properties.Name -contains 'unavailable'){@($Drive.unavailable)}else{@()}
+    $excluded=if($Drive.PSObject.Properties.Name -contains 'excluded'){@($Drive.excluded)}else{@()}
+    foreach($e in @($unavailable)+@($excluded | Where-Object { $_.PSObject.Properties.Name -notcontains 'reason' -or $_.reason -notin @('configured-exclusion','reparse-point') })) {
+        if (Test-DiskPulseRelatedPath $Path ([string]$e.path)) {
+            if ($Record -and $Record.kind -eq 'rootFiles' -and [IO.Path]::GetDirectoryName([string]$e.path) -ne $Drive.rootPath -and [string]$e.path -ne $Drive.rootPath) { continue }
+            if ($Record -and $Record.kind -eq 'rootFiles' -and @($Drive.records | Where-Object { $_.kind -eq 'directory' -and $_.displayPath -eq [string]$e.path }).Count) { continue }
+            return 'scan-incomplete'
+        }
+    }
+    if (-not $Record -and $Drive.status -notin @('complete','baseline')) { return 'scan-incomplete' }
+    return ''
+}
+
+function Get-DiskPulseComparisonReason {
+    param($Current,$Baseline,$Record,$Prior)
+    $r=if($Record){$Record}else{$Prior}
+    $path=if($r.kind -eq 'rootFiles'){$Current.rootPath}else{$r.displayPath}
+    $reason=Get-DiskPulseRecordConfidence $Current $Record $path
+    if($reason){return $reason}
+    $reason=Get-DiskPulseRecordConfidence $Baseline $Prior $path
+    if($reason){return $reason}
+    $currentScope=if($Current.PSObject.Properties.Name -contains 'scopeSignature'){$Current.scopeSignature}else{''}
+    $priorScope=if($Baseline.PSObject.Properties.Name -contains 'scopeSignature'){$Baseline.scopeSignature}else{''}
+    if($currentScope -ne $priorScope){return 'scope-mismatch'}
+    $boundaries=@()
+    foreach($drive in @($Current,$Baseline)) {
+        $excluded=if($drive.PSObject.Properties.Name -contains 'excluded'){@($drive.excluded)}else{@()}
+        $boundaries+= ,(@($excluded | Where-Object {
+            $_.PSObject.Properties.Name -contains 'reason' -and $_.reason -in @('configured-exclusion','reparse-point') -and (Test-DiskPulseRelatedPath $path ([string]$_.path))
+        } | ForEach-Object { ([string]$_.path).TrimEnd('\').ToLowerInvariant()+'|'+$_.reason } | Sort-Object -Unique) -join "`n")
+    }
+    if($boundaries[0] -ne $boundaries[1]){return 'scope-mismatch'}
+    return ''
+}
+
 function Compare-DriveRecords {
     param($Current,$Baseline)
     $old=@{};if($Baseline){foreach($r in @($Baseline.records)){$old[[string]$r.key]=$r}}
@@ -76,11 +126,16 @@ function Compare-DriveRecords {
         $seen[[string]$r.key]=$true;$prior=$old[[string]$r.key]
         $state=if(-not $Baseline){'unknown'}elseif(-not $prior){'created'}elseif([int64]$r.sizeBytes-ne[int64]$prior.sizeBytes){'changed'}else{'unchanged'}
         $delta=if($prior){[int64]$r.sizeBytes-[int64]$prior.sizeBytes}else{[int64]$r.sizeBytes}
-        $result.Add([pscustomobject]@{key=$r.key;displayPath=$r.displayPath;kind=$r.kind;level=$r.level;sizeBytes=[int64]$r.sizeBytes;deltaBytes=$delta;state=$state})
+        $reason=Get-DiskPulseComparisonReason $Current $Baseline $r $prior
+        if($reason){$state='unknown';$delta=$null}
+        $result.Add([pscustomobject]@{key=$r.key;displayPath=$r.displayPath;kind=$r.kind;level=$r.level;sizeBytes=[int64]$r.sizeBytes;deltaBytes=$delta;state=$state;reason=$reason})
     }
     if($Baseline){foreach($r in @($Baseline.records)){if($seen.ContainsKey([string]$r.key)){continue}
         $state=if(Test-PathEvidenceMatch $r.displayPath @($Current.unavailable)){'unavailable'}elseif(Test-PathEvidenceMatch $r.displayPath @($Current.excluded)){'unknown'}elseif($Current.status-eq'complete'){'removed'}else{'unknown'}
-        $result.Add([pscustomobject]@{key=$r.key;displayPath=$r.displayPath;kind=$r.kind;level=$r.level;sizeBytes=[int64]0;deltaBytes=-[int64]$r.sizeBytes;state=$state})
+        $reason=Get-DiskPulseComparisonReason $Current $Baseline $null $r
+        if($reason -and $state -ne 'unavailable'){$state='unknown'}
+        $delta=if($state -eq 'removed') {-[int64]$r.sizeBytes}else{$null}
+        $result.Add([pscustomobject]@{key=$r.key;displayPath=$r.displayPath;kind=$r.kind;level=$r.level;sizeBytes=[int64]0;deltaBytes=$delta;state=$state;reason=$reason})
     }}
     [object[]]$result
 }
@@ -153,8 +208,9 @@ function New-HistoryComparisonCenter {
         # Pre-index: snapshot drive records by normalized key, and pairRows by key
         $snapDriveIndex = New-Object 'Collections.Generic.List[object]'
         foreach ($snapshotItem in $timeline) {
-            $di = @{ snap = $snapshotItem; records = @{} }
+            $di = @{ snap = $snapshotItem; records = @{}; drive = $null }
             $driveItem = @($snapshotItem.drives | Where-Object { $_.drive -eq $currentDrive.drive }) | Select-Object -First 1
+            $di.drive = $driveItem
             if ($driveItem) {
                 foreach ($record in @($driveItem.records)) {
                     $di.records[[string]$record.key] = $record
@@ -189,7 +245,10 @@ function New-HistoryComparisonCenter {
             $samples = New-Object 'Collections.Generic.List[object]'
             foreach ($di in $snapDriveIndex) {
                 $rec = $di.records[$rk]
-                $samples.Add(@([string]$di.snap.completedAt, $(if ($rec) { [int64]$rec.sizeBytes } else { $null })))
+                $path=if($rec -and $rec.kind -eq 'rootFiles'){$di.drive.rootPath}else{$trendKey.displayPath}
+                $reason=Get-DiskPulseRecordConfidence $di.drive $rec $path
+                $pair=if($pairRowsByKey.ContainsKey($rk)){@($pairRowsByKey[$rk] | Where-Object { $_.at -eq [string]$di.snap.completedAt }) | Select-Object -First 1}else{$null}
+                $samples.Add(@([string]$di.snap.completedAt, $(if ($rec -and -not $reason -and (-not $pair -or $pair.state -in @('created','changed','removed','unchanged'))) { [int64]$rec.sizeBytes } else { $null })))
             }
             $comps = if ($pairRowsByKey.ContainsKey($rk)) { [array]$pairRowsByKey[$rk] } else { @() }
             $classification = Get-DirectoryTrendClassification $comps

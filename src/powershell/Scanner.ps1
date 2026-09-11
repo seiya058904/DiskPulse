@@ -16,6 +16,8 @@ function Invoke-DirectoryScan {
         $native = [DiskPulseFastScanner]::Scan($Drive, $RootPath, $nativeCallback)
         return [PSCustomObject]@{
             drive                       = $native.drive
+            scopeSignature              = 'diskpulse-scope-v1:fixed;depth=2;reparse=exclude;names=$recycle.bin,system volume information'
+            scopeVersion                = 1
             rootPath                    = $native.rootPath
             status                      = $native.status
             enumerationComplete         = $native.enumerationComplete
@@ -200,7 +202,7 @@ function Invoke-DirectoryScan {
                 $status = "partial"
             }
             foreach ($record in $records.Values) {
-                if ($record.kind -eq "directory" -and $directory.StartsWith($record.displayPath, [StringComparison]::OrdinalIgnoreCase)) {
+                if ($record.kind -eq "directory" -and ($directory -eq $record.displayPath -or $directory.StartsWith($record.displayPath.TrimEnd('\')+'\', [StringComparison]::OrdinalIgnoreCase))) {
                     $record.childrenEnumerationComplete = $false
                 }
             }
@@ -218,11 +220,19 @@ function Invoke-DirectoryScan {
     & $emitProgress $(if ($status -eq "failed") { "failed" } else { "complete" }) $currentPath $true
 
     $recordValues = [object[]]$records.Values
+    foreach ($e in ([object[]]$unavailable)+@($excluded | Where-Object { $_.reason -eq 'access-denied' })) {
+        foreach ($record in $recordValues) {
+            if ($record.kind -eq 'directory' -and ($e.path -eq $record.displayPath -or $e.path.StartsWith($record.displayPath.TrimEnd('\')+'\',[StringComparison]::OrdinalIgnoreCase))) { $record.childrenEnumerationComplete=$false }
+            if ($record.kind -eq 'rootFiles' -and ($e.path -eq $root -or (-not $records.ContainsKey((Normalize-PathKey $e.path)) -and [IO.Path]::GetDirectoryName($e.path) -eq $root.TrimEnd('\')))) { $record.childrenEnumerationComplete=$false }
+        }
+    }
     $excludedValues = [object[]]$excluded
     $unavailableValues = [object[]]$unavailable
     $errorValues = [object[]]$errors
     [PSCustomObject]@{
         drive                       = $Drive.ToUpperInvariant()
+        scopeSignature              = 'diskpulse-scope-v1:fixed;depth=2;reparse=exclude;names=$recycle.bin,system volume information'
+        scopeVersion                = 1
         rootPath                    = $root
         status                      = $status
         enumerationComplete         = ($status -eq "complete")

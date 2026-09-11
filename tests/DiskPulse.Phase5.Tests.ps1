@@ -9,7 +9,7 @@ $env:DISKPULSE_SCRIPT_PATH = Join-Path $root 'check.bat'
 Invoke-Expression $source.Substring($source.IndexOf('#>') + 2)
 
 function Rec([string]$Key,[int64]$Size,[int]$Level=1) {
-    [pscustomobject]@{ key=$Key; kind='directory'; displayPath=('T:\' + $Key); level=$Level; sizeBytes=$Size }
+    [pscustomobject]@{ key=$Key; kind='directory'; displayPath=('T:\' + $Key); level=$Level; sizeBytes=$Size; enumerationComplete=$true; childrenEnumerationComplete=$true }
 }
 function Drive([string]$Drive,[string]$Status,[string]$Root,[int64]$Used,[array]$Records) {
     [pscustomobject]@{ drive=$Drive; status=$Status; rootPath=$Root; usedBytes=$Used; records=$Records; unavailable=@(); excluded=@(); errors=@() }
@@ -20,13 +20,13 @@ function Snap([string]$Id,[string]$At,[array]$Drives) {
 
 $current = Snap 'now' '2026-07-13T12:00:00Z' @(
     (Drive 'T:' 'complete' 'T:\' 160 @((Rec 'Grow' 100),(Rec 'Gone' 0),(Rec 'Unknown' 20),(Rec 'Unavailable' 20)))
-    (Drive 'U:' 'complete' 'U:\' 260 @([pscustomobject]@{key='u';kind='directory';displayPath='U:\Data';level=1;sizeBytes=260}))
+    (Drive 'U:' 'complete' 'U:\' 260 @([pscustomobject]@{key='u';kind='directory';displayPath='U:\Data';level=1;sizeBytes=260;enumerationComplete=$true;childrenEnumerationComplete=$true}))
 )
 $failedTop = Snap 'failed-top' '2026-07-13T07:00:00Z' @((Drive 'T:' 'complete' 'T:\' 90 @((Rec 'Grow' 30))))
 $failedTop.status = 'failed'
 $snapshots = @(
     (Snap 'previous-t' '2026-07-13T11:00:00Z' @((Drive 'T:' 'complete' 'T:\' 100 @((Rec 'Grow' 40),(Rec 'Gone' 30),(Rec 'Unknown' 20),(Rec 'Unavailable' 20)))))
-    (Snap 'previous-u' '2026-07-13T10:00:00Z' @((Drive 'U:' 'complete' 'U:\' 200 @([pscustomobject]@{key='u';kind='directory';displayPath='U:\Data';level=1;sizeBytes=200}))))
+    (Snap 'previous-u' '2026-07-13T10:00:00Z' @((Drive 'U:' 'complete' 'U:\' 200 @([pscustomobject]@{key='u';kind='directory';displayPath='U:\Data';level=1;sizeBytes=200;enumerationComplete=$true;childrenEnumerationComplete=$true}))))
     (Snap 'partial' '2026-07-13T09:00:00Z' @((Drive 'T:' 'partial' 'T:\' 90 @((Rec 'Grow' 30)))))
     (Snap 'failed' '2026-07-13T08:00:00Z' @((Drive 'T:' 'failed' 'T:\' 90 @((Rec 'Grow' 30)))))
     $failedTop

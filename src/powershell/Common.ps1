@@ -138,60 +138,64 @@ function Test-LockOwner {
 
 function Acquire-DiskPulseLock {
     param($Paths, [string] $ScanId)
-    $process = Get-Process -Id $PID
-    $owner = [PSCustomObject]@{
-        pid              = $PID
-        processName      = $process.ProcessName
-        processStartedAt = $process.StartTime.ToUniversalTime().ToString("o")
-        scanId           = $ScanId
-    }
-    for ($attempt = 0; $attempt -lt 2; $attempt++) {
-        try {
-            $stream = [IO.File]::Open($Paths.Lock, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
-            try {
-                $bytes = [Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -InputObject $owner -Depth 12 -Compress))
-                $stream.Write($bytes, 0, $bytes.Length)
-            }
-            finally {
-                $stream.Dispose()
-            }
-            return $owner
-        }
-        catch [IO.IOException] {
-            try {
-                $existing = Get-Content -Raw -LiteralPath $Paths.Lock -Encoding UTF8 | ConvertFrom-Json
-            }
-            catch {
-                $existing = $null
-            }
-            if ($existing -and (Test-LockOwner $existing)) {
-                throw "DiskPulse 正在运行，请勿重复启动。"
-            }
-            if (Test-Path -LiteralPath $Paths.Lock) {
-                Remove-Item -LiteralPath $Paths.Lock -Force
-            }
-        }
-    }
-    throw "无法取得 DiskPulse 运行锁。"
+    try {
+        $stream = [IO.File]::Open($Paths.Lock, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    } catch [IO.IOException] { throw "DiskPulse is already running." }
+    return [pscustomobject]@{ scanId=$ScanId; Stream=$stream }
 }
 
 function Release-DiskPulseLock {
     param($Paths, $Owner)
-    if (-not (Test-Path -LiteralPath $Paths.Lock)) { return }
-    try {
-        $actual = Get-Content -Raw -LiteralPath $Paths.Lock -Encoding UTF8 | ConvertFrom-Json
-        if ([int]$actual.pid -eq $PID -and [string]$actual.scanId -eq [string]$Owner.scanId) {
-            Remove-Item -LiteralPath $Paths.Lock -Force
+    if ($Owner -and $Owner.Stream) { $Owner.Stream.Dispose() }
+}
+
+# Reentrant within this runspace; the handle provides cross-process exclusion.
+$script:diskPulsePublishLocks = @{}
+function Invoke-DiskPulsePublication {
+    param([string]$Runtime, [scriptblock]$Action)
+    $key = [IO.Path]::GetFullPath($Runtime).ToLowerInvariant()
+    if ($script:diskPulsePublishLocks.ContainsKey($key)) { return (& $Action) }
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    $stream = $null
+    while (-not $stream) {
+        try { $stream = [IO.File]::Open((Join-Path $Runtime 'publish.lock'), [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None) }
+        catch [IO.IOException] {
+            if ($watch.ElapsedMilliseconds -ge 30000) { throw 'Timed out acquiring DiskPulse publication lock.' }
+            Start-Sleep -Milliseconds 25
         }
     }
-    catch {
-        Write-Warning "无法验证或释放 DiskPulse 运行锁。"
+    $script:diskPulsePublishLocks[$key] = $stream
+    try { & $Action }
+    finally { $script:diskPulsePublishLocks.Remove($key); $stream.Dispose() }
+}
+
+function Read-DiskPulseScanEvents {
+    param([string]$Path)
+    if (-not [IO.File]::Exists($Path)) { return }
+    $lines = @([IO.File]::ReadAllLines($Path, [Text.Encoding]::UTF8))
+    $last = $lines.Count - 1
+    while ($last -ge 0 -and -not $lines[$last].Trim()) { $last-- }
+    for ($i=0; $i -le $last; $i++) {
+        if (-not $lines[$i].Trim()) { continue }
+        try {
+            $event = $lines[$i] | ConvertFrom-Json -ErrorAction Stop
+            if (-not $event -or -not $event.scanId -or -not $event.status) { throw 'Invalid event.' }
+            $event
+        } catch {
+            if ($i -eq $last) { Write-Warning 'Ignoring incomplete journal tail.' }
+            else { throw "Invalid journal record at line $($i+1)." }
+        }
     }
 }
 
 function Write-ScanEvent {
     param($Paths, $Event)
-    Add-Content -LiteralPath $Paths.Events -Value (ConvertTo-Json -InputObject $Event -Depth 12 -Compress) -Encoding UTF8
+    Invoke-DiskPulsePublication (Split-Path -Parent $Paths.Events) {
+        $events = @(Read-DiskPulseScanEvents $Paths.Events)
+        $lines = @($events | ForEach-Object { ConvertTo-Json -InputObject $_ -Depth 12 -Compress })
+        $lines += ConvertTo-Json -InputObject $Event -Depth 12 -Compress
+        Write-DiskPulseAtomicText -FinalPath $Paths.Events -Content (($lines -join [Environment]::NewLine) + [Environment]::NewLine)
+    }
 }
 
 function New-DiskPulseTempPath {
@@ -206,9 +210,12 @@ function New-DiskPulseTempPath {
 
 function Publish-DiskPulseAtomicFile {
     param([string] $FinalPath, [string] $TemporaryPath)
+    if ([IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($FinalPath)) -ne [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($TemporaryPath))) { throw 'Atomic publication requires the same directory.' }
     if (-not (Test-Path -LiteralPath $TemporaryPath -PathType Leaf)) {
         throw "Temporary file not found: $TemporaryPath"
     }
+    $flushStream = [IO.File]::Open($TemporaryPath, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    try { $flushStream.Flush($true) } finally { $flushStream.Dispose() }
     $directory = Split-Path -Parent $FinalPath
     if (-not (Test-Path -LiteralPath $directory)) {
         [IO.Directory]::CreateDirectory($directory) | Out-Null
