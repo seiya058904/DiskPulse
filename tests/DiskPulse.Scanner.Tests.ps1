@@ -18,6 +18,93 @@ if ([DiskPulseFastScanner]::NormalizeRoot('D:\') -ne 'D:\') {
     throw 'A drive root must retain its trailing separator so the whole drive is scanned.'
 }
 
+# Windows reports a drive letter created with SUBST as a fixed drive, so enumeration alone cannot
+# tell it apart from a real disk. Volume GUID is the authoritative identity: a SUBST letter resolves
+# to the same GUID as its owning volume. Serial/capacity are deliberately not authoritative because
+# unrelated volumes can collide on both values.
+$guidC = '\\?\Volume{11111111-1111-1111-1111-111111111111}\'
+$guidD = '\\?\Volume{22222222-2222-2222-2222-222222222222}\'
+$guidE = '\\?\Volume{33333333-3333-3333-3333-333333333333}\'
+$driveSet = Select-DiskPulseScannableDrives -Drives @(
+    [pscustomobject]@{ DeviceID = 'C:'; Size = 100; VolumeSerialNumber = 'AAAA1111'; VolumeGuid = $guidC; DosDeviceTarget = '\Device\HarddiskVolume3' }
+    [pscustomobject]@{ DeviceID = 'D:'; Size = 200; VolumeSerialNumber = 'BBBB2222'; VolumeGuid = $guidD; DosDeviceTarget = '\Device\HarddiskVolume4' }
+    # Deliberately give the alias different serial/capacity evidence: matching GUID must win.
+    [pscustomobject]@{ DeviceID = 'X:'; Size = 999; VolumeSerialNumber = 'FFFF9999'; VolumeGuid = $guidD; DosDeviceTarget = '\??\D:' }
+)
+if (@($driveSet.Drives).Count -ne 2 -or @($driveSet.Drives)[1].DeviceID -ne 'D:') {
+    throw 'A drive letter resolving to an already-enumerated Volume GUID must not be scanned twice.'
+}
+if (@($driveSet.Aliases).Count -ne 1 -or @($driveSet.Aliases)[0].id -ne 'X:' -or @($driveSet.Aliases)[0].aliasOf -ne 'D:') {
+    throw 'A skipped drive letter must be reported together with the drive that owns the volume.'
+}
+# Canonical selection must not depend on alphabetical order. A SUBST A: alias sorts before D:,
+# but the real volume-backed D: must still be kept so history and labels remain stable.
+$earlyAliasSet = Select-DiskPulseScannableDrives -Drives @(
+    [pscustomobject]@{ DeviceID = 'A:'; Size = 200; VolumeGuid = $guidD; DosDeviceTarget = '\??\D:' }
+    [pscustomobject]@{ DeviceID = 'D:'; Size = 200; VolumeGuid = $guidD; DosDeviceTarget = '\Device\HarddiskVolume4' }
+)
+if (@($earlyAliasSet.Drives).Count -ne 1 -or @($earlyAliasSet.Drives)[0].DeviceID -ne 'D:' -or @($earlyAliasSet.Aliases)[0].aliasOf -ne 'D:') {
+    throw 'A redirected letter must never displace the real volume-backed drive just because it sorts first.'
+}
+$caseSet = Select-DiskPulseScannableDrives -Drives @(
+    [pscustomobject]@{ DeviceID = 'D:'; Size = 200; VolumeGuid = $guidD.ToLowerInvariant() }
+    [pscustomobject]@{ DeviceID = 'X:'; Size = 200; VolumeGuid = $guidD.TrimEnd('\').ToUpperInvariant() }
+)
+if (@($caseSet.Drives).Count -ne 1) {
+    throw 'Volume GUID comparison must ignore case and trailing separators.'
+}
+# Same serial + same capacity on distinct GUIDs must never collapse. This is the collision case that
+# makes serial+capacity unsafe as an identity key.
+$collisionSet = Select-DiskPulseScannableDrives -Drives @(
+    [pscustomobject]@{ DeviceID = 'D:'; Size = 200; VolumeSerialNumber = 'BBBB2222'; VolumeGuid = $guidD }
+    [pscustomobject]@{ DeviceID = 'E:'; Size = 200; VolumeSerialNumber = 'BBBB2222'; VolumeGuid = $guidE }
+)
+if (@($collisionSet.Drives).Count -ne 2 -or @($collisionSet.Aliases).Count -ne 0) {
+    throw 'Distinct Volume GUIDs must be kept even when serial and capacity collide.'
+}
+# Missing or malformed GUID means unknown. Unknown drives are kept rather than guessed from weaker
+# evidence, even if their serial and capacity are identical.
+foreach ($unknownGuid in @('', 'not-a-volume-guid')) {
+    $unknownSet = Select-DiskPulseScannableDrives -Drives @(
+        [pscustomobject]@{ DeviceID = 'D:'; Size = 200; VolumeSerialNumber = 'BBBB2222'; VolumeGuid = $unknownGuid }
+        [pscustomobject]@{ DeviceID = 'X:'; Size = 200; VolumeSerialNumber = 'BBBB2222'; VolumeGuid = $unknownGuid }
+    )
+    if (@($unknownSet.Drives).Count -ne 2 -or @($unknownSet.Aliases).Count -ne 0) {
+        throw "Drives with unknown Volume GUID ('$unknownGuid') must never be treated as duplicates."
+    }
+}
+$guidlessSet = Select-DiskPulseScannableDrives -Drives @(
+    [pscustomobject]@{ DeviceID = 'D:'; Size = 200; VolumeSerialNumber = 'CCCC3333' }
+    [pscustomobject]@{ DeviceID = 'Y:'; Size = 200; VolumeSerialNumber = 'CCCC3333' }
+)
+if (@($guidlessSet.Drives).Count -ne 2 -or @($guidlessSet.Aliases).Count -ne 0) {
+    throw 'Drives without a Volume GUID property must be kept.'
+}
+$hashtableSet = Select-DiskPulseScannableDrives -Drives @(
+    @{ DeviceID = 'D:'; Size = 200; VolumeGuid = $guidD; DosDeviceTarget = '\Device\HarddiskVolume4' }
+    @{ DeviceID = 'Y:'; Size = 200; VolumeGuid = $guidD; DosDeviceTarget = '\??\D:' }
+)
+if (@($hashtableSet.Drives).Count -ne 1 -or @($hashtableSet.Aliases)[0].aliasOf -ne 'D:') {
+    throw 'Drive de-duplication must also work for hash-table drive records.'
+}
+if ((Get-DiskPulseDriveVolumeGuid '') -ne '') {
+    throw 'An empty drive name must not report a Volume GUID.'
+}
+if ((Get-DiskPulseDosDeviceTarget '') -ne '') {
+    throw 'An empty drive name must not report a DOS-device target.'
+}
+$systemGuid = Get-DiskPulseDriveVolumeGuid $env:SystemDrive
+if ($systemGuid -notmatch '^\\\\\?\\Volume\{[0-9A-Fa-f-]{36}\}$') {
+    throw "The system volume must report a Windows Volume GUID, got '$systemGuid'."
+}
+if ((Get-DiskPulseDriveVolumeSerial '') -ne '') {
+    throw 'An empty drive name must not report a volume serial.'
+}
+$systemSerial = Get-DiskPulseDriveVolumeSerial $env:SystemDrive
+if ($systemSerial -notmatch '^[0-9A-F]{8}$') {
+    throw "The system volume must report an 8-digit hexadecimal serial, got '$systemSerial'."
+}
+
 $progressLine = Format-ScanProgressLine -Progress ([pscustomobject]@{
     drive='T:'; filesProcessed=1234; directoriesProcessed=56; currentPath=('T:\' + ('long-path\' * 12)); elapsedMilliseconds=12500; percentComplete=50
 }) -CompletedDrives 1 -TotalDrives 4

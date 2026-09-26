@@ -13,6 +13,10 @@
     --orange: #f07818;
     --red: #dc2626;
     --unknown: #64748b;
+    /* Data text on white surfaces: the same shades the print palette already uses, because the
+       plain --orange/--green tokens are tuned for fills and only reach ~2.6:1 / ~3.8:1 as text. */
+    --growth-text: #b45309;
+    --release-text: #047857;
     --shadow: 0 8px 28px rgba(31,51,84,.06);
     --radius: 16px;
     color-scheme: light;
@@ -30,6 +34,8 @@
     --orange: #d97706;
     --red: #dc2626;
     --unknown: #64748b;
+    --growth-text: #d97706;
+    --release-text: #059669;
     --shadow: 0 8px 24px rgba(0,0,0,.35);
     color-scheme: dark;
   }
@@ -329,6 +335,16 @@
   .action-group { gap:7px; }
   .search, .select, .button, .toggle { height: 42px; border-color: var(--line); background: var(--panel); border-radius: 10px; font-size:13px; transition: background-color 170ms ease, border-color 170ms ease, box-shadow 170ms ease; }
   .action-search .search { width:220px; } .action-search .select { min-width:142px; }
+  /* Header hierarchy (DESIGN.md): search + sort are the primary workflow, display toggles are
+     secondary, report utilities are quiet. Groups read as groups instead of a wall of buttons. */
+  .action-report .button { background: transparent; color: var(--muted); }
+  .action-report .button:hover { background: color-mix(in srgb, var(--panel) 86%, var(--blue)); color: var(--text); }
+  /* A control label must never break mid-word: on a narrow phone 复制磁盘摘要 was splitting across
+     two lines while its siblings stayed on one. The flex row now wraps whole buttons instead. */
+  .actions .button, .actions .toggle { white-space: nowrap; }
+  @media (min-width: 1101px) {
+    .action-display, .action-report { padding-left: 14px; border-left: 1px solid var(--line); }
+  }
   .search:hover, .select:hover, .button:hover, .toggle:hover { background: color-mix(in srgb, var(--panel) 86%, var(--blue)); }
   .search:focus-visible, .select:focus-visible, .button:focus-visible, .toggle:focus-within, .copy-path:focus-visible, summary:focus-visible { outline: 3px solid color-mix(in srgb, var(--blue) 35%, transparent); outline-offset: 2px; }
   .section-intro { display: flex; justify-content: space-between; align-items: end; gap: 16px; margin: 22px 20px 10px; }
@@ -346,11 +362,15 @@
   .list-empty-note { color: var(--muted); font-size: 12px; font-weight: 600; }
   .state-change-list { margin-top: 10px; }
   .change-item { min-height: 48px; }
-  .growth-value { color: var(--orange); }
-  .release-value { color: var(--green); }
+  .growth-value { color: var(--growth-text); }
+  .release-value { color: var(--release-text); }
   .copy-path { color: var(--blue); font-weight: 600; border-radius: 7px; }
   .copy-path:hover { background: color-mix(in srgb, var(--blue) 10%, transparent); }
   .scan-details { background: var(--panel); border-radius: var(--radius); padding: 16px 18px; }
+  /* Avoid card-in-card: the scan panel already owns the surface, so its inner blocks are inset
+     and un-shadowed instead of stacking another bordered + shadowed card. */
+  .scan-summary-panel .scan-metadata { margin: 0 18px; box-shadow: none; }
+  .scan-summary-panel .scan-details { margin: 12px 18px 18px; background: var(--track); border: 1px solid var(--line); }
   .scan-details[open] summary { margin-bottom: 10px; }
   .completeness-warning { display: inline-flex; align-items: center; background: color-mix(in srgb, var(--orange) 12%, transparent); border-radius: 999px; padding: 7px 10px; }
   .grid { gap: 10px; }
@@ -393,6 +413,12 @@
   .change-hero { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin: 3px 0 12px; }
   .change-hero { margin:12px 0 18px; justify-content:space-between; }
   .change-hero b { font-size: clamp(42px,3.8vw,56px); color:var(--blue); letter-spacing: -.045em; white-space:nowrap; }
+  /* The headline figure carries the same growth/release semantics as the change rows, so the most
+     prominent number on the page can never contradict the list below it. An unknown direction stays
+     neutral rather than borrowing the accent colour. Specificity has to beat `.change-hero b`. */
+  .change-hero b.growth-value { color: var(--growth-text); }
+  .change-hero b.release-value { color: var(--release-text); }
+  .change-hero b.neutral-value { color: var(--muted); }
   .latest-change .change-metrics { background: var(--line); }
   .latest-change .change-metric { background: color-mix(in srgb,var(--panel) 82%,var(--blue)); }
   .latest-change .change-metric span { color: var(--muted); }
@@ -438,7 +464,11 @@
   .detail-groups { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   .detail-group { background: var(--track); border-radius: 10px; padding: 12px; min-width: 0; }
   .detail-group ul { margin: 7px 0 0 17px; }
-  .scan-summary-card { display:grid; grid-template-columns:1fr; gap:0; margin:0; border:0; box-shadow:none; padding:0 18px 12px; }
+  /* Two classes, not one: this element also carries .scan-metadata, whose five-column rule is
+     declared later in this sheet and would otherwise win at equal specificity — squeezing the
+     panel into 40px columns of vertically wrapped text at desktop widths. The scan panel sits in
+     the narrow side column of .disk-scan-layout, so it is a definition list of full-width rows. */
+  .scan-metadata.scan-summary-card { display:grid; grid-template-columns:1fr; gap:0; margin:0; border:0; box-shadow:none; padding:0 18px 12px; }
   .scan-summary-card .metadata-item { display:flex; align-items:center; justify-content:space-between; padding:10px 0; border-top:1px solid var(--line); } .scan-summary-card .metadata-item span { margin:0; } .scan-summary-card .metadata-item b { font-size:12px; text-align:right; }
   .scan-details { margin:0; border:0; border-top:1px solid var(--line); border-radius:0; padding:12px 18px 16px; }
   .scan-completeness-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
@@ -536,7 +566,7 @@
   .directory-trends { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 10px; }
   .directory-trends > b { display: block; margin-bottom: 6px; }
 
-  #overview-section, #attention-center, #change-details, #ai-analysis, #capacity-visuals, #history-center, #drive-details-section, #scan-completeness { scroll-margin-top: 76px; }
+  #overview-section, #attention-center, #change-details, #ai-analysis, #capacity-visuals, #history-summary-overview, #history-center, #drive-details-section, #scan-info, #scan-completeness { scroll-margin-top: 76px; }
   .section-nav { position: sticky; top: 0; z-index: 20; display: flex; gap: 6px; overflow-x: auto; margin: 0 0 22px; padding: 0 4px; min-height:48px; border-top: 1px solid var(--line); border-bottom:1px solid var(--line); background: color-mix(in srgb,var(--bg) 92%,transparent); backdrop-filter:blur(14px); scrollbar-width: none; }
   .section-nav::-webkit-scrollbar { display: none; }
   .section-nav a { flex: 0 0 auto; min-height: 47px; display: inline-flex; align-items: center; padding: 0 16px; border-bottom:2px solid transparent; color: var(--muted); font-size: 13px; font-weight: 650; text-decoration: none; }
@@ -583,6 +613,7 @@
   .capacity-drive-head { display: grid; grid-template-columns: auto auto auto 1fr; align-items: center; gap: 8px; }
   .capacity-drive-head strong { justify-self: end; }
   .capacity-current { padding: 3px 7px; border-radius: 999px; color: #fff; background: var(--blue); font-size: 10px; font-weight: 800; }
+  [data-theme="dark"] .capacity-current { color: #081120; }
   .capacity-current.is-placeholder { visibility: hidden; }
   .capacity-drive-state { padding: 3px 6px; border-radius: 999px; font-size: 10px; font-weight: 800; }
   .capacity-drive-state.critical { color: var(--red); background: color-mix(in srgb,var(--red) 11%,transparent); }
@@ -605,10 +636,11 @@
   .capacity-trend-chart { min-height: 350px; display: grid; place-items: center; }
   .capacity-svg { width: 100%; height: auto; min-height: 250px; overflow: visible; }
   .capacity-grid-line { stroke: var(--line); stroke-width: 1; }
-  .capacity-axis-label { fill: var(--muted); font-size: 10px; }
+  .capacity-axis-label { fill: var(--muted); font-size: 11px; }
   .capacity-area { fill:url(#capacity-area-gradient); }
   .capacity-line { fill: none; stroke: var(--blue); stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
   .capacity-point { fill: var(--panel); stroke: var(--blue); stroke-width: 1.7; vector-effect: non-scaling-stroke; }
+  .capacity-point.is-latest { fill: var(--blue); }
   .capacity-empty { color: var(--muted); font-size: 13px; line-height: 1.5; text-align: center; }
   .print-meta { display: none; }
   .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
@@ -666,7 +698,12 @@
     .summary-grid { display: flex; flex-direction: column; }
     .latest-change { order: 1; } .capacity-summary { order: 2; } .comparison-confidence { order: 3; }
     .capacity-layout { grid-template-columns: 78px 1fr; } .capacity-layout .ring { width: 78px; }
-    .summary-facts, .change-metrics, .change-controls, .scan-metadata, .scan-completeness-grid, .detail-groups { grid-template-columns: 1fr; }
+    .summary-facts, .change-metrics, .scan-metadata, .scan-completeness-grid, .detail-groups { grid-template-columns: 1fr; }
+    /* Compact filter area on phones: 2×2 selects plus a full-width path search, instead of five
+       stacked full-width fields that dominate the screen before the lists appear. */
+    .change-controls { grid-template-columns: 1fr 1fr; gap: 10px; padding: 10px; }
+    .change-controls label:last-child { grid-column: 1 / -1; }
+    .change-controls select { min-width: 0; }
     .change-side { align-items: flex-end; flex-direction: column; }
     .change-path.is-expanded, .top-path-name.is-expanded { white-space: normal; overflow-wrap: anywhere; }
     .top-path-row { grid-template-columns: minmax(0,1fr) auto; }
@@ -689,7 +726,7 @@
   }
 
   @media print {
-    :root, [data-theme="dark"] { --bg:#fff; --panel:#fff; --track:#f3f4f6; --line:#d1d5db; --text:#111827; --muted:#4b5563; --blue:#1d4ed8; --green:#047857; --orange:#b45309; --red:#b91c1c; color-scheme:light; }
+    :root, [data-theme="dark"] { --bg:#fff; --panel:#fff; --track:#f3f4f6; --line:#d1d5db; --text:#111827; --muted:#4b5563; --blue:#1d4ed8; --green:#047857; --orange:#b45309; --red:#b91c1c; --growth-text:#b45309; --release-text:#047857; color-scheme:light; }
     body { padding: 0; background: #fff; color: #111827; }
     .shell { width: 100%; }
     .actions, .section-nav, .change-controls, .copy-path, .range-buttons, .history-intro, #history-center, #scan-completeness, .drive-details, .history-expand, .ai-actions, .copy-modal-overlay { display: none !important; }

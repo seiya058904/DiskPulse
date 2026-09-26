@@ -30,6 +30,55 @@ public static class DiskPulseFastScanner {
         string full=Path.GetFullPath(rootPath);
         return full.Equals(Path.GetPathRoot(full),StringComparison.OrdinalIgnoreCase) ? full : full.TrimEnd('\\');
     }
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet=System.Runtime.InteropServices.CharSet.Unicode, SetLastError=true)]
+    static extern bool GetVolumeInformation(string rootPathName, System.Text.StringBuilder volumeNameBuffer, int volumeNameSize,
+        out uint volumeSerialNumber, out uint maximumComponentLength, out uint fileSystemFlags,
+        System.Text.StringBuilder fileSystemNameBuffer, int fileSystemNameSize);
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet=System.Runtime.InteropServices.CharSet.Unicode, SetLastError=true)]
+    static extern bool GetVolumeNameForVolumeMountPoint(string volumeMountPoint, System.Text.StringBuilder volumeName, int bufferLength);
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet=System.Runtime.InteropServices.CharSet.Unicode, SetLastError=true)]
+    static extern uint QueryDosDevice(string deviceName, System.Text.StringBuilder targetPath, int maxChars);
+    // Stable Windows volume GUID path (for example \\?\Volume{...}), normalized without the
+    // trailing separator, or "" when Windows cannot resolve the drive. SUBST aliases resolve to
+    // the same owning volume GUID as their target, while distinct real volumes keep distinct GUIDs.
+    // Failure is deliberately non-fatal: an unknown identity must never make a real drive vanish.
+    public static string GetVolumeGuid(string rootPath) {
+        if (string.IsNullOrEmpty(rootPath)) return "";
+        try {
+            string full=Path.GetFullPath(rootPath);
+            if (!full.EndsWith("\\",StringComparison.Ordinal)) full += "\\";
+            var name=new System.Text.StringBuilder(128);
+            if (!GetVolumeNameForVolumeMountPoint(full, name, name.Capacity)) return "";
+            string value=name.ToString().Trim();
+            if (value.Length==0) return "";
+            return value.TrimEnd('\\').ToUpperInvariant();
+        } catch { return ""; }
+    }
+    // First DOS-device target for a drive letter (for example \Device\HarddiskVolume4 for a
+    // real mount or \??\D: for a SUBST redirect), or "" when unavailable. This is not the
+    // identity key; it is only a tie-breaker so a real mount point wins over its redirected alias.
+    public static string GetDosDeviceTarget(string drive) {
+        if (string.IsNullOrEmpty(drive)) return "";
+        try {
+            string name=drive.Trim().TrimEnd('\\');
+            if (name.Length!=2 || name[1]!=':') return "";
+            var target=new System.Text.StringBuilder(1024);
+            if (QueryDosDevice(name, target, target.Capacity)==0) return "";
+            return target.ToString();
+        } catch { return ""; }
+    }
+    // Owning volume serial as 8 uppercase hex digits, or "" when it cannot be read. Retained for
+    // diagnostics and compatibility only; it is not globally unique and is therefore not used as
+    // the drive de-duplication key. Returns "" rather than throwing so an unreadable drive can
+    // never abort a scan.
+    public static string GetVolumeSerial(string rootPath) {
+        if (string.IsNullOrEmpty(rootPath)) return "";
+        try {
+            uint serial, max, flags;
+            if (!GetVolumeInformation(rootPath, null, 0, out serial, out max, out flags, null, 0)) return "";
+            return serial.ToString("X8");
+        } catch { return ""; }
+    }
     static void AddEvidence(List<DiskPulseFastEvidence> list, string path, string reason, string kind=null) {
         list.Add(new DiskPulseFastEvidence { path=path, reason=reason, kind=kind });
     }

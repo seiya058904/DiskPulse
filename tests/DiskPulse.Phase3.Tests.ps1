@@ -718,6 +718,16 @@ try{
         if($sv-match'WebException'){throw "${expectedStatus}: saved JSON must not contain exception text"}
     }
 
+    # Raw HTTP status codes are matched against the record's text fields only. Every saved record
+    # carries an ISO round-trip timestamp whose fractional digits are effectively random, so a bare
+    # `$sv-match'401'` over the whole file fails whenever the wall clock happens to supply those
+    # digits ('401' occurs in ~0.45% of ToString('o') samples; measured 3/300 runs produced a false
+    # failure). Excluding generatedAt keeps the guard on every field that could actually carry
+    # provider or exception text, without depending on the time of day.
+    function Get-SavedRecordText($json){
+        return ($json|ConvertFrom-Json|Select-Object * -ExcludeProperty generatedAt|ConvertTo-Json -Compress)
+    }
+
     # 1. disabled: enabled=false in config
     $td=New-TD 'disabled' (@{schemaVersion=1;enabled=$false;endpoint='https://api.example.com/v1';model='test-model'})
     $script:tc=0; $st={ $script:tc++; throw 'Transport must not be called' }
@@ -844,7 +854,7 @@ try{
     if(-not(Test-Path -LiteralPath $td.outPath)){throw "auth-401: output must exist"}
     $sv=Get-Content -Raw -LiteralPath $td.outPath -Encoding UTF8
     if(($sv|ConvertFrom-Json).status-ne'authentication-failed'){throw "auth-401: saved status must be 'authentication-failed'"}
-    if($sv-match'401'){throw "auth-401: saved JSON must not contain raw '401'"}
+    if((Get-SavedRecordText $sv)-match'401'){throw "auth-401: saved JSON must not contain raw '401'"}
     if($sv-match'Unauthorized'){throw "auth-401: saved JSON must not contain 'Unauthorized'"}
     if($sv-match'api\.example\.com'){throw "auth-401: saved JSON must not contain endpoint"}
 
@@ -858,7 +868,7 @@ try{
     if(-not(Test-Path -LiteralPath $td.outPath)){throw "auth-403: output must exist"}
     $sv=Get-Content -Raw -LiteralPath $td.outPath -Encoding UTF8
     if(($sv|ConvertFrom-Json).status-ne'authentication-failed'){throw "auth-403: saved status must be 'authentication-failed'"}
-    if($sv-match'403'){throw "auth-403: saved JSON must not contain raw '403'"}
+    if((Get-SavedRecordText $sv)-match'403'){throw "auth-403: saved JSON must not contain raw '403'"}
     if($sv-match'Forbidden'){throw "auth-403: saved JSON must not contain 'Forbidden'"}
     if($sv-match'api\.example\.com'){throw "auth-403: saved JSON must not contain endpoint"}
 
@@ -872,7 +882,7 @@ try{
     if(-not(Test-Path -LiteralPath $td.outPath)){throw "rate-429: output must exist"}
     $sv=Get-Content -Raw -LiteralPath $td.outPath -Encoding UTF8
     if(($sv|ConvertFrom-Json).status-ne'rate-limited'){throw "rate-429: saved status must be 'rate-limited'"}
-    if($sv-match'429'){throw "rate-429: saved JSON must not contain raw '429'"}
+    if((Get-SavedRecordText $sv)-match'429'){throw "rate-429: saved JSON must not contain raw '429'"}
     if($sv-match'Too Many'){throw "rate-429: saved JSON must not contain 'Too Many'"}
     if($sv-match'api\.example\.com'){throw "rate-429: saved JSON must not contain endpoint"}
 
@@ -1035,6 +1045,11 @@ function renderAIAnalysis(){ return AI_ANALYSIS.status; }
     Write-DiskPulseAtomicText -FinalPath (Join-Path $workerRuntime 'ai-current.json') -Content '{"scanId":"scan-1","analysisId":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
     $workerInputObj | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $workerInput -Encoding UTF8
     $env:DISKPULSE_ROOT=$workerRoot
+    # Get-DiskPulsePaths prefers DISKPULSE_DATA_ROOT over DISKPULSE_ROOT, and the packaged launcher
+    # always exports it. A developer shell that has it set would therefore point the worker runtime
+    # away from this fixture root, and every worker assertion below would fail for the wrong reason
+    # (the "exactly once" check reads 0 calls). Pin it to the root this test actually owns.
+    $env:DISKPULSE_DATA_ROOT=$workerRoot
     $env:DISKPULSE_AI_WORKER_SCANID='scan-1'
     $env:DISKPULSE_AI_WORKER_INPUT=$workerInput
     $env:DISKPULSE_AI_WORKER_HTML=$workerHtml
@@ -1200,6 +1215,7 @@ function renderAIAnalysis(){ return AI_ANALYSIS.status; }
 }finally{
     if($workerLock){Release-DiskPulseLock $workerPaths $workerLock}
     if($env:DISKPULSE_ROOT){Remove-Item Env:DISKPULSE_ROOT -ErrorAction SilentlyContinue}
+    if($env:DISKPULSE_DATA_ROOT){Remove-Item Env:DISKPULSE_DATA_ROOT -ErrorAction SilentlyContinue}
     if($env:DISKPULSE_AI_WORKER_SCANID){Remove-Item Env:DISKPULSE_AI_WORKER_SCANID -ErrorAction SilentlyContinue}
     if($env:DISKPULSE_AI_WORKER_INPUT){Remove-Item Env:DISKPULSE_AI_WORKER_INPUT -ErrorAction SilentlyContinue}
     if($env:DISKPULSE_AI_WORKER_HTML){Remove-Item Env:DISKPULSE_AI_WORKER_HTML -ErrorAction SilentlyContinue}

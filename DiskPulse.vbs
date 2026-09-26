@@ -26,18 +26,20 @@ shell.Environment("PROCESS")("DISKPULSE_SILENT") = "1"
 exitCode = shell.Run(Chr(34) & batPath & Chr(34), 0, True)
 
 If exitCode <> 0 Then
-    Dim message
-    message = "DiskPulse scan failed (exit code " & exitCode & ")."
+    If shell.Environment("PROCESS")("DISKPULSE_NO_ERROR_DIALOG") <> "1" Then
+        Dim message
+        message = "DiskPulse scan failed (exit code " & exitCode & ")."
 
-    If fso.FileExists(logPath) Then
-        message = message & vbCrLf & vbCrLf & _
-            "See log for details:" & vbCrLf & logPath
-    Else
-        message = message & vbCrLf & vbCrLf & _
-            "No log generated. Run check.bat directly to see the error."
+        If fso.FileExists(logPath) Then
+            message = message & vbCrLf & vbCrLf & _
+                "See log for details:" & vbCrLf & logPath
+        Else
+            message = message & vbCrLf & vbCrLf & _
+                "No log generated. Run check.bat directly to see the error."
+        End If
+
+        MsgBox message, vbCritical, "DiskPulse"
     End If
-
-    MsgBox message, vbCritical, "DiskPulse"
 End If
 
 WScript.Quit exitCode

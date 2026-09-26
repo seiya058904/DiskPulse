@@ -1,3 +1,28 @@
+function Get-DiskPulseDriveVolumeGuid {
+    param([string] $Drive)
+    # Volume GUID is the authoritative identity used for cross-letter de-duplication. Windows
+    # resolves a SUBST letter to the same owning volume GUID as its target. Failure returns an
+    # empty string so an unknown identity is kept rather than guessed.
+    if ([string]::IsNullOrWhiteSpace($Drive)) { return '' }
+    try { return [DiskPulseFastScanner]::GetVolumeGuid($Drive.TrimEnd('\') + '\') } catch { return '' }
+}
+
+function Get-DiskPulseDosDeviceTarget {
+    param([string] $Drive)
+    # Used only to prefer a real mount point over a SUBST/DOS redirect when two letters share the
+    # same Volume GUID. Failure is unknown and never removes a drive by itself.
+    if ([string]::IsNullOrWhiteSpace($Drive)) { return '' }
+    try { return [DiskPulseFastScanner]::GetDosDeviceTarget($Drive.TrimEnd('\')) } catch { return '' }
+}
+
+function Get-DiskPulseDriveVolumeSerial {
+    param([string] $Drive)
+    # Retained as diagnostic metadata/fallback evidence only. Volume serial numbers are not globally
+    # unique and therefore are no longer used to decide whether two drive letters are the same volume.
+    if ([string]::IsNullOrWhiteSpace($Drive)) { return '' }
+    try { return [DiskPulseFastScanner]::GetVolumeSerial($Drive.TrimEnd('\') + '\') } catch { return '' }
+}
+
 function Invoke-DirectoryScan {
     param(
         [string] $Drive,
