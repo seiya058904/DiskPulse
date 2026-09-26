@@ -335,3 +335,94 @@ function Add-FileAggregate {
         $Record.latestWriteTime = $writeTime
     }
 }
+
+function Get-DiskPulseMemberValue {
+    param($InputObject, [string] $Name)
+    if (-not $InputObject) { return $null }
+    if ($InputObject -is [System.Collections.IDictionary]) {
+        if ($InputObject.Contains($Name)) { return $InputObject[$Name] }
+        return $null
+    }
+    $property = $InputObject.PSObject.Properties[$Name]
+    if ($property) { return $property.Value }
+    return $null
+}
+
+# Windows reports a redirected drive letter (SUBST, and similar per-session mappings) with
+# DriveType 3, exactly like a real fixed disk. Use the owning Windows Volume GUID as the identity:
+# aliases resolve to the same GUID, while distinct volumes keep distinct GUIDs. Volume serial +
+# capacity is intentionally NOT used as a fallback because serial numbers are not globally unique;
+# if Windows cannot provide a GUID, the drive is kept and "unknown" stays unknown.
+function Get-DiskPulseDriveIdentityKey {
+    param($Drive)
+    $volumeGuid = [string](Get-DiskPulseMemberValue $Drive 'VolumeGuid')
+    if ([string]::IsNullOrWhiteSpace($volumeGuid)) { return $null }
+    $volumeGuid = $volumeGuid.Trim().TrimEnd('\')
+    if (-not $volumeGuid.StartsWith('\\?\Volume{', [StringComparison]::OrdinalIgnoreCase) -or -not $volumeGuid.EndsWith('}')) {
+        return $null
+    }
+    return 'VOLUME-GUID|' + $volumeGuid.ToUpperInvariant()
+}
+
+function Get-DiskPulseDriveCanonicalRank {
+    param($Drive)
+    $target = [string](Get-DiskPulseMemberValue $Drive 'DosDeviceTarget')
+    if ([string]::IsNullOrWhiteSpace($target)) { return 1 } # unknown
+    if ($target.StartsWith('\Device\', [StringComparison]::OrdinalIgnoreCase)) { return 0 } # real mount
+    if ($target.StartsWith('\??\', [StringComparison]::OrdinalIgnoreCase)) { return 2 } # SUBST/DOS redirect
+    return 1
+}
+
+function Select-DiskPulseScannableDrives {
+    param([object[]] $Drives)
+    $unknown = [System.Collections.Generic.List[object]]::new()
+    $groups = @{}
+    foreach ($drive in @($Drives)) {
+        if (-not $drive) { continue }
+        $id = [string](Get-DiskPulseMemberValue $drive 'DeviceID')
+        if ([string]::IsNullOrWhiteSpace($id)) { continue }
+        $key = Get-DiskPulseDriveIdentityKey $drive
+        if (-not $key) {
+            $unknown.Add($drive)
+            continue
+        }
+        if (-not $groups.ContainsKey($key)) { $groups[$key] = [System.Collections.Generic.List[object]]::new() }
+        $groups[$key].Add($drive)
+    }
+
+    $kept = [System.Collections.Generic.List[object]]::new()
+    foreach ($drive in $unknown) { $kept.Add($drive) }
+    $aliases = [System.Collections.Generic.List[object]]::new()
+    foreach ($key in @($groups.Keys | Sort-Object)) {
+        $candidates = @($groups[$key])
+        $owner = @($candidates | Sort-Object @{ Expression = { Get-DiskPulseDriveCanonicalRank $_ } }, @{ Expression = { [string](Get-DiskPulseMemberValue $_ 'DeviceID') } })[0]
+        $ownerId = [string](Get-DiskPulseMemberValue $owner 'DeviceID')
+        $kept.Add($owner)
+        foreach ($candidate in $candidates) {
+            $candidateId = [string](Get-DiskPulseMemberValue $candidate 'DeviceID')
+            if ($candidateId -eq $ownerId) { continue }
+            $aliases.Add([pscustomobject]@{ id = $candidateId; aliasOf = $ownerId })
+        }
+    }
+
+    $orderedDrives = @($kept.ToArray() | Sort-Object { [string](Get-DiskPulseMemberValue $_ 'DeviceID') })
+    $orderedAliases = @($aliases.ToArray() | Sort-Object id)
+    return [pscustomobject]@{ Drives = $orderedDrives; Aliases = $orderedAliases }
+}
+
+# Built by hand rather than with Select-Object: a calculated property that returns a one-element
+# array is unrolled into that single element, which would leave the dashboard an object where it
+# reads a list. The dashboard tolerates both shapes, but the field must still be a list.
+function New-DiskPulseScanMetaJson {
+    param($Snapshot, [object[]] $DriveAliases)
+    if (-not $Snapshot) { return '{}' }
+    $meta = [pscustomobject]@{
+        scanId       = $Snapshot.scanId
+        startedAt    = $Snapshot.startedAt
+        completedAt  = $Snapshot.completedAt
+        status       = $Snapshot.status
+        driveCount   = @($Snapshot.drives).Count
+        driveAliases = @($DriveAliases)
+    }
+    return ConvertTo-Json -InputObject $meta -Compress
+}

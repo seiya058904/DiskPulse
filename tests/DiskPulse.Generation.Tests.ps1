@@ -59,11 +59,26 @@ try {
     $env:DISKPULSE_ROOT = $projectRoot
     $env:DISKPULSE_SCRIPT_PATH = $generatedA
     Invoke-Expression $payload
-    foreach ($name in @('Get-DiskPulsePaths','Write-ScanEvent','Compact-ScanEvents','Invoke-DirectoryScan','Read-Snapshots','New-HistoryComparisonCenter','Invoke-DiskPulseAIAnalysis','Invoke-DiskPulse')) {
+    foreach ($name in @('Get-DiskPulsePaths','Write-ScanEvent','Compact-ScanEvents','Invoke-DirectoryScan','Read-Snapshots','New-HistoryComparisonCenter','Invoke-DiskPulseAIAnalysis','Invoke-DiskPulse','Select-DiskPulseScannableDrives','Get-DiskPulseDriveVolumeGuid','Get-DiskPulseDosDeviceTarget','Get-DiskPulseDriveVolumeSerial')) {
         if (-not (Get-Command $name -ErrorAction SilentlyContinue)) {
             throw "Generated check.bat is missing function: $name"
         }
     }
+    # Resolving drive aliases is what keeps a SUBST-style drive letter from being scanned and counted
+    # twice, so the generated pipeline must actually call it rather than merely define it.
+    Assert-True ($generatedContent.Contains('Select-DiskPulseScannableDrives -Drives $drives')) 'Generated check.bat must resolve drive aliases during enumeration.'
+    Assert-True ($generatedContent.Contains('VolumeGuid         = Get-DiskPulseDriveVolumeGuid')) 'Generated check.bat must resolve authoritative Volume GUID identity before de-duplication.'
+    Assert-True ($generatedContent.Contains('DosDeviceTarget     = Get-DiskPulseDosDeviceTarget')) 'Generated check.bat must classify DOS redirects so the real mount point wins canonical selection.'
+    Assert-True ($generatedContent.Contains('$skippedDriveAliases')) 'Generated check.bat must carry the skipped drive aliases into the report.'
+
+    # The dashboard reads driveAliases as a list. A one-element list must serialize as a list too,
+    # which is exactly what a calculated Select-Object property fails to do.
+    $metaSnapshot = [pscustomobject]@{ scanId = 'scan-1'; startedAt = 's'; completedAt = 'c'; status = 'complete'; drives = @([pscustomobject]@{ drive = 'C:' }) }
+    $singleAliasMeta = New-DiskPulseScanMetaJson -Snapshot $metaSnapshot -DriveAliases @([pscustomobject]@{ id = 'X:'; aliasOf = 'D:' })
+    Assert-True ($singleAliasMeta.Contains('"driveAliases":[{"id":"X:","aliasOf":"D:"}]')) "A single skipped drive alias must serialize as a one-element list, got: $singleAliasMeta"
+    $noAliasMeta = New-DiskPulseScanMetaJson -Snapshot $metaSnapshot -DriveAliases @()
+    Assert-True ($noAliasMeta.Contains('"driveAliases":[]')) "Without a skipped alias the list must serialize as empty, got: $noAliasMeta"
+    Assert-True ($noAliasMeta.Contains('"driveCount":1')) "The scan metadata must keep reporting the scanned drive count, got: $noAliasMeta"
 
     Write-Host ("GENERATION hash={0} bytes={1}" -f $hashA, (Get-Item -LiteralPath $generatedA).Length)
 }

@@ -346,6 +346,97 @@ function Add-FileAggregate {
         $Record.latestWriteTime = $writeTime
     }
 }
+
+function Get-DiskPulseMemberValue {
+    param($InputObject, [string] $Name)
+    if (-not $InputObject) { return $null }
+    if ($InputObject -is [System.Collections.IDictionary]) {
+        if ($InputObject.Contains($Name)) { return $InputObject[$Name] }
+        return $null
+    }
+    $property = $InputObject.PSObject.Properties[$Name]
+    if ($property) { return $property.Value }
+    return $null
+}
+
+# Windows reports a redirected drive letter (SUBST, and similar per-session mappings) with
+# DriveType 3, exactly like a real fixed disk. Use the owning Windows Volume GUID as the identity:
+# aliases resolve to the same GUID, while distinct volumes keep distinct GUIDs. Volume serial +
+# capacity is intentionally NOT used as a fallback because serial numbers are not globally unique;
+# if Windows cannot provide a GUID, the drive is kept and "unknown" stays unknown.
+function Get-DiskPulseDriveIdentityKey {
+    param($Drive)
+    $volumeGuid = [string](Get-DiskPulseMemberValue $Drive 'VolumeGuid')
+    if ([string]::IsNullOrWhiteSpace($volumeGuid)) { return $null }
+    $volumeGuid = $volumeGuid.Trim().TrimEnd('\')
+    if (-not $volumeGuid.StartsWith('\\?\Volume{', [StringComparison]::OrdinalIgnoreCase) -or -not $volumeGuid.EndsWith('}')) {
+        return $null
+    }
+    return 'VOLUME-GUID|' + $volumeGuid.ToUpperInvariant()
+}
+
+function Get-DiskPulseDriveCanonicalRank {
+    param($Drive)
+    $target = [string](Get-DiskPulseMemberValue $Drive 'DosDeviceTarget')
+    if ([string]::IsNullOrWhiteSpace($target)) { return 1 } # unknown
+    if ($target.StartsWith('\Device\', [StringComparison]::OrdinalIgnoreCase)) { return 0 } # real mount
+    if ($target.StartsWith('\??\', [StringComparison]::OrdinalIgnoreCase)) { return 2 } # SUBST/DOS redirect
+    return 1
+}
+
+function Select-DiskPulseScannableDrives {
+    param([object[]] $Drives)
+    $unknown = [System.Collections.Generic.List[object]]::new()
+    $groups = @{}
+    foreach ($drive in @($Drives)) {
+        if (-not $drive) { continue }
+        $id = [string](Get-DiskPulseMemberValue $drive 'DeviceID')
+        if ([string]::IsNullOrWhiteSpace($id)) { continue }
+        $key = Get-DiskPulseDriveIdentityKey $drive
+        if (-not $key) {
+            $unknown.Add($drive)
+            continue
+        }
+        if (-not $groups.ContainsKey($key)) { $groups[$key] = [System.Collections.Generic.List[object]]::new() }
+        $groups[$key].Add($drive)
+    }
+
+    $kept = [System.Collections.Generic.List[object]]::new()
+    foreach ($drive in $unknown) { $kept.Add($drive) }
+    $aliases = [System.Collections.Generic.List[object]]::new()
+    foreach ($key in @($groups.Keys | Sort-Object)) {
+        $candidates = @($groups[$key])
+        $owner = @($candidates | Sort-Object @{ Expression = { Get-DiskPulseDriveCanonicalRank $_ } }, @{ Expression = { [string](Get-DiskPulseMemberValue $_ 'DeviceID') } })[0]
+        $ownerId = [string](Get-DiskPulseMemberValue $owner 'DeviceID')
+        $kept.Add($owner)
+        foreach ($candidate in $candidates) {
+            $candidateId = [string](Get-DiskPulseMemberValue $candidate 'DeviceID')
+            if ($candidateId -eq $ownerId) { continue }
+            $aliases.Add([pscustomobject]@{ id = $candidateId; aliasOf = $ownerId })
+        }
+    }
+
+    $orderedDrives = @($kept.ToArray() | Sort-Object { [string](Get-DiskPulseMemberValue $_ 'DeviceID') })
+    $orderedAliases = @($aliases.ToArray() | Sort-Object id)
+    return [pscustomobject]@{ Drives = $orderedDrives; Aliases = $orderedAliases }
+}
+
+# Built by hand rather than with Select-Object: a calculated property that returns a one-element
+# array is unrolled into that single element, which would leave the dashboard an object where it
+# reads a list. The dashboard tolerates both shapes, but the field must still be a list.
+function New-DiskPulseScanMetaJson {
+    param($Snapshot, [object[]] $DriveAliases)
+    if (-not $Snapshot) { return '{}' }
+    $meta = [pscustomobject]@{
+        scanId       = $Snapshot.scanId
+        startedAt    = $Snapshot.startedAt
+        completedAt  = $Snapshot.completedAt
+        status       = $Snapshot.status
+        driveCount   = @($Snapshot.drives).Count
+        driveAliases = @($DriveAliases)
+    }
+    return ConvertTo-Json -InputObject $meta -Compress
+}
 if (-not ('DiskPulseFastScanner' -as [type])) {
 Add-Type -TypeDefinition @'
 using System;
@@ -379,6 +470,55 @@ public static class DiskPulseFastScanner {
     public static string NormalizeRoot(string rootPath) {
         string full=Path.GetFullPath(rootPath);
         return full.Equals(Path.GetPathRoot(full),StringComparison.OrdinalIgnoreCase) ? full : full.TrimEnd('\\');
+    }
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet=System.Runtime.InteropServices.CharSet.Unicode, SetLastError=true)]
+    static extern bool GetVolumeInformation(string rootPathName, System.Text.StringBuilder volumeNameBuffer, int volumeNameSize,
+        out uint volumeSerialNumber, out uint maximumComponentLength, out uint fileSystemFlags,
+        System.Text.StringBuilder fileSystemNameBuffer, int fileSystemNameSize);
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet=System.Runtime.InteropServices.CharSet.Unicode, SetLastError=true)]
+    static extern bool GetVolumeNameForVolumeMountPoint(string volumeMountPoint, System.Text.StringBuilder volumeName, int bufferLength);
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet=System.Runtime.InteropServices.CharSet.Unicode, SetLastError=true)]
+    static extern uint QueryDosDevice(string deviceName, System.Text.StringBuilder targetPath, int maxChars);
+    // Stable Windows volume GUID path (for example \\?\Volume{...}), normalized without the
+    // trailing separator, or "" when Windows cannot resolve the drive. SUBST aliases resolve to
+    // the same owning volume GUID as their target, while distinct real volumes keep distinct GUIDs.
+    // Failure is deliberately non-fatal: an unknown identity must never make a real drive vanish.
+    public static string GetVolumeGuid(string rootPath) {
+        if (string.IsNullOrEmpty(rootPath)) return "";
+        try {
+            string full=Path.GetFullPath(rootPath);
+            if (!full.EndsWith("\\",StringComparison.Ordinal)) full += "\\";
+            var name=new System.Text.StringBuilder(128);
+            if (!GetVolumeNameForVolumeMountPoint(full, name, name.Capacity)) return "";
+            string value=name.ToString().Trim();
+            if (value.Length==0) return "";
+            return value.TrimEnd('\\').ToUpperInvariant();
+        } catch { return ""; }
+    }
+    // First DOS-device target for a drive letter (for example \Device\HarddiskVolume4 for a
+    // real mount or \??\D: for a SUBST redirect), or "" when unavailable. This is not the
+    // identity key; it is only a tie-breaker so a real mount point wins over its redirected alias.
+    public static string GetDosDeviceTarget(string drive) {
+        if (string.IsNullOrEmpty(drive)) return "";
+        try {
+            string name=drive.Trim().TrimEnd('\\');
+            if (name.Length!=2 || name[1]!=':') return "";
+            var target=new System.Text.StringBuilder(1024);
+            if (QueryDosDevice(name, target, target.Capacity)==0) return "";
+            return target.ToString();
+        } catch { return ""; }
+    }
+    // Owning volume serial as 8 uppercase hex digits, or "" when it cannot be read. Retained for
+    // diagnostics and compatibility only; it is not globally unique and is therefore not used as
+    // the drive de-duplication key. Returns "" rather than throwing so an unreadable drive can
+    // never abort a scan.
+    public static string GetVolumeSerial(string rootPath) {
+        if (string.IsNullOrEmpty(rootPath)) return "";
+        try {
+            uint serial, max, flags;
+            if (!GetVolumeInformation(rootPath, null, 0, out serial, out max, out flags, null, 0)) return "";
+            return serial.ToString("X8");
+        } catch { return ""; }
     }
     static void AddEvidence(List<DiskPulseFastEvidence> list, string path, string reason, string kind=null) {
         list.Add(new DiskPulseFastEvidence { path=path, reason=reason, kind=kind });
@@ -467,6 +607,31 @@ public static class DiskPulseFastScanner {
 '@
 Profile-Mark "addType"
 }
+function Get-DiskPulseDriveVolumeGuid {
+    param([string] $Drive)
+    # Volume GUID is the authoritative identity used for cross-letter de-duplication. Windows
+    # resolves a SUBST letter to the same owning volume GUID as its target. Failure returns an
+    # empty string so an unknown identity is kept rather than guessed.
+    if ([string]::IsNullOrWhiteSpace($Drive)) { return '' }
+    try { return [DiskPulseFastScanner]::GetVolumeGuid($Drive.TrimEnd('\') + '\') } catch { return '' }
+}
+
+function Get-DiskPulseDosDeviceTarget {
+    param([string] $Drive)
+    # Used only to prefer a real mount point over a SUBST/DOS redirect when two letters share the
+    # same Volume GUID. Failure is unknown and never removes a drive by itself.
+    if ([string]::IsNullOrWhiteSpace($Drive)) { return '' }
+    try { return [DiskPulseFastScanner]::GetDosDeviceTarget($Drive.TrimEnd('\')) } catch { return '' }
+}
+
+function Get-DiskPulseDriveVolumeSerial {
+    param([string] $Drive)
+    # Retained as diagnostic metadata/fallback evidence only. Volume serial numbers are not globally
+    # unique and therefore are no longer used to decide whether two drive letters are the same volume.
+    if ([string]::IsNullOrWhiteSpace($Drive)) { return '' }
+    try { return [DiskPulseFastScanner]::GetVolumeSerial($Drive.TrimEnd('\') + '\') } catch { return '' }
+}
+
 function Invoke-DirectoryScan {
     param(
         [string] $Drive,
@@ -1082,6 +1247,85 @@ function Invoke-SnapshotRetention {
     $files=@(Get-ChildItem -LiteralPath $Paths.Snapshots -Filter '*.json' -File|ForEach-Object{$s=try{Get-Content -Raw $_.FullName -Encoding UTF8|ConvertFrom-Json}catch{$null};if($s){[pscustomobject]@{File=$_;Snapshot=$s;Partial=(@($s.drives|Where-Object{$_.status-eq'partial'}).Count-gt 0)}}})
     foreach($candidate in @($files|Where-Object{-not$protected.ContainsKey([string]$_.Snapshot.scanId)}|Sort-Object @{e='Partial';Descending=$true},@{e={$_.Snapshot.completedAt};Ascending=$true})){if($files.Count-le$Limit){break};try{Remove-Item -LiteralPath $candidate.File.FullName -Force;$files=@($files|Where-Object{$_.File.FullName-ne$candidate.File.FullName})}catch{Write-Warning "无法清理快照 $($candidate.File.Name)"}}
 }
+# Lightweight scan-progress bridge for the packaged launcher.
+# Publishes a flat, ASCII-safe state file (scan-progress.json) through the same atomic
+# write path as every other published artifact. Contents are limited to scan status,
+# coarse stage, drive letter, approximate percent and counters - never file paths,
+# file contents or configuration. Readers must treat a stale updatedAt as unknown.
+function New-DiskPulseProgressState {
+    @{ Watch = [Diagnostics.Stopwatch]::StartNew(); LastPublishMilliseconds = -10000 }
+}
+
+function Get-DiskPulseScanOverallPercent {
+    param($Progress, [int] $CompletedDrives, [int] $TotalDrives)
+    if ($Progress -and [double]$Progress.percentComplete -ge 0 -and $TotalDrives -gt 0) {
+        $driveFraction = [double]$Progress.percentComplete / 100
+        return [math]::Max(0, [math]::Min(100, (($CompletedDrives + $driveFraction) / $TotalDrives) * 100))
+    }
+    if (-not $Progress -and $TotalDrives -gt 0 -and $CompletedDrives -ge $TotalDrives) { return 100 }
+    return -1
+}
+
+function Write-DiskPulseScanProgress {
+    param(
+        $Paths,
+        [string] $ScanId,
+        [ValidateSet('running','complete','failed')] [string] $Status,
+        [string] $Stage = '',
+        [string] $Drive = '',
+        $Progress = $null,
+        [int] $CompletedDrives = 0,
+        [int] $TotalDrives = 0,
+        [long] $ElapsedMilliseconds = 0,
+        $State = $null,
+        [switch] $Force
+    )
+    # The progress bridge must never break a scan: any failure (locked file, disk hiccup,
+    # unexpected state) is swallowed and the scan continues without live progress.
+    try {
+        if (-not $Paths -or -not ($Paths.PSObject.Properties.Name -contains 'Runtime')) { return }
+        if ([string]::IsNullOrWhiteSpace($ScanId) -or -not (Test-DiskPulseAIScanId $ScanId)) { return }
+        $runtime = [string]$Paths.Runtime
+        if ([string]::IsNullOrWhiteSpace($runtime)) { return }
+        if ($State -is [System.Collections.Hashtable] -and -not $Force) {
+            $last = 0
+            if ($State.Contains('LastPublishMilliseconds')) { $last = [int64]$State.LastPublishMilliseconds }
+            if (($State.Watch.ElapsedMilliseconds - $last) -lt 800) { return }
+            $State.LastPublishMilliseconds = $State.Watch.ElapsedMilliseconds
+        }
+        $percent = Get-DiskPulseScanOverallPercent -Progress $Progress -CompletedDrives $CompletedDrives -TotalDrives $TotalDrives
+        $files = if ($Progress) { [int64]$Progress.filesProcessed } else { 0 }
+        $directories = if ($Progress) { [int64]$Progress.directoriesProcessed } else { 0 }
+        $now = (Get-Date).ToUniversalTime().ToString('o')
+        $record = [PSCustomObject]@{
+            scanId                = $ScanId
+            status                = $Status
+            stage                 = [string]$Stage
+            drive                 = [string]$Drive
+            percent               = [math]::Round($percent, 1)
+            percentKnown          = ($percent -ge 0)
+            completedDrives       = $CompletedDrives
+            totalDrives           = $TotalDrives
+            filesProcessed        = $files
+            directoriesProcessed  = $directories
+            elapsedMilliseconds   = [int64]$ElapsedMilliseconds
+            updatedAt             = $now
+        }
+        $finalPath = Join-Path $runtime 'scan-progress.json'
+        Write-DiskPulseAtomicText -FinalPath $finalPath -Content (ConvertTo-Json -InputObject $record -Depth 3 -Compress) -Validate {
+            param($Path)
+            try {
+                $parsed = Get-Content -Raw -LiteralPath $Path -Encoding UTF8 | ConvertFrom-Json
+                return ($null -ne $parsed -and [string]$parsed.scanId -eq $ScanId -and [string]$parsed.status -eq $Status)
+            }
+            catch {
+                return $false
+            }
+        }
+    }
+    catch { }
+}
+
 function Should-RenderConsoleProgress {
     param(
         [Parameter(Mandatory=$true)] $Progress,
@@ -2505,6 +2749,19 @@ Profile-Mark "init"
 $startedAt = (Get-Date).ToUniversalTime().ToString("o")
 $runStopwatch = [Diagnostics.Stopwatch]::StartNew()
 $scanStage = "初始化"
+$progressState = New-DiskPulseProgressState
+$progressStage = "init"
+$progressDrive = ""
+# Pre-initialized so the failure path can always publish progress, even when the
+# pipeline aborts before the drive loop assigns the real drive counters.
+$completedDrives = 0
+$totalDrives = 0
+$publishProgress = {
+    param([string]$Status, [string]$Stage, [string]$Drive, $Progress, [bool]$ForcePublish)
+    Write-DiskPulseScanProgress -Paths $paths -ScanId $scanId -Status $Status -Stage $Stage -Drive $Drive `
+        -Progress $Progress -CompletedDrives $completedDrives -TotalDrives $totalDrives `
+        -ElapsedMilliseconds $runStopwatch.ElapsedMilliseconds -State $progressState -Force:$ForcePublish
+}
 $consoleProgressState = @{ LastLength = 0; Active = $false; LastRenderedMilliseconds = -1 }
 $clearConsoleProgress = {
     if ($silent) { return }
@@ -2598,6 +2855,17 @@ $drives = @()
 try {
     $drives = Get-CimInstance Win32_LogicalDisk |
         Where-Object { $_.DriveType -eq 3 } |
+        ForEach-Object {
+            $deviceId = [string]$_.DeviceID
+            [PSCustomObject]@{
+                DeviceID           = $deviceId
+                Size               = $_.Size
+                FreeSpace          = $_.FreeSpace
+                VolumeSerialNumber = $_.VolumeSerialNumber
+                VolumeGuid         = Get-DiskPulseDriveVolumeGuid ($deviceId + '\')
+                DosDeviceTarget     = Get-DiskPulseDosDeviceTarget $deviceId
+            }
+        } |
         Sort-Object DeviceID
 }
 catch {
@@ -2606,12 +2874,24 @@ catch {
         Where-Object { $_.DriveType -eq [System.IO.DriveType]::Fixed -and $_.IsReady } |
         ForEach-Object {
             [PSCustomObject]@{
-                DeviceID  = $_.Name.TrimEnd('\')
-                Size      = $_.TotalSize
-                FreeSpace = $_.AvailableFreeSpace
+                DeviceID           = $_.Name.TrimEnd('\')
+                Size               = $_.TotalSize
+                FreeSpace          = $_.AvailableFreeSpace
+                VolumeSerialNumber = Get-DiskPulseDriveVolumeSerial $_.Name
+                VolumeGuid         = Get-DiskPulseDriveVolumeGuid $_.Name
+                DosDeviceTarget     = Get-DiskPulseDosDeviceTarget $_.Name
             }
         } |
         Sort-Object DeviceID
+}
+# A drive letter created with SUBST (or another mount alias) can be reported as a fixed drive.
+# De-duplicate only when Windows resolved two letters to the same Volume GUID. If identity lookup
+# fails, keep the drive: avoiding a false omission is more important than guessing an alias.
+$driveSelection = Select-DiskPulseScannableDrives -Drives $drives
+$drives = @($driveSelection.Drives)
+$skippedDriveAliases = @($driveSelection.Aliases)
+foreach ($alias in $skippedDriveAliases) {
+    Write-Warning "Drive $($alias.id) resolves to the same volume as $($alias.aliasOf); skipping it so its capacity is not counted twice."
 }
 Profile-Mark "diskQuery"
 $currentResults = [System.Collections.Generic.List[PSObject]]::new()
@@ -2665,11 +2945,15 @@ Profile-Mark "readSnapshots"
 $snapshotDrives = New-Object 'Collections.Generic.List[object]'
 $completedDrives = 0
 $totalDrives = @($drives).Count
+& $publishProgress 'running' 'init' '' $null $true
 foreach ($d in $drives) {
     $scanStage = "扫描磁盘 $($d.DeviceID)"
+    $progressStage = "scan"
+    $progressDrive = $d.DeviceID
     $capacity = $currentResults | Where-Object { $_.id -eq ($d.DeviceID -replace '\\','') } | Select-Object -First 1
     $consoleProgress = {
         param($progress)
+        & $publishProgress 'running' 'scan' ([string]$progress.drive) $progress $false
         if ($silent) { return }
         if (-not (Should-RenderConsoleProgress -Progress $progress -State $consoleProgressState)) { return }
         $line = Format-ScanProgressLine -Progress $progress -CompletedDrives $completedDrives -TotalDrives $totalDrives
@@ -2682,6 +2966,7 @@ foreach ($d in $drives) {
     $scan = Invoke-DirectoryScan -Drive $d.DeviceID -RootPath ($d.DeviceID + '\') -ProgressCallback $consoleProgress
     Profile-Mark "scanDone:$($d.DeviceID)"
     $completedDrives++
+    & $publishProgress 'running' 'scan' $d.DeviceID $null $true
     $consoleProgressState.LastRenderedMilliseconds = -1
     $priorComplete = $priorSnapshots | Where-Object { @($_.drives | Where-Object { $_.drive -eq $d.DeviceID -and $_.status -in @('baseline','complete') }).Count } | Select-Object -First 1
     if ($scan.status -eq 'complete' -and -not $priorComplete) { $scan.status = 'baseline' }
@@ -2691,6 +2976,8 @@ foreach ($d in $drives) {
     $snapshotDrives.Add($scan)
 }
 $completedAt = (Get-Date).ToUniversalTime().ToString('o')
+$progressStage = "report"
+& $publishProgress 'running' 'report' $progressDrive $null $true
 $snapshot = [PSCustomObject]@{
     scanId = $scanId
     startedAt = $startedAt
@@ -2749,7 +3036,7 @@ $directoryJson = ConvertTo-JsonArray ([object[]]$directoryResults)
 Profile-Mark "json:DIRECTORY"
 $historyCenterJson = ConvertTo-JsonArray ([object[]]$historyCenter)
 Profile-Mark "json:HISTORY_CENTER"
-$scanMetaJson = $snapshot | Select-Object scanId,startedAt,completedAt,status,@{n='driveCount';e={@($_.drives).Count}} | ConvertTo-Json -Compress
+$scanMetaJson = New-DiskPulseScanMetaJson -Snapshot $snapshot -DriveAliases $skippedDriveAliases
 $timestampJson = ConvertTo-Json -InputObject ([string]$timestamp) -Compress
 $systemDriveJson = ConvertTo-Json -InputObject ([string]$env:SystemDrive) -Compress
 $aiAnalysisJson = if ($aiAnalysisResult) { ConvertTo-DiskPulseSafeJSON $aiAnalysisResult } else { '{}' }
@@ -2784,6 +3071,10 @@ $html = @'
     --orange: #f07818;
     --red: #dc2626;
     --unknown: #64748b;
+    /* Data text on white surfaces: the same shades the print palette already uses, because the
+       plain --orange/--green tokens are tuned for fills and only reach ~2.6:1 / ~3.8:1 as text. */
+    --growth-text: #b45309;
+    --release-text: #047857;
     --shadow: 0 8px 28px rgba(31,51,84,.06);
     --radius: 16px;
     color-scheme: light;
@@ -2801,6 +3092,8 @@ $html = @'
     --orange: #d97706;
     --red: #dc2626;
     --unknown: #64748b;
+    --growth-text: #d97706;
+    --release-text: #059669;
     --shadow: 0 8px 24px rgba(0,0,0,.35);
     color-scheme: dark;
   }
@@ -3100,6 +3393,16 @@ $html = @'
   .action-group { gap:7px; }
   .search, .select, .button, .toggle { height: 42px; border-color: var(--line); background: var(--panel); border-radius: 10px; font-size:13px; transition: background-color 170ms ease, border-color 170ms ease, box-shadow 170ms ease; }
   .action-search .search { width:220px; } .action-search .select { min-width:142px; }
+  /* Header hierarchy (DESIGN.md): search + sort are the primary workflow, display toggles are
+     secondary, report utilities are quiet. Groups read as groups instead of a wall of buttons. */
+  .action-report .button { background: transparent; color: var(--muted); }
+  .action-report .button:hover { background: color-mix(in srgb, var(--panel) 86%, var(--blue)); color: var(--text); }
+  /* A control label must never break mid-word: on a narrow phone 复制磁盘摘要 was splitting across
+     two lines while its siblings stayed on one. The flex row now wraps whole buttons instead. */
+  .actions .button, .actions .toggle { white-space: nowrap; }
+  @media (min-width: 1101px) {
+    .action-display, .action-report { padding-left: 14px; border-left: 1px solid var(--line); }
+  }
   .search:hover, .select:hover, .button:hover, .toggle:hover { background: color-mix(in srgb, var(--panel) 86%, var(--blue)); }
   .search:focus-visible, .select:focus-visible, .button:focus-visible, .toggle:focus-within, .copy-path:focus-visible, summary:focus-visible { outline: 3px solid color-mix(in srgb, var(--blue) 35%, transparent); outline-offset: 2px; }
   .section-intro { display: flex; justify-content: space-between; align-items: end; gap: 16px; margin: 22px 20px 10px; }
@@ -3117,11 +3420,15 @@ $html = @'
   .list-empty-note { color: var(--muted); font-size: 12px; font-weight: 600; }
   .state-change-list { margin-top: 10px; }
   .change-item { min-height: 48px; }
-  .growth-value { color: var(--orange); }
-  .release-value { color: var(--green); }
+  .growth-value { color: var(--growth-text); }
+  .release-value { color: var(--release-text); }
   .copy-path { color: var(--blue); font-weight: 600; border-radius: 7px; }
   .copy-path:hover { background: color-mix(in srgb, var(--blue) 10%, transparent); }
   .scan-details { background: var(--panel); border-radius: var(--radius); padding: 16px 18px; }
+  /* Avoid card-in-card: the scan panel already owns the surface, so its inner blocks are inset
+     and un-shadowed instead of stacking another bordered + shadowed card. */
+  .scan-summary-panel .scan-metadata { margin: 0 18px; box-shadow: none; }
+  .scan-summary-panel .scan-details { margin: 12px 18px 18px; background: var(--track); border: 1px solid var(--line); }
   .scan-details[open] summary { margin-bottom: 10px; }
   .completeness-warning { display: inline-flex; align-items: center; background: color-mix(in srgb, var(--orange) 12%, transparent); border-radius: 999px; padding: 7px 10px; }
   .grid { gap: 10px; }
@@ -3164,6 +3471,12 @@ $html = @'
   .change-hero { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin: 3px 0 12px; }
   .change-hero { margin:12px 0 18px; justify-content:space-between; }
   .change-hero b { font-size: clamp(42px,3.8vw,56px); color:var(--blue); letter-spacing: -.045em; white-space:nowrap; }
+  /* The headline figure carries the same growth/release semantics as the change rows, so the most
+     prominent number on the page can never contradict the list below it. An unknown direction stays
+     neutral rather than borrowing the accent colour. Specificity has to beat `.change-hero b`. */
+  .change-hero b.growth-value { color: var(--growth-text); }
+  .change-hero b.release-value { color: var(--release-text); }
+  .change-hero b.neutral-value { color: var(--muted); }
   .latest-change .change-metrics { background: var(--line); }
   .latest-change .change-metric { background: color-mix(in srgb,var(--panel) 82%,var(--blue)); }
   .latest-change .change-metric span { color: var(--muted); }
@@ -3209,7 +3522,11 @@ $html = @'
   .detail-groups { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   .detail-group { background: var(--track); border-radius: 10px; padding: 12px; min-width: 0; }
   .detail-group ul { margin: 7px 0 0 17px; }
-  .scan-summary-card { display:grid; grid-template-columns:1fr; gap:0; margin:0; border:0; box-shadow:none; padding:0 18px 12px; }
+  /* Two classes, not one: this element also carries .scan-metadata, whose five-column rule is
+     declared later in this sheet and would otherwise win at equal specificity — squeezing the
+     panel into 40px columns of vertically wrapped text at desktop widths. The scan panel sits in
+     the narrow side column of .disk-scan-layout, so it is a definition list of full-width rows. */
+  .scan-metadata.scan-summary-card { display:grid; grid-template-columns:1fr; gap:0; margin:0; border:0; box-shadow:none; padding:0 18px 12px; }
   .scan-summary-card .metadata-item { display:flex; align-items:center; justify-content:space-between; padding:10px 0; border-top:1px solid var(--line); } .scan-summary-card .metadata-item span { margin:0; } .scan-summary-card .metadata-item b { font-size:12px; text-align:right; }
   .scan-details { margin:0; border:0; border-top:1px solid var(--line); border-radius:0; padding:12px 18px 16px; }
   .scan-completeness-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
@@ -3307,7 +3624,7 @@ $html = @'
   .directory-trends { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 10px; }
   .directory-trends > b { display: block; margin-bottom: 6px; }
 
-  #overview-section, #attention-center, #change-details, #ai-analysis, #capacity-visuals, #history-center, #drive-details-section, #scan-completeness { scroll-margin-top: 76px; }
+  #overview-section, #attention-center, #change-details, #ai-analysis, #capacity-visuals, #history-summary-overview, #history-center, #drive-details-section, #scan-info, #scan-completeness { scroll-margin-top: 76px; }
   .section-nav { position: sticky; top: 0; z-index: 20; display: flex; gap: 6px; overflow-x: auto; margin: 0 0 22px; padding: 0 4px; min-height:48px; border-top: 1px solid var(--line); border-bottom:1px solid var(--line); background: color-mix(in srgb,var(--bg) 92%,transparent); backdrop-filter:blur(14px); scrollbar-width: none; }
   .section-nav::-webkit-scrollbar { display: none; }
   .section-nav a { flex: 0 0 auto; min-height: 47px; display: inline-flex; align-items: center; padding: 0 16px; border-bottom:2px solid transparent; color: var(--muted); font-size: 13px; font-weight: 650; text-decoration: none; }
@@ -3354,6 +3671,7 @@ $html = @'
   .capacity-drive-head { display: grid; grid-template-columns: auto auto auto 1fr; align-items: center; gap: 8px; }
   .capacity-drive-head strong { justify-self: end; }
   .capacity-current { padding: 3px 7px; border-radius: 999px; color: #fff; background: var(--blue); font-size: 10px; font-weight: 800; }
+  [data-theme="dark"] .capacity-current { color: #081120; }
   .capacity-current.is-placeholder { visibility: hidden; }
   .capacity-drive-state { padding: 3px 6px; border-radius: 999px; font-size: 10px; font-weight: 800; }
   .capacity-drive-state.critical { color: var(--red); background: color-mix(in srgb,var(--red) 11%,transparent); }
@@ -3376,10 +3694,11 @@ $html = @'
   .capacity-trend-chart { min-height: 350px; display: grid; place-items: center; }
   .capacity-svg { width: 100%; height: auto; min-height: 250px; overflow: visible; }
   .capacity-grid-line { stroke: var(--line); stroke-width: 1; }
-  .capacity-axis-label { fill: var(--muted); font-size: 10px; }
+  .capacity-axis-label { fill: var(--muted); font-size: 11px; }
   .capacity-area { fill:url(#capacity-area-gradient); }
   .capacity-line { fill: none; stroke: var(--blue); stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
   .capacity-point { fill: var(--panel); stroke: var(--blue); stroke-width: 1.7; vector-effect: non-scaling-stroke; }
+  .capacity-point.is-latest { fill: var(--blue); }
   .capacity-empty { color: var(--muted); font-size: 13px; line-height: 1.5; text-align: center; }
   .print-meta { display: none; }
   .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
@@ -3437,7 +3756,12 @@ $html = @'
     .summary-grid { display: flex; flex-direction: column; }
     .latest-change { order: 1; } .capacity-summary { order: 2; } .comparison-confidence { order: 3; }
     .capacity-layout { grid-template-columns: 78px 1fr; } .capacity-layout .ring { width: 78px; }
-    .summary-facts, .change-metrics, .change-controls, .scan-metadata, .scan-completeness-grid, .detail-groups { grid-template-columns: 1fr; }
+    .summary-facts, .change-metrics, .scan-metadata, .scan-completeness-grid, .detail-groups { grid-template-columns: 1fr; }
+    /* Compact filter area on phones: 2×2 selects plus a full-width path search, instead of five
+       stacked full-width fields that dominate the screen before the lists appear. */
+    .change-controls { grid-template-columns: 1fr 1fr; gap: 10px; padding: 10px; }
+    .change-controls label:last-child { grid-column: 1 / -1; }
+    .change-controls select { min-width: 0; }
     .change-side { align-items: flex-end; flex-direction: column; }
     .change-path.is-expanded, .top-path-name.is-expanded { white-space: normal; overflow-wrap: anywhere; }
     .top-path-row { grid-template-columns: minmax(0,1fr) auto; }
@@ -3460,7 +3784,7 @@ $html = @'
   }
 
   @media print {
-    :root, [data-theme="dark"] { --bg:#fff; --panel:#fff; --track:#f3f4f6; --line:#d1d5db; --text:#111827; --muted:#4b5563; --blue:#1d4ed8; --green:#047857; --orange:#b45309; --red:#b91c1c; color-scheme:light; }
+    :root, [data-theme="dark"] { --bg:#fff; --panel:#fff; --track:#f3f4f6; --line:#d1d5db; --text:#111827; --muted:#4b5563; --blue:#1d4ed8; --green:#047857; --orange:#b45309; --red:#b91c1c; --growth-text:#b45309; --release-text:#047857; color-scheme:light; }
     body { padding: 0; background: #fff; color: #111827; }
     .shell { width: 100%; }
     .actions, .section-nav, .change-controls, .copy-path, .range-buttons, .history-intro, #history-center, #scan-completeness, .drive-details, .history-expand, .ai-actions, .copy-modal-overlay { display: none !important; }
@@ -3512,10 +3836,10 @@ $html = @'
     <a href="#attention-center">关注</a>
     <a href="#change-details">本次变化</a>
     <a href="#ai-analysis">AI 解释</a>
-    <a href="#capacity-visuals">容量趋势</a>
-    <a href="#history-center">历史对比</a>
+    <a href="#capacity-visuals">磁盘容量与使用率</a>
+    <a href="#history-summary-overview">历史对比</a>
     <a href="#drive-details-section">磁盘详情</a>
-    <a href="#scan-completeness">扫描信息</a>
+    <a href="#scan-info">扫描信息</a>
   </nav>
 
   <section class="overview" id="overview-section" aria-label="磁盘摘要">
@@ -3528,29 +3852,6 @@ $html = @'
   <section class="attention-section attention-strip" id="attention-center" aria-labelledby="attention-title">
     <div class="section-intro"><div><h2 id="attention-title">关注中心</h2><p>容量压力、可靠变化与扫描完整性</p></div></div>
     <div class="attention-list" id="attention-list"></div>
-  </section>
-
-  <section class="capacity-visuals" id="capacity-visuals" aria-labelledby="capacity-visuals-title">
-    <div class="section-intro"><div><h2 id="capacity-visuals-title">容量趋势</h2><p>选择磁盘并查看真实历史样本</p></div></div>
-    <div class="capacity-visual-grid">
-      <article class="capacity-panel" aria-labelledby="capacity-drive-list-title">
-        <div class="panel-heading"><div><h3 id="capacity-drive-list-title">磁盘选择与使用率</h3><p>按容量状态与使用率排列</p></div></div>
-        <div class="capacity-drive-list" id="capacity-drive-select"></div>
-      </article>
-      <article class="capacity-panel trend-panel" aria-labelledby="capacity-trend-title">
-        <div class="panel-heading trend-heading">
-          <div><h3 id="capacity-trend-title">容量趋势</h3><p id="capacity-trend-caption">选择磁盘查看趋势</p></div>
-          <div class="range-buttons" id="capacity-range" role="group" aria-label="容量趋势时间范围">
-            <button type="button" data-capacity-range="7" aria-pressed="false">7 天</button>
-            <button type="button" data-capacity-range="30" aria-pressed="true">30 天</button>
-            <button type="button" data-capacity-range="90" aria-pressed="false">90 天</button>
-            <button type="button" data-capacity-range="all" aria-pressed="false">全部</button>
-          </div>
-        </div>
-        <div class="capacity-trend-stats" id="capacity-trend-stats"></div>
-        <div class="capacity-trend-chart" id="capacity-trend-chart"></div>
-      </article>
-    </div>
   </section>
 
   <div class="section-intro"><div><h2>本次变化</h2><p>按可靠变化大小排序</p></div></div>
@@ -3576,6 +3877,29 @@ $html = @'
         <button class="button" id="copy-ai-output" type="button" hidden>复制 AI 结果</button>
       </div></div>
     <div class="ai-analysis-content" id="ai-analysis-content"></div>
+  </section>
+
+  <section class="capacity-visuals" id="capacity-visuals" aria-labelledby="capacity-visuals-title">
+    <div class="section-intro"><div><h2 id="capacity-visuals-title">磁盘容量与使用率</h2><p>选择磁盘并查看真实历史样本</p></div></div>
+    <div class="capacity-visual-grid">
+      <article class="capacity-panel" aria-labelledby="capacity-drive-list-title">
+        <div class="panel-heading"><div><h3 id="capacity-drive-list-title">磁盘选择与使用率</h3><p>按容量状态与使用率排列</p></div></div>
+        <div class="capacity-drive-list" id="capacity-drive-select"></div>
+      </article>
+      <article class="capacity-panel trend-panel" aria-labelledby="capacity-trend-title">
+        <div class="panel-heading trend-heading">
+          <div><h3 id="capacity-trend-title">容量趋势</h3><p id="capacity-trend-caption">选择磁盘查看趋势</p></div>
+          <div class="range-buttons" id="capacity-range" role="group" aria-label="容量趋势时间范围">
+            <button type="button" data-capacity-range="7" aria-pressed="false">7 天</button>
+            <button type="button" data-capacity-range="30" aria-pressed="true">30 天</button>
+            <button type="button" data-capacity-range="90" aria-pressed="false">90 天</button>
+            <button type="button" data-capacity-range="all" aria-pressed="false">全部</button>
+          </div>
+        </div>
+        <div class="capacity-trend-stats" id="capacity-trend-stats"></div>
+        <div class="capacity-trend-chart" id="capacity-trend-chart"></div>
+      </article>
+    </div>
   </section>
 
   <div class="section-intro history-intro"><div><h2>历史对比</h2><p>从既有完整快照比较累计变化</p></div></div>
@@ -3604,7 +3928,7 @@ $html = @'
 
   <div class="disk-scan-layout" id="drive-details-section">
     <section class="disk-detail-panel"><div class="section-intro"><div><h2>磁盘详情</h2><p>容量摘要与近期变化</p></div><a class="summary-link" href="#grid">查看全部磁盘</a></div><section class="disk-card-grid"><section class="grid" id="grid"></section></section><div class="empty" id="empty">没有匹配的磁盘</div></section>
-    <section class="scan-summary-panel" aria-label="扫描信息"><div class="section-intro"><div><h2>扫描信息</h2><p>本次扫描状态与范围</p></div></div><section class="scan-metadata" id="scan-metadata" aria-label="扫描元数据"></section><details class="scan-details" id="scan-completeness"><summary>查看扫描详情</summary><div id="scan-detail-body"></div></details></section>
+    <section class="scan-summary-panel" id="scan-info" aria-label="扫描信息"><div class="section-intro"><div><h2>扫描信息</h2><p>本次扫描状态与范围</p></div></div><section class="scan-metadata" id="scan-metadata" aria-label="扫描元数据"></section><details class="scan-details" id="scan-completeness"><summary>查看扫描详情</summary><div id="scan-detail-body"></div></details></section>
   </div>
   <div class="print-meta" id="print-meta" aria-hidden="true"></div>
   <div class="sr-only" id="live-status" aria-live="polite"></div>
@@ -4411,7 +4735,12 @@ function renderChangeSummary(items, summary, rankings) {
   const root = $("latest-change"); root.replaceChildren();
   root.append(element("div","summary-label","最新变化"),element("h2","summary-title",headline));
   const hero = element("div","change-hero");
-  hero.append(element("b","",main ? `${main.deltaBytes > 0 ? "+" : ""}${fmtBytes(main.deltaBytes)}` : "—"),element("span","summary-note",contribution === null ? "没有可靠变化排行" : `主路径贡献 ${contribution.toFixed(1)}%`));
+  // The headline figure is the most prominent number in the section, so it must not contradict the
+  // change rows below it: same growth/release semantics, neutral when no direction is known. The
+  // sign and the headline sentence still carry the meaning on their own, so colour is never the
+  // only signal.
+  const heroTone = main ? (main.deltaBytes > 0 ? "growth-value" : "release-value") : "neutral-value";
+  hero.append(element("b",heroTone,main ? `${main.deltaBytes > 0 ? "+" : ""}${fmtBytes(main.deltaBytes)}` : "—"),element("span","summary-note",contribution === null ? "没有可靠变化排行" : `主路径贡献 ${contribution.toFixed(1)}%`));
   root.append(hero);
   const metrics = element("div","change-metrics");
   [["可靠新增",`+${fmtBytes(summary.added)}`],["可靠释放",`${summary.released ? "-" : ""}${fmtBytes(summary.released)}`],["已定位净变化",fmtBytes(summary.located)],[fourthLabel,fourthValue]].forEach(([label,value]) => {
@@ -4514,6 +4843,9 @@ function capacityRangeLabel(range) {
   return range === "all" ? "全部历史" : `最近 ${range} 天`;
 }
 
+// Last viewBox width drawn, so the resize handler only redraws when the bucket changes.
+let capacityChartWidth = 0;
+
 function renderCapacityChart(samples, drive) {
   const root = $("capacity-trend-chart"); root.replaceChildren();
   const stats = capacityTrendStats(samples);
@@ -4521,7 +4853,13 @@ function renderCapacityChart(samples, drive) {
     root.append(element("div","capacity-empty","当前范围没有有效容量样本。"));
     return;
   }
-  const width = 720, height = 270, left = 56, right = 18, top = 24, bottom = 38;
+  // Draw at the host's real pixel width so SVG text keeps its declared size. A fixed 720-unit
+  // viewBox scaled down to a narrow panel reduced axis labels to a few unreadable pixels.
+  const measured = Math.round(root.clientWidth || 0) || 720;
+  const width = Math.max(260, Math.min(720, measured));
+  capacityChartWidth = width;
+  const narrow = width < 520;
+  const height = narrow ? 250 : 270, left = narrow ? 44 : 56, right = narrow ? 14 : 18, top = 24, bottom = narrow ? 34 : 38;
   const plotWidth = width-left-right, plotHeight = height-top-bottom;
   const minTime = stats.first.time, maxTime = stats.last.time;
   const rawSpan = stats.max-stats.min;
@@ -4536,7 +4874,7 @@ function renderCapacityChart(samples, drive) {
   const titleId = "capacity-chart-title", descId = "capacity-chart-desc";
   svg.setAttribute("aria-labelledby",`${titleId} ${descId}`);
   const title = document.createElementNS(svgNs,"title"); title.id=titleId; title.textContent=`${drive.id} 已用容量历史趋势`;
-  const desc = document.createElementNS(svgNs,"desc"); desc.id=descId; desc.textContent=`${capacityRangeLabel(state.capacityRange)}，${formatLocalDate(stats.first.timestamp)} 至 ${formatLocalDate(stats.last.timestamp)}，共 ${stats.count} 个有效样本。`;
+  const desc = document.createElementNS(svgNs,"desc"); desc.id=descId; desc.textContent=`${capacityRangeLabel(state.capacityRange)}，${formatLocalDate(stats.first.timestamp)} 至 ${formatLocalDate(stats.last.timestamp)}，共 ${stats.count} 个有效样本。最新 ${fmt(stats.last.used)}，范围内最高 ${fmt(stats.max)}，最低 ${fmt(stats.min)}。`;
   svg.append(title,desc);
   const defs = document.createElementNS(svgNs,"defs");
   const gradient = document.createElementNS(svgNs,"linearGradient");
@@ -4557,10 +4895,13 @@ function renderCapacityChart(samples, drive) {
   path.classList.add("capacity-line");
   path.setAttribute("d",samples.map((sample,index) => `${index ? "L" : "M"}${x(sample).toFixed(2)},${y(sample).toFixed(2)}`).join(" "));
   svg.append(path);
-  samples.forEach((sample) => {
+  samples.forEach((sample,index) => {
     const point = document.createElementNS(svgNs,"circle");
-    point.classList.add("capacity-point"); point.setAttribute("cx",x(sample).toFixed(2)); point.setAttribute("cy",y(sample).toFixed(2)); point.setAttribute("r","2.4");
-    const tooltip = document.createElementNS(svgNs,"title"); tooltip.textContent=`${formatLocalDate(sample.timestamp)} · ${fmt(sample.used)} · ${pct(sample.percent)}`; point.append(tooltip); svg.append(point);
+    point.classList.add("capacity-point");
+    const isLatest = index === samples.length-1;
+    if (isLatest) point.classList.add("is-latest");
+    point.setAttribute("cx",x(sample).toFixed(2)); point.setAttribute("cy",y(sample).toFixed(2)); point.setAttribute("r",isLatest ? "4" : "2.4");
+    const tooltip = document.createElementNS(svgNs,"title"); tooltip.textContent=`${isLatest ? "最新样本 " : ""}${formatLocalDate(sample.timestamp)} · ${fmt(sample.used)} · ${pct(sample.percent)}`; point.append(tooltip); svg.append(point);
   });
   [[left,stats.first.timestamp,"start"],[width-right,stats.last.timestamp,"end"]].forEach(([labelX,timestamp,anchor]) => {
     const label = document.createElementNS(svgNs,"text"); label.setAttribute("x",String(labelX)); label.setAttribute("y",String(height-10)); label.setAttribute("text-anchor",anchor); label.classList.add("capacity-axis-label"); label.textContent=formatLocalDate(timestamp).slice(0,10); svg.append(label);
@@ -4586,7 +4927,11 @@ function renderCapacityVisuals() {
   const stats = capacityTrendStats(samples);
   $("capacity-trend-caption").textContent = `${state.capacityDrive} · ${capacityRangeLabel(state.capacityRange)}`;
   statsRoot.className="capacity-trend-stats trend-summary";
-  const statValues = stats ? [["当前使用",fmt(drive.used)],["总容量",fmt(drive.total)],["可用容量",fmt(drive.free)],["较范围起点",stats.change === null ? "样本不足" : `${stats.change >= 0 ? "+" : ""}${fmt(stats.change)}`]] : [["当前使用","—"],["总容量","—"],["可用容量","—"],["较范围起点","—"]];
+  const statValues = stats
+    ? [["当前使用",fmt(drive.used)],["总容量",fmt(drive.total)],["可用容量",fmt(drive.free)],
+       ["较范围起点",stats.change === null ? "样本不足" : `${stats.change >= 0 ? "+" : ""}${fmt(stats.change)}`],
+       ["范围内最高",fmt(stats.max)],["范围内最低",fmt(stats.min)]]
+    : [["当前使用","—"],["总容量","—"],["可用容量","—"],["较范围起点","—"],["范围内最高","—"],["范围内最低","—"]];
   statValues.forEach(([label,value]) => { const card=element("div","capacity-stat"); card.append(element("span","",label),element("b","",value)); statsRoot.append(card); });
   renderCapacityChart(samples,drive);
   const rangeText = stats ? `${formatLocalDate(stats.first.timestamp)} 至 ${formatLocalDate(stats.last.timestamp)} · ${stats.count} 个有效样本` : "当前范围没有有效样本";
@@ -4670,6 +5015,25 @@ function renderScanMetadata() {
   const end = SCAN_META.completedAt ? new Date(SCAN_META.completedAt) : null;
   const duration = start && end ? `${Math.max(0,Math.round((end-start)/1000))} 秒` : "-";
   const fields = [["扫描开始",formatLocalDate(SCAN_META.startedAt),SCAN_META.startedAt||"-"],["扫描完成",formatLocalDate(SCAN_META.completedAt),SCAN_META.completedAt||"-"],["总耗时",duration,duration],["扫描磁盘",`${Number(SCAN_META.driveCount||0)} 个`,`${Number(SCAN_META.driveCount||0)} 个`]];
+  // Credibility belongs next to the scan facts (see DESIGN.md 扫描信息). Surface the same
+  // aggregate verdict the comparison-confidence card uses, plus how many paths were excluded or
+  // limited, so the verdict is readable without opening 查看扫描详情. No new judgement is made here.
+  const evidence = classifyScanEvidence(DIRECTORY);
+  const integrityLabels = { complete:"完整", partial:"部分完成", failed:"失败", waiting:"等待基线" };
+  const integrity = integrityLabels[confidenceFor(DIRECTORY).state] || "等待基线";
+  const limitationCount = evidence.permissionLimited.length + evidence.transientMissing.length + evidence.unexpected.length;
+  fields.push(["扫描完整性",integrity,"各磁盘扫描执行状态与可比性的综合判断。"]);
+  fields.push(["排除与受限",`忽略 ${evidence.designedIgnored.length} · 受限 ${limitationCount}`,"按设计忽略项与受限项数量；详见「查看扫描详情」。"]);
+  // A drive letter that resolves to a volume already counted (a SUBST-style alias) is skipped so the
+  // same capacity is not added twice. Say so: a letter that silently disappears would look like a
+  // failed scan. Only rendered when it actually happened. The field is normally a list; a single
+  // record is also accepted because older builds serialized one-element lists as a bare object.
+  const rawAliases = SCAN_META.driveAliases;
+  const aliasList = Array.isArray(rawAliases) ? rawAliases : (rawAliases && rawAliases.id ? [rawAliases] : []);
+  const aliasNote = aliasList
+    .filter((alias) => alias && alias.id)
+    .map((alias) => `${String(alias.id)} 与 ${String(alias.aliasOf||"?")} 同卷，未重复统计`);
+  if (aliasNote.length) { fields.push(["同卷别名",aliasNote.join("；"),"这些盘符指向已经统计过的卷，已跳过以避免容量被重复计算。"]); }
   const scanId = String(SCAN_META.scanId||"-");
   const root = $("scan-metadata"); root.className="scan-metadata scan-summary-card"; root.replaceChildren();
   fields.forEach(([label,value,title]) => { const item=element("div","metadata-item"); const strong=element("b","",value); strong.title=String(title); item.append(element("span","",label),strong); root.append(item); });
@@ -4692,9 +5056,18 @@ function render() {
 }
 
 function openHistoryFromHash() {
-  if (location.hash !== "#history-center" && location.hash !== "#history-details") return;
-  const details = $("history-details");
-  if (details) details.open = true;
+  const hash = location.hash;
+  if (hash === "#history-center" || hash === "#history-details") {
+    const details = $("history-details");
+    if (details) details.open = true;
+    return;
+  }
+  // The attention centre links straight at the collapsed scan-details block; without this the
+  // user lands on a closed summary and has to click a second time to see the reason.
+  if (hash === "#scan-completeness") {
+    const scanDetails = $("scan-completeness");
+    if (scanDetails) scanDetails.open = true;
+  }
 }
 
 ["change-drive-filter","change-level-filter","change-direction-filter","change-state-filter"].forEach((id) => $(id).addEventListener("change", renderDirectoryChanges));
@@ -4788,6 +5161,16 @@ $("themeBtn").addEventListener("click", () => {
 })();
 
 $("print-report").addEventListener("click", () => window.print());
+
+// Redraw the trend chart when the panel crosses a width bucket, so the viewBox keeps matching
+// the rendered size and axis labels stay at their declared size instead of shrinking.
+window.addEventListener("resize", () => {
+  const root = $("capacity-trend-chart");
+  if (!root || !root.clientWidth) return;
+  const next = Math.max(260, Math.min(720, Math.round(root.clientWidth)));
+  if (next === capacityChartWidth) return;
+  renderCapacityVisuals();
+});
 
 window.addEventListener("hashchange",openHistoryFromHash);
 openHistoryFromHash();
@@ -4939,6 +5322,8 @@ Invoke-DiskPulsePublication $paths.Runtime {
     Compact-ScanEvents $paths
 }
 Profile-Mark "htmlWrite"
+$progressStage = "report"
+& $publishProgress 'complete' 'report' $progressDrive $null $true
 $reportStopwatch.Stop()
 $scanStage = "生成报告"
 if ($env:DISKPULSE_NO_OPEN -ne "1") {
@@ -4996,6 +5381,7 @@ if ($profileMode) {
 catch {
 $runStopwatch.Stop()
 & $clearConsoleProgress
+& $publishProgress 'failed' $progressStage $progressDrive $null $true
 if ($profileMode) {
     Profile-Mark "failed:$scanStage"
     try {

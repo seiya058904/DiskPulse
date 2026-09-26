@@ -74,6 +74,7 @@ try {
     $arguments = @(
         '/nologo', '/target:winexe', "/out:$exe",
         "/win32icon:$iconPath",
+        '/codepage:65001',
         "/resource:$resourceFile,DiskPulse.Payload",
         "/reference:System.dll", '/reference:System.Core.dll',
         '/reference:System.Drawing.dll', '/reference:System.Windows.Forms.dll',

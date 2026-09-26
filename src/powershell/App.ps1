@@ -17,6 +17,19 @@ Profile-Mark "init"
 $startedAt = (Get-Date).ToUniversalTime().ToString("o")
 $runStopwatch = [Diagnostics.Stopwatch]::StartNew()
 $scanStage = "初始化"
+$progressState = New-DiskPulseProgressState
+$progressStage = "init"
+$progressDrive = ""
+# Pre-initialized so the failure path can always publish progress, even when the
+# pipeline aborts before the drive loop assigns the real drive counters.
+$completedDrives = 0
+$totalDrives = 0
+$publishProgress = {
+    param([string]$Status, [string]$Stage, [string]$Drive, $Progress, [bool]$ForcePublish)
+    Write-DiskPulseScanProgress -Paths $paths -ScanId $scanId -Status $Status -Stage $Stage -Drive $Drive `
+        -Progress $Progress -CompletedDrives $completedDrives -TotalDrives $totalDrives `
+        -ElapsedMilliseconds $runStopwatch.ElapsedMilliseconds -State $progressState -Force:$ForcePublish
+}
 $consoleProgressState = @{ LastLength = 0; Active = $false; LastRenderedMilliseconds = -1 }
 $clearConsoleProgress = {
     if ($silent) { return }
@@ -110,6 +123,17 @@ $drives = @()
 try {
     $drives = Get-CimInstance Win32_LogicalDisk |
         Where-Object { $_.DriveType -eq 3 } |
+        ForEach-Object {
+            $deviceId = [string]$_.DeviceID
+            [PSCustomObject]@{
+                DeviceID           = $deviceId
+                Size               = $_.Size
+                FreeSpace          = $_.FreeSpace
+                VolumeSerialNumber = $_.VolumeSerialNumber
+                VolumeGuid         = Get-DiskPulseDriveVolumeGuid ($deviceId + '\')
+                DosDeviceTarget     = Get-DiskPulseDosDeviceTarget $deviceId
+            }
+        } |
         Sort-Object DeviceID
 }
 catch {
@@ -118,12 +142,24 @@ catch {
         Where-Object { $_.DriveType -eq [System.IO.DriveType]::Fixed -and $_.IsReady } |
         ForEach-Object {
             [PSCustomObject]@{
-                DeviceID  = $_.Name.TrimEnd('\')
-                Size      = $_.TotalSize
-                FreeSpace = $_.AvailableFreeSpace
+                DeviceID           = $_.Name.TrimEnd('\')
+                Size               = $_.TotalSize
+                FreeSpace          = $_.AvailableFreeSpace
+                VolumeSerialNumber = Get-DiskPulseDriveVolumeSerial $_.Name
+                VolumeGuid         = Get-DiskPulseDriveVolumeGuid $_.Name
+                DosDeviceTarget     = Get-DiskPulseDosDeviceTarget $_.Name
             }
         } |
         Sort-Object DeviceID
+}
+# A drive letter created with SUBST (or another mount alias) can be reported as a fixed drive.
+# De-duplicate only when Windows resolved two letters to the same Volume GUID. If identity lookup
+# fails, keep the drive: avoiding a false omission is more important than guessing an alias.
+$driveSelection = Select-DiskPulseScannableDrives -Drives $drives
+$drives = @($driveSelection.Drives)
+$skippedDriveAliases = @($driveSelection.Aliases)
+foreach ($alias in $skippedDriveAliases) {
+    Write-Warning "Drive $($alias.id) resolves to the same volume as $($alias.aliasOf); skipping it so its capacity is not counted twice."
 }
 Profile-Mark "diskQuery"
 $currentResults = [System.Collections.Generic.List[PSObject]]::new()
@@ -177,11 +213,15 @@ Profile-Mark "readSnapshots"
 $snapshotDrives = New-Object 'Collections.Generic.List[object]'
 $completedDrives = 0
 $totalDrives = @($drives).Count
+& $publishProgress 'running' 'init' '' $null $true
 foreach ($d in $drives) {
     $scanStage = "扫描磁盘 $($d.DeviceID)"
+    $progressStage = "scan"
+    $progressDrive = $d.DeviceID
     $capacity = $currentResults | Where-Object { $_.id -eq ($d.DeviceID -replace '\\','') } | Select-Object -First 1
     $consoleProgress = {
         param($progress)
+        & $publishProgress 'running' 'scan' ([string]$progress.drive) $progress $false
         if ($silent) { return }
         if (-not (Should-RenderConsoleProgress -Progress $progress -State $consoleProgressState)) { return }
         $line = Format-ScanProgressLine -Progress $progress -CompletedDrives $completedDrives -TotalDrives $totalDrives
@@ -194,6 +234,7 @@ foreach ($d in $drives) {
     $scan = Invoke-DirectoryScan -Drive $d.DeviceID -RootPath ($d.DeviceID + '\') -ProgressCallback $consoleProgress
     Profile-Mark "scanDone:$($d.DeviceID)"
     $completedDrives++
+    & $publishProgress 'running' 'scan' $d.DeviceID $null $true
     $consoleProgressState.LastRenderedMilliseconds = -1
     $priorComplete = $priorSnapshots | Where-Object { @($_.drives | Where-Object { $_.drive -eq $d.DeviceID -and $_.status -in @('baseline','complete') }).Count } | Select-Object -First 1
     if ($scan.status -eq 'complete' -and -not $priorComplete) { $scan.status = 'baseline' }
@@ -203,6 +244,8 @@ foreach ($d in $drives) {
     $snapshotDrives.Add($scan)
 }
 $completedAt = (Get-Date).ToUniversalTime().ToString('o')
+$progressStage = "report"
+& $publishProgress 'running' 'report' $progressDrive $null $true
 $snapshot = [PSCustomObject]@{
     scanId = $scanId
     startedAt = $startedAt
@@ -261,7 +304,7 @@ $directoryJson = ConvertTo-JsonArray ([object[]]$directoryResults)
 Profile-Mark "json:DIRECTORY"
 $historyCenterJson = ConvertTo-JsonArray ([object[]]$historyCenter)
 Profile-Mark "json:HISTORY_CENTER"
-$scanMetaJson = $snapshot | Select-Object scanId,startedAt,completedAt,status,@{n='driveCount';e={@($_.drives).Count}} | ConvertTo-Json -Compress
+$scanMetaJson = New-DiskPulseScanMetaJson -Snapshot $snapshot -DriveAliases $skippedDriveAliases
 $timestampJson = ConvertTo-Json -InputObject ([string]$timestamp) -Compress
 $systemDriveJson = ConvertTo-Json -InputObject ([string]$env:SystemDrive) -Compress
 $aiAnalysisJson = if ($aiAnalysisResult) { ConvertTo-DiskPulseSafeJSON $aiAnalysisResult } else { '{}' }
@@ -307,6 +350,8 @@ Invoke-DiskPulsePublication $paths.Runtime {
     Compact-ScanEvents $paths
 }
 Profile-Mark "htmlWrite"
+$progressStage = "report"
+& $publishProgress 'complete' 'report' $progressDrive $null $true
 $reportStopwatch.Stop()
 $scanStage = "生成报告"
 if ($env:DISKPULSE_NO_OPEN -ne "1") {
@@ -364,6 +409,7 @@ if ($profileMode) {
 catch {
 $runStopwatch.Stop()
 & $clearConsoleProgress
+& $publishProgress 'failed' $progressStage $progressDrive $null $true
 if ($profileMode) {
     Profile-Mark "failed:$scanStage"
     try {

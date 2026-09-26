@@ -797,7 +797,12 @@ function renderChangeSummary(items, summary, rankings) {
   const root = $("latest-change"); root.replaceChildren();
   root.append(element("div","summary-label","最新变化"),element("h2","summary-title",headline));
   const hero = element("div","change-hero");
-  hero.append(element("b","",main ? `${main.deltaBytes > 0 ? "+" : ""}${fmtBytes(main.deltaBytes)}` : "—"),element("span","summary-note",contribution === null ? "没有可靠变化排行" : `主路径贡献 ${contribution.toFixed(1)}%`));
+  // The headline figure is the most prominent number in the section, so it must not contradict the
+  // change rows below it: same growth/release semantics, neutral when no direction is known. The
+  // sign and the headline sentence still carry the meaning on their own, so colour is never the
+  // only signal.
+  const heroTone = main ? (main.deltaBytes > 0 ? "growth-value" : "release-value") : "neutral-value";
+  hero.append(element("b",heroTone,main ? `${main.deltaBytes > 0 ? "+" : ""}${fmtBytes(main.deltaBytes)}` : "—"),element("span","summary-note",contribution === null ? "没有可靠变化排行" : `主路径贡献 ${contribution.toFixed(1)}%`));
   root.append(hero);
   const metrics = element("div","change-metrics");
   [["可靠新增",`+${fmtBytes(summary.added)}`],["可靠释放",`${summary.released ? "-" : ""}${fmtBytes(summary.released)}`],["已定位净变化",fmtBytes(summary.located)],[fourthLabel,fourthValue]].forEach(([label,value]) => {
@@ -900,6 +905,9 @@ function capacityRangeLabel(range) {
   return range === "all" ? "全部历史" : `最近 ${range} 天`;
 }
 
+// Last viewBox width drawn, so the resize handler only redraws when the bucket changes.
+let capacityChartWidth = 0;
+
 function renderCapacityChart(samples, drive) {
   const root = $("capacity-trend-chart"); root.replaceChildren();
   const stats = capacityTrendStats(samples);
@@ -907,7 +915,13 @@ function renderCapacityChart(samples, drive) {
     root.append(element("div","capacity-empty","当前范围没有有效容量样本。"));
     return;
   }
-  const width = 720, height = 270, left = 56, right = 18, top = 24, bottom = 38;
+  // Draw at the host's real pixel width so SVG text keeps its declared size. A fixed 720-unit
+  // viewBox scaled down to a narrow panel reduced axis labels to a few unreadable pixels.
+  const measured = Math.round(root.clientWidth || 0) || 720;
+  const width = Math.max(260, Math.min(720, measured));
+  capacityChartWidth = width;
+  const narrow = width < 520;
+  const height = narrow ? 250 : 270, left = narrow ? 44 : 56, right = narrow ? 14 : 18, top = 24, bottom = narrow ? 34 : 38;
   const plotWidth = width-left-right, plotHeight = height-top-bottom;
   const minTime = stats.first.time, maxTime = stats.last.time;
   const rawSpan = stats.max-stats.min;
@@ -922,7 +936,7 @@ function renderCapacityChart(samples, drive) {
   const titleId = "capacity-chart-title", descId = "capacity-chart-desc";
   svg.setAttribute("aria-labelledby",`${titleId} ${descId}`);
   const title = document.createElementNS(svgNs,"title"); title.id=titleId; title.textContent=`${drive.id} 已用容量历史趋势`;
-  const desc = document.createElementNS(svgNs,"desc"); desc.id=descId; desc.textContent=`${capacityRangeLabel(state.capacityRange)}，${formatLocalDate(stats.first.timestamp)} 至 ${formatLocalDate(stats.last.timestamp)}，共 ${stats.count} 个有效样本。`;
+  const desc = document.createElementNS(svgNs,"desc"); desc.id=descId; desc.textContent=`${capacityRangeLabel(state.capacityRange)}，${formatLocalDate(stats.first.timestamp)} 至 ${formatLocalDate(stats.last.timestamp)}，共 ${stats.count} 个有效样本。最新 ${fmt(stats.last.used)}，范围内最高 ${fmt(stats.max)}，最低 ${fmt(stats.min)}。`;
   svg.append(title,desc);
   const defs = document.createElementNS(svgNs,"defs");
   const gradient = document.createElementNS(svgNs,"linearGradient");
@@ -943,10 +957,13 @@ function renderCapacityChart(samples, drive) {
   path.classList.add("capacity-line");
   path.setAttribute("d",samples.map((sample,index) => `${index ? "L" : "M"}${x(sample).toFixed(2)},${y(sample).toFixed(2)}`).join(" "));
   svg.append(path);
-  samples.forEach((sample) => {
+  samples.forEach((sample,index) => {
     const point = document.createElementNS(svgNs,"circle");
-    point.classList.add("capacity-point"); point.setAttribute("cx",x(sample).toFixed(2)); point.setAttribute("cy",y(sample).toFixed(2)); point.setAttribute("r","2.4");
-    const tooltip = document.createElementNS(svgNs,"title"); tooltip.textContent=`${formatLocalDate(sample.timestamp)} · ${fmt(sample.used)} · ${pct(sample.percent)}`; point.append(tooltip); svg.append(point);
+    point.classList.add("capacity-point");
+    const isLatest = index === samples.length-1;
+    if (isLatest) point.classList.add("is-latest");
+    point.setAttribute("cx",x(sample).toFixed(2)); point.setAttribute("cy",y(sample).toFixed(2)); point.setAttribute("r",isLatest ? "4" : "2.4");
+    const tooltip = document.createElementNS(svgNs,"title"); tooltip.textContent=`${isLatest ? "最新样本 " : ""}${formatLocalDate(sample.timestamp)} · ${fmt(sample.used)} · ${pct(sample.percent)}`; point.append(tooltip); svg.append(point);
   });
   [[left,stats.first.timestamp,"start"],[width-right,stats.last.timestamp,"end"]].forEach(([labelX,timestamp,anchor]) => {
     const label = document.createElementNS(svgNs,"text"); label.setAttribute("x",String(labelX)); label.setAttribute("y",String(height-10)); label.setAttribute("text-anchor",anchor); label.classList.add("capacity-axis-label"); label.textContent=formatLocalDate(timestamp).slice(0,10); svg.append(label);
@@ -972,7 +989,11 @@ function renderCapacityVisuals() {
   const stats = capacityTrendStats(samples);
   $("capacity-trend-caption").textContent = `${state.capacityDrive} · ${capacityRangeLabel(state.capacityRange)}`;
   statsRoot.className="capacity-trend-stats trend-summary";
-  const statValues = stats ? [["当前使用",fmt(drive.used)],["总容量",fmt(drive.total)],["可用容量",fmt(drive.free)],["较范围起点",stats.change === null ? "样本不足" : `${stats.change >= 0 ? "+" : ""}${fmt(stats.change)}`]] : [["当前使用","—"],["总容量","—"],["可用容量","—"],["较范围起点","—"]];
+  const statValues = stats
+    ? [["当前使用",fmt(drive.used)],["总容量",fmt(drive.total)],["可用容量",fmt(drive.free)],
+       ["较范围起点",stats.change === null ? "样本不足" : `${stats.change >= 0 ? "+" : ""}${fmt(stats.change)}`],
+       ["范围内最高",fmt(stats.max)],["范围内最低",fmt(stats.min)]]
+    : [["当前使用","—"],["总容量","—"],["可用容量","—"],["较范围起点","—"],["范围内最高","—"],["范围内最低","—"]];
   statValues.forEach(([label,value]) => { const card=element("div","capacity-stat"); card.append(element("span","",label),element("b","",value)); statsRoot.append(card); });
   renderCapacityChart(samples,drive);
   const rangeText = stats ? `${formatLocalDate(stats.first.timestamp)} 至 ${formatLocalDate(stats.last.timestamp)} · ${stats.count} 个有效样本` : "当前范围没有有效样本";
@@ -1056,6 +1077,25 @@ function renderScanMetadata() {
   const end = SCAN_META.completedAt ? new Date(SCAN_META.completedAt) : null;
   const duration = start && end ? `${Math.max(0,Math.round((end-start)/1000))} 秒` : "-";
   const fields = [["扫描开始",formatLocalDate(SCAN_META.startedAt),SCAN_META.startedAt||"-"],["扫描完成",formatLocalDate(SCAN_META.completedAt),SCAN_META.completedAt||"-"],["总耗时",duration,duration],["扫描磁盘",`${Number(SCAN_META.driveCount||0)} 个`,`${Number(SCAN_META.driveCount||0)} 个`]];
+  // Credibility belongs next to the scan facts (see DESIGN.md 扫描信息). Surface the same
+  // aggregate verdict the comparison-confidence card uses, plus how many paths were excluded or
+  // limited, so the verdict is readable without opening 查看扫描详情. No new judgement is made here.
+  const evidence = classifyScanEvidence(DIRECTORY);
+  const integrityLabels = { complete:"完整", partial:"部分完成", failed:"失败", waiting:"等待基线" };
+  const integrity = integrityLabels[confidenceFor(DIRECTORY).state] || "等待基线";
+  const limitationCount = evidence.permissionLimited.length + evidence.transientMissing.length + evidence.unexpected.length;
+  fields.push(["扫描完整性",integrity,"各磁盘扫描执行状态与可比性的综合判断。"]);
+  fields.push(["排除与受限",`忽略 ${evidence.designedIgnored.length} · 受限 ${limitationCount}`,"按设计忽略项与受限项数量；详见「查看扫描详情」。"]);
+  // A drive letter that resolves to a volume already counted (a SUBST-style alias) is skipped so the
+  // same capacity is not added twice. Say so: a letter that silently disappears would look like a
+  // failed scan. Only rendered when it actually happened. The field is normally a list; a single
+  // record is also accepted because older builds serialized one-element lists as a bare object.
+  const rawAliases = SCAN_META.driveAliases;
+  const aliasList = Array.isArray(rawAliases) ? rawAliases : (rawAliases && rawAliases.id ? [rawAliases] : []);
+  const aliasNote = aliasList
+    .filter((alias) => alias && alias.id)
+    .map((alias) => `${String(alias.id)} 与 ${String(alias.aliasOf||"?")} 同卷，未重复统计`);
+  if (aliasNote.length) { fields.push(["同卷别名",aliasNote.join("；"),"这些盘符指向已经统计过的卷，已跳过以避免容量被重复计算。"]); }
   const scanId = String(SCAN_META.scanId||"-");
   const root = $("scan-metadata"); root.className="scan-metadata scan-summary-card"; root.replaceChildren();
   fields.forEach(([label,value,title]) => { const item=element("div","metadata-item"); const strong=element("b","",value); strong.title=String(title); item.append(element("span","",label),strong); root.append(item); });
@@ -1078,9 +1118,18 @@ function render() {
 }
 
 function openHistoryFromHash() {
-  if (location.hash !== "#history-center" && location.hash !== "#history-details") return;
-  const details = $("history-details");
-  if (details) details.open = true;
+  const hash = location.hash;
+  if (hash === "#history-center" || hash === "#history-details") {
+    const details = $("history-details");
+    if (details) details.open = true;
+    return;
+  }
+  // The attention centre links straight at the collapsed scan-details block; without this the
+  // user lands on a closed summary and has to click a second time to see the reason.
+  if (hash === "#scan-completeness") {
+    const scanDetails = $("scan-completeness");
+    if (scanDetails) scanDetails.open = true;
+  }
 }
 
 ["change-drive-filter","change-level-filter","change-direction-filter","change-state-filter"].forEach((id) => $(id).addEventListener("change", renderDirectoryChanges));
@@ -1174,6 +1223,16 @@ $("themeBtn").addEventListener("click", () => {
 })();
 
 $("print-report").addEventListener("click", () => window.print());
+
+// Redraw the trend chart when the panel crosses a width bucket, so the viewBox keeps matching
+// the rendered size and axis labels stay at their declared size instead of shrinking.
+window.addEventListener("resize", () => {
+  const root = $("capacity-trend-chart");
+  if (!root || !root.clientWidth) return;
+  const next = Math.max(260, Math.min(720, Math.round(root.clientWidth)));
+  if (next === capacityChartWidth) return;
+  renderCapacityVisuals();
+});
 
 window.addEventListener("hashchange",openHistoryFromHash);
 openHistoryFromHash();
