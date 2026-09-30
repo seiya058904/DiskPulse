@@ -37,3 +37,19 @@ jobs:
         shell: pwsh
         run: |
           powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify.ps1 -IncludeInstaller
+
+  generate-check:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate canonical runtime for review
+        shell: powershell
+        run: |
+          ./scripts/build-check.ps1 -OutputPath "$env:RUNNER_TEMP/generated/check.bat"
+          (Get-FileHash "$env:RUNNER_TEMP/generated/check.bat" -Algorithm SHA256).Hash | Set-Content "$env:RUNNER_TEMP/generated/SHA256.txt"
+      - name: Upload generated runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-check
+          path: ${{ runner.temp }}/generated/
+          retention-days: 7
