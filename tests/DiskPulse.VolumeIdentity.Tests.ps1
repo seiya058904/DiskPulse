@@ -61,8 +61,16 @@ $withoutBaseline=[pscustomobject]@{drive='T:';status='baseline';baselineScanId=$
 $input=New-DiskPulseAIInput @($withoutBaseline) @(New-HistoryComparisonCenter @($a) $b) $b
 Assert-Identity ($input.primaryGrowth.Count -eq 0 -and $input.primaryRelease.Count -eq 0 -and $input.historicalTrends.Count -eq 0) 'AI must have no cross-volume growth, release or trend evidence.'
 Assert-Identity (-not $input.drives[0].comparisonAvailable -and $null -eq $input.drives[0].actualNetChangeBytes) 'AI must identify unavailable comparison rather than a measured zero.'
+foreach($field in @('actualNetChangeBytes','locatedNetChangeBytes','unexplainedBytes','coverageRate')) { Assert-Identity ($null -eq $input.drives[0].$field) 'Unavailable AI measurements must remain null.' }
 Assert-Identity (-not (Test-DiskPulseAIInputEligible @($withoutBaseline))) 'A replacement volume must not trigger AI analysis.'
 Assert-Identity (($input|ConvertTo-Json -Depth 12) -notmatch 'Volume\{|volumeGuid') 'AI payload must not transmit raw volume identity.'
+Assert-Identity ($input.drives[0].volumeRef -eq 'volume-1' -and $input.drives[0].volumeIdentityState -eq 'known') 'Known current volume must have an analysis-local reference even without a baseline.'
+$unknownSnapshot=Identity-Snapshot 'unknown-ai' 6 (Identity-Drive '' 50)
+$unknownInput=New-DiskPulseAIInput @($withoutBaseline) @() $unknownSnapshot
+Assert-Identity ($null -eq $unknownInput.drives[0].volumeRef -and $unknownInput.drives[0].volumeIdentityState -eq 'unknown' -and -not $unknownInput.drives[0].comparisonAvailable) 'Unknown volume identity must have no AI reference or comparison.'
+$sameInput=New-DiskPulseAIInput @($withoutBaseline) @() $a
+Assert-Identity ($sameInput.drives[0].volumeRef -eq 'volume-1') 'Reference allocation must restart for each input, not persist a volume identifier.'
+
 
 # Real CSV writer/reader, mixing legacy rows first with new rows of the same letter/time.
 $temp=Join-Path $env:TEMP ('DiskPulse-VolumeIdentity-'+[guid]::NewGuid().ToString('N'))
@@ -116,7 +124,7 @@ try {
     $data=@(Read-IdentityReport 'DATA'); $directory=@(Read-IdentityReport 'DIRECTORY')
     Assert-Identity ($directory[0].baselineScanId -eq $aId -and $data[0].diff -eq 5) 'Actual returning A must compare to A, not B.'
     $history=@(Read-IdentityReport 'HISTORY_CENTER')
-    Assert-Identity ($history[0].comparisons.Count -eq 1) 'Report custom/history choices must exclude the other volume.'
+    Assert-Identity (@($history[0].comparisons).Count -eq 1) 'Report custom/history choices must exclude the other volume.'
     $script:fixtureGuid=''; $script:fixtureUsed=40; Invoke-DiskPulse
     $data=@(Read-IdentityReport 'DATA'); $directory=@(Read-IdentityReport 'DIRECTORY')
     Assert-Identity (-not $directory[0].baselineScanId -and $null -eq $data[0].diff) 'Query failure must remain unknown through actual pipeline.'
