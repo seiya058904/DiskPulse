@@ -141,6 +141,9 @@ const history = [
   {ID:"C:",Timestamp:"2026-07-04T00:00:00Z",Total:100,Used:101},
   {ID:"D:",Timestamp:"2026-07-02T00:00:00Z",Total:100,Used:50}
 ];
+const identity = String.raw`\\?\Volume{11111111-1111-1111-1111-111111111111}`;
+drives.forEach(d=>d.volumeGuid=identity);
+history.forEach(r=>r.VolumeGuid=identity);
 const samples = cleanCapacitySamples(history,drives[0],"C:","2026-07-13T00:00:00Z");
 assert.deepEqual(samples.map(x=>x.used),[25,40]);
 assert.equal(filterCapacitySamples(samples,"7","2026-07-13T00:00:00Z").length,1);

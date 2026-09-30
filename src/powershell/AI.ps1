@@ -383,14 +383,15 @@ function New-DiskPulseAIInput {
         $drives.Add([PSCustomObject]@{
             drive                  = $drive
             scanStatus             = [string]$dr.status
-            actualNetChangeBytes   = if ($cov) { [int64]$cov.actualNetBytes } else { [int64]0 }
+            comparisonAvailable    = [bool]$dr.baselineScanId
+            actualNetChangeBytes   = if ($dr.baselineScanId -and $cov -and $null -ne $cov.actualNetBytes) { [int64]$cov.actualNetBytes } else { $null }
             locatedNetChangeBytes  = if ($cov) { [int64]$cov.locatedNetBytes } else { [int64]0 }
             unexplainedBytes       = if ($cov -and $cov.PSObject.Properties.Name -contains 'unexplainedBytes') { [int64]$cov.unexplainedBytes } else { [int64]0 }
             coverageRate           = if ($cov) { [double]$cov.rate } else { [double]0 }
             unavailablePathCount   = @($dr.unavailable).Count
         })
 
-        $reliable = @($dr.changes | Where-Object { $_.state -in @('created','changed','removed') })
+        $reliable = @($dr.changes | Where-Object { $dr.baselineScanId -and $_.state -in @('created','changed','removed') })
         $l1 = @($reliable | Where-Object { $_.level -eq 1 })
         $l2 = @($reliable | Where-Object { $_.level -eq 2 })
 

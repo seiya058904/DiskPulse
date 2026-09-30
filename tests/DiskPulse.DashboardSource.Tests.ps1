@@ -28,3 +28,6 @@ $duplicates = @($ids | Group-Object | Where-Object Count -gt 1 | Select-Object -
 if ($duplicates.Count -gt 0) { throw "Duplicate dashboard IDs: $($duplicates -join ', ')" }
 
 Write-Host 'PASS: canonical dashboard source syntax and static safety invariants.'
+
+& node (Join-Path $PSScriptRoot 'volume-identity-dashboard.cjs')
+if ($LASTEXITCODE -ne 0) { throw 'Volume identity dashboard regression failed.' }

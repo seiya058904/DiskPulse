@@ -66,11 +66,13 @@ function New-HistoryRow {
         [double] $Total,
         [double] $Free,
         [double] $Used,
-        [double] $Percent
+        [double] $Percent,
+        [string] $VolumeGuid
     )
     [PSCustomObject]@{
         Timestamp = $Timestamp
         ID        = $ID
+        VolumeGuid = ConvertTo-DiskPulseVolumeGuid $VolumeGuid
         Total     = [math]::Round($Total, 2)
         Free      = [math]::Round($Free, 2)
         Used      = [math]::Round($Used, 2)
@@ -105,7 +107,7 @@ if ($historySource) {
                 0
             }
 
-            $historyRows.Add((New-HistoryRow -Timestamp $rowTs -ID $rowId -Total $total -Free $free -Used $used -Percent $percent))
+            $historyRows.Add((New-HistoryRow -Timestamp $rowTs -ID $rowId -Total $total -Free $free -Used $used -Percent $percent -VolumeGuid ([string](Get-DiskPulseMemberValue $row 'VolumeGuid'))))
         }
     }
     catch {
@@ -113,11 +115,6 @@ if ($historySource) {
     }
 }
 Profile-Mark "readHistory"
-
-$previousById = @{}
-foreach ($row in ($historyRows | Sort-Object Timestamp)) {
-    $previousById[$row.ID] = $row
-}
 
 $drives = @()
 try {
@@ -171,8 +168,8 @@ foreach ($d in $drives) {
     $free    = [math]::Round($d.FreeSpace / 1GB, 2)
     $used    = [math]::Round($total - $free, 2)
     $percent = if ($total -gt 0) { [math]::Round(($used / $total) * 100, 1) } else { 0 }
-    $lastUsed = if ($previousById.ContainsKey($d.DeviceID)) { [double]$previousById[$d.DeviceID].Used } else { $used }
-    $diff    = [math]::Round($used - $lastUsed, 2)
+    $prev = Get-DiskPulseCapacityHistory -Rows ([object[]]$historyRows) -Drive $d.DeviceID -VolumeGuid $d.VolumeGuid | Select-Object -Last 1
+    $diff = if ($prev) { [math]::Round($used - [double]$prev.Used, 2) } else { $null }
     $status  = if ($percent -ge 90) { "critical" } elseif ($percent -ge 75) { "warning" } else { "good" }
 
     if ($status -eq "critical" -and $notifiedIds.Add($d.DeviceID)) {
@@ -190,6 +187,7 @@ foreach ($d in $drives) {
 
     $currentResults.Add([PSCustomObject]@{
         id      = $id
+        volumeGuid = ConvertTo-DiskPulseVolumeGuid $d.VolumeGuid
         total   = $total
         free    = $free
         used    = $used
@@ -198,13 +196,12 @@ foreach ($d in $drives) {
         status  = $status
     })
 
-    $prev = if ($previousById.ContainsKey($d.DeviceID)) { $previousById[$d.DeviceID] } else { $null }
     $isDup = $prev -and
         ([math]::Abs([double]$prev.Total - $total) -lt 0.01) -and
         ([math]::Abs([double]$prev.Free - $free) -lt 0.01) -and
         ([math]::Abs([double]$prev.Percent - $percent) -lt 0.1)
     if (-not $isDup) {
-        $historyRows.Add((New-HistoryRow -Timestamp $timestamp -ID $d.DeviceID -Total $total -Free $free -Used $used -Percent $percent))
+        $historyRows.Add((New-HistoryRow -Timestamp $timestamp -ID $d.DeviceID -Total $total -Free $free -Used $used -Percent $percent -VolumeGuid $d.VolumeGuid))
     }
 }
 
@@ -231,12 +228,12 @@ foreach ($d in $drives) {
         $consoleProgressState.Active = $true
     }
     Profile-Mark "scan:$($d.DeviceID)"
-    $scan = Invoke-DirectoryScan -Drive $d.DeviceID -RootPath ($d.DeviceID + '\') -ProgressCallback $consoleProgress
+    $scan = Invoke-DirectoryScan -Drive $d.DeviceID -RootPath ($d.DeviceID + '\') -ProgressCallback $consoleProgress -VolumeGuid $d.VolumeGuid
     Profile-Mark "scanDone:$($d.DeviceID)"
     $completedDrives++
     & $publishProgress 'running' 'scan' $d.DeviceID $null $true
     $consoleProgressState.LastRenderedMilliseconds = -1
-    $priorComplete = $priorSnapshots | Where-Object { @($_.drives | Where-Object { $_.drive -eq $d.DeviceID -and $_.status -in @('baseline','complete') }).Count } | Select-Object -First 1
+    $priorComplete = $priorSnapshots | Where-Object { @($_.drives | Where-Object { $_.drive -eq $d.DeviceID -and (Test-DiskPulseSameVolume $_ $scan) -and $_.status -in @('baseline','complete') }).Count } | Select-Object -First 1
     if ($scan.status -eq 'complete' -and -not $priorComplete) { $scan.status = 'baseline' }
     $scan | Add-Member totalBytes ([int64]$d.Size)
     $scan | Add-Member freeBytes ([int64]$d.FreeSpace)

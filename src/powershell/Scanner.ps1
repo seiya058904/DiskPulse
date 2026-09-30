@@ -28,8 +28,16 @@ function Invoke-DirectoryScan {
         [string] $Drive,
         [string] $RootPath,
         [scriptblock] $BeforeEntry,
-        [scriptblock] $ProgressCallback
+        [scriptblock] $ProgressCallback,
+        [string] $VolumeGuid
     )
+
+    # App passes the queried identity, including an explicit empty result. Direct callers
+    # resolve the volume containing RootPath, not their synthetic/display drive letter.
+    if (-not $PSBoundParameters.ContainsKey('VolumeGuid')) {
+        $VolumeGuid = Get-DiskPulseDriveVolumeGuid ([IO.Path]::GetPathRoot([IO.Path]::GetFullPath($RootPath)))
+    }
+    $VolumeGuid = ConvertTo-DiskPulseVolumeGuid $VolumeGuid
 
     if (-not $BeforeEntry) {
         $nativeCallback = if ($ProgressCallback) {
@@ -41,6 +49,7 @@ function Invoke-DirectoryScan {
         $native = [DiskPulseFastScanner]::Scan($Drive, $RootPath, $nativeCallback)
         return [PSCustomObject]@{
             drive                       = $native.drive
+            volumeGuid                  = $VolumeGuid
             scopeSignature              = 'diskpulse-scope-v1:fixed;depth=2;reparse=exclude;names=$recycle.bin,system volume information'
             scopeVersion                = 1
             rootPath                    = $native.rootPath
@@ -256,6 +265,7 @@ function Invoke-DirectoryScan {
     $errorValues = [object[]]$errors
     [PSCustomObject]@{
         drive                       = $Drive.ToUpperInvariant()
+        volumeGuid                  = $VolumeGuid
         scopeSignature              = 'diskpulse-scope-v1:fixed;depth=2;reparse=exclude;names=$recycle.bin,system volume information'
         scopeVersion                = 1
         rootPath                    = $root

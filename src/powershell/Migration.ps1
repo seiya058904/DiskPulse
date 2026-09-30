@@ -146,7 +146,7 @@ function Invoke-DiskPulseMigration {
                             }
                             Invoke-DiskPulsePublication $Paths.Runtime {
                                 $current=if(Test-Path -LiteralPath $destination){@(Import-Csv -LiteralPath $destination)}else{@()}
-                                $seen=@{}; $merged=@($current)+@($import) | Where-Object { $k=$_.Timestamp+'|'+$_.ID; if(-not $seen.ContainsKey($k)){$seen[$k]=$true;$true} }
+                                $seen=@{}; $merged=@($current)+@($import) | Where-Object { $k=$_.Timestamp+'|'+$_.ID+'|'+(ConvertTo-DiskPulseVolumeGuid ([string](Get-DiskPulseMemberValue $_ 'VolumeGuid'))); if(-not $seen.ContainsKey($k)){$seen[$k]=$true;$true} }
                                 Write-DiskPulseAtomicCsv -FinalPath $destination -Rows @($merged)
                             }
                         } else {
