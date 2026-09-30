@@ -257,8 +257,8 @@ for($i=1;$i -le 20;$i++){
     $manyRecords+=$rec
     $changeRecords+=[pscustomobject]@{key=$rec.key;displayPath=$rec.displayPath;level=1;sizeBytes=[int64]$rec.sizeBytes;deltaBytes=[int64]$rec.sizeBytes;state='created';kind='directory'}
 }
-$manyBaseline=[pscustomobject]@{volumeGuid='\\?\Volume{11111111-1111-1111-1111-111111111111}';drive='T:';rootPath='T:\';status='complete';rootPath='T:\';usedBytes=0;records=@();unavailable=@();excluded=@();errors=@()}
-$manyCurrent=[pscustomobject]@{volumeGuid='\\?\Volume{11111111-1111-1111-1111-111111111111}';drive='T:';rootPath='T:\';status='complete';rootPath='T:\';usedBytes=1000;records=[array]$manyRecords;unavailable=@();excluded=@();errors=@()}
+$manyBaseline=[pscustomobject]@{volumeGuid='\\?\Volume{11111111-1111-1111-1111-111111111111}';drive='T:';rootPath='T:\';status='complete';usedBytes=0;records=@();unavailable=@();excluded=@();errors=@()}
+$manyCurrent=[pscustomobject]@{volumeGuid='\\?\Volume{11111111-1111-1111-1111-111111111111}';drive='T:';rootPath='T:\';status='complete';usedBytes=1000;records=[array]$manyRecords;unavailable=@();excluded=@();errors=@()}
 $manyDir=@([pscustomobject]@{volumeGuid='\\?\Volume{11111111-1111-1111-1111-111111111111}';drive='T:';rootPath='T:\';status='complete';baselineScanId='base';changes=[array]$changeRecords;coverage=[pscustomobject]@{actualNetBytes=1000;locatedNetBytes=1000;addedBytes=1000;releasedBytes=0;rate=100;activityPreferred=$false};errors=@();unavailable=@();excluded=@()})
 $manySnap=[pscustomobject]@{scanId='many';completedAt='2026-07-14T11:00:00Z';status='complete'}
 $manyInput=New-DiskPulseAIInput -DirectoryResults $manyDir -HistoryCenter @() -Snapshot $manySnap
