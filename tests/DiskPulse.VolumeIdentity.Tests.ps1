@@ -1,8 +1,9 @@
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $root = Split-Path -Parent $PSScriptRoot
-. (Join-Path $root 'src/powershell/Common.ps1')
-. (Join-Path $root 'src/powershell/History.ps1')
+. (Join-Path $PSScriptRoot 'TestHelpers.ps1')
+$source = New-DiskPulseCanonicalTestSource -Components @('Common','History')
+try { . $source } finally { Remove-Item -LiteralPath $source -Force }
 
 function Assert-Identity([bool]$Condition, [string]$Message) {
     if (-not $Condition) { throw $Message }
