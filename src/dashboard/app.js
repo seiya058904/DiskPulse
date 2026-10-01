@@ -41,6 +41,16 @@ function normalizeDriveId(value) {
   return String(value ?? "").replace(/\\/g, "").trim().toUpperCase();
 }
 
+function normalizeVolumeGuid(value) {
+  const guid = String(value ?? "").trim().replace(/\\+$/, "");
+  return /^\\\\\?\\VOLUME\{[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}\}$/i.test(guid) ? guid.toUpperCase() : "";
+}
+
+function capacityHistoryFor(history, current) {
+  const guid = normalizeVolumeGuid(current?.volumeGuid);
+  return guid ? history.filter((row) => normalizeDriveId(row.ID) === normalizeDriveId(current.id) && normalizeVolumeGuid(row.VolumeGuid) === guid) : [];
+}
+
 function compareDriveId(a, b) {
   const left = normalizeDriveId(a), right = normalizeDriveId(b);
   return left < right ? -1 : left > right ? 1 : 0;
@@ -70,7 +80,7 @@ function defaultCapacityDrive(drives, systemDrive) {
 
 function cleanCapacitySamples(history, current, driveId, reportTimestamp) {
   const wanted = normalizeDriveId(driveId);
-  const rows = history.filter((row) => normalizeDriveId(row.ID) === wanted);
+  const rows = current && normalizeDriveId(current.id) === wanted ? capacityHistoryFor(history, current) : [];
   if (current && normalizeDriveId(current.id) === wanted) {
     rows.push({ Timestamp: reportTimestamp, ID: current.id, Total: current.total, Used: current.used });
   }
@@ -121,10 +131,8 @@ function buildAttentionItems(drives, directoryItems, reliableRows) {
 // TESTABLE_CAPACITY_HELPERS_END
 
 const historyMap = {};
-HISTORY.forEach((row) => {
-  const id = normalizeDriveId(row.ID);
-  if (!historyMap[id]) historyMap[id] = [];
-  historyMap[id].push(row);
+DATA.forEach((drive) => {
+  historyMap[normalizeDriveId(drive.id)] = capacityHistoryFor(HISTORY, drive);
 });
 Object.values(historyMap).forEach((arr) =>
   arr.sort((a, b) => String(a.Timestamp).localeCompare(String(b.Timestamp)))
@@ -391,7 +399,7 @@ function announce(message) {
 })();
 
 $("ts").textContent = "更新于 " + TS;
-$("footer").textContent = "历史记录保留最近 " + HISTORY.length + " 条采样";
+$("footer").textContent = "历史记录保留最近 " + HISTORY.length + " 条采样；仅比较身份已确认的同一卷。旧版或其他卷记录保留在 CSV/快照中，不用于当前卷趋势。";
 
 function fmt(gb) {
   const value = Number(gb) || 0;
@@ -448,7 +456,7 @@ function estimateDays(drive, rows) {
 
 function trend(diff) {
   const value = Number(diff) || 0;
-  const text = formatCapacityDelta(value);
+  const text = formatCapacityDelta(diff);
   return element("span",text === "容量基本不变" ? "trend-st" : value > 0 ? "trend-up" : "trend-dn",text);
 }
 
@@ -544,6 +552,7 @@ function classifyScanEvidence(items) {
 }
 
 function formatCapacityDelta(gb) {
+  if (gb == null) return "等待同卷容量基线";
   const value = Number(gb) || 0;
   const bytes = Math.abs(value) * 1024 * 1024 * 1024;
   if (bytes < 1024) return "容量基本不变";
@@ -723,7 +732,7 @@ function changeRowNode(row, maxMagnitude, contributionBase) {
 
 function stateChangeRowNode(row) {
   const label = row.state === "unknown" ? "未知变化" : "当前不可用";
-  const reason = {"scan-incomplete":"扫描范围不完整", "scope-mismatch":"与基线的扫描范围不同", "legacy-evidence-missing":"历史完整性证据不足", "no-baseline":"尚无比较基线"}[row.reason] || label;
+  const reason = {"scan-incomplete":"扫描范围不完整", "scope-mismatch":"与基线的扫描范围不同", "legacy-evidence-missing":"历史完整性证据不足", "no-baseline":"尚无同卷比较基线", "volume-identity-unknown":"卷身份未确认", "volume-mismatch":"与基线不是同一卷"}[row.reason] || label;
   const root=element("div","change-item"), main=element("div","change-main"), path=element("span","change-path expandable-path",row.displayPath); path.title=String(row.displayPath ?? "");
   main.append(path,element("div","change-context",`${row.drive} · ${row.level} 级 · ${reason}`)); root.append(main,element("span","status-badge waiting",label)); return root;
 }
@@ -1329,7 +1338,7 @@ $("copy").addEventListener("click", async () => {
   const lines = [
     `磁盘容量看板 ${TS}`,
     `总容量 ${fmt(t.total)} / 已用 ${fmt(t.used)} / 剩余 ${fmt(t.free)}`,
-    ...DATA.map((d) => `${d.id} 使用率 ${pct(d.percent)}，剩余 ${fmt(d.free)}，本次${(Number(d.diff) || 0) >= 0 ? "增加" : "减少"} ${fmt(Math.abs(Number(d.diff) || 0))}`)
+    ...DATA.map((d) => `${d.id} 使用率 ${pct(d.percent)}，剩余 ${fmt(d.free)}，${formatCapacityDelta(d.diff)}`)
   ];
   const ok = await copyText(lines.join("\n"));
   if (!ok) return;

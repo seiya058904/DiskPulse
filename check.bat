@@ -273,7 +273,11 @@ function Write-DiskPulseAtomicCsv {
     param([string] $FinalPath, $Rows)
     $temporaryPath = New-DiskPulseTempPath $FinalPath
     try {
-        $Rows | Export-Csv -LiteralPath $temporaryPath -NoTypeInformation -Encoding UTF8
+        # Export-Csv takes its schema from the first row. Materialize the optional identity
+        # column for every row so a legacy first row cannot discard newer identities.
+        $Rows | Select-Object Timestamp,ID,Total,Free,Used,Percent,@{Name='VolumeGuid';Expression={
+            ConvertTo-DiskPulseVolumeGuid ([string](Get-DiskPulseMemberValue $_ 'VolumeGuid'))
+        }} | Export-Csv -LiteralPath $temporaryPath -NoTypeInformation -Encoding UTF8
         Import-Csv -LiteralPath $temporaryPath | Out-Null
         Publish-DiskPulseAtomicFile -FinalPath $FinalPath -TemporaryPath $temporaryPath
     }
@@ -364,15 +368,32 @@ function Get-DiskPulseMemberValue {
 # aliases resolve to the same GUID, while distinct volumes keep distinct GUIDs. Volume serial +
 # capacity is intentionally NOT used as a fallback because serial numbers are not globally unique;
 # if Windows cannot provide a GUID, the drive is kept and "unknown" stays unknown.
+function ConvertTo-DiskPulseVolumeGuid {
+    param([string]$Value)
+    $value = $Value.Trim().TrimEnd('\')
+    if ($value -notmatch '^\\\\\?\\Volume\{[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\}$') { return '' }
+    return $value.ToUpperInvariant()
+}
+
+function Test-DiskPulseSameVolume {
+    param($First, $Second)
+    $firstKey = Get-DiskPulseDriveIdentityKey $First
+    $secondKey = Get-DiskPulseDriveIdentityKey $Second
+    # Unknown == unknown is never proof of identity, including pre-identity snapshots.
+    return ($firstKey -and $secondKey -and $firstKey -eq $secondKey)
+}
+
+function Get-DiskPulseCapacityHistory {
+    param([array]$Rows, [string]$Drive, [string]$VolumeGuid)
+    $identity = [pscustomobject]@{VolumeGuid=$VolumeGuid}
+    @($Rows | Where-Object { $_.ID -eq $Drive -and (Test-DiskPulseSameVolume $_ $identity) } | Sort-Object Timestamp)
+}
+
 function Get-DiskPulseDriveIdentityKey {
     param($Drive)
-    $volumeGuid = [string](Get-DiskPulseMemberValue $Drive 'VolumeGuid')
-    if ([string]::IsNullOrWhiteSpace($volumeGuid)) { return $null }
-    $volumeGuid = $volumeGuid.Trim().TrimEnd('\')
-    if (-not $volumeGuid.StartsWith('\\?\Volume{', [StringComparison]::OrdinalIgnoreCase) -or -not $volumeGuid.EndsWith('}')) {
-        return $null
-    }
-    return 'VOLUME-GUID|' + $volumeGuid.ToUpperInvariant()
+    $volumeGuid = ConvertTo-DiskPulseVolumeGuid ([string](Get-DiskPulseMemberValue $Drive 'VolumeGuid'))
+    if (-not $volumeGuid) { return $null }
+    return 'VOLUME-GUID|' + $volumeGuid
 }
 
 function Get-DiskPulseDriveCanonicalRank {
@@ -637,8 +658,16 @@ function Invoke-DirectoryScan {
         [string] $Drive,
         [string] $RootPath,
         [scriptblock] $BeforeEntry,
-        [scriptblock] $ProgressCallback
+        [scriptblock] $ProgressCallback,
+        [string] $VolumeGuid
     )
+
+    # App passes the queried identity, including an explicit empty result. Direct callers
+    # resolve the volume containing RootPath, not their synthetic/display drive letter.
+    if (-not $PSBoundParameters.ContainsKey('VolumeGuid')) {
+        $VolumeGuid = Get-DiskPulseDriveVolumeGuid ([IO.Path]::GetPathRoot([IO.Path]::GetFullPath($RootPath)))
+    }
+    $VolumeGuid = ConvertTo-DiskPulseVolumeGuid $VolumeGuid
 
     if (-not $BeforeEntry) {
         $nativeCallback = if ($ProgressCallback) {
@@ -650,6 +679,7 @@ function Invoke-DirectoryScan {
         $native = [DiskPulseFastScanner]::Scan($Drive, $RootPath, $nativeCallback)
         return [PSCustomObject]@{
             drive                       = $native.drive
+            volumeGuid                  = $VolumeGuid
             scopeSignature              = 'diskpulse-scope-v1:fixed;depth=2;reparse=exclude;names=$recycle.bin,system volume information'
             scopeVersion                = 1
             rootPath                    = $native.rootPath
@@ -865,6 +895,7 @@ function Invoke-DirectoryScan {
     $errorValues = [object[]]$errors
     [PSCustomObject]@{
         drive                       = $Drive.ToUpperInvariant()
+        volumeGuid                  = $VolumeGuid
         scopeSignature              = 'diskpulse-scope-v1:fixed;depth=2;reparse=exclude;names=$recycle.bin,system volume information'
         scopeVersion                = 1
         rootPath                    = $root
@@ -901,7 +932,7 @@ function Find-DriveBaseline {
     $Snapshots | Where-Object {
         $_.scanId -ne $Current.scanId -and [datetime]$_.completedAt -lt [datetime]$Current.startedAt -and
         @($_.drives | Where-Object {
-            $_.drive -eq $Drive -and $_.status -in @('baseline','complete') -and
+            $_.drive -eq $Drive -and (Test-DiskPulseSameVolume $_ $currentDrive) -and $_.status -in @('baseline','complete') -and
             $_.PSObject.Properties.Name -contains 'usedBytes' -and
             (-not $expectedRoot -or [string]$_.rootPath -eq $expectedRoot)
         }).Count
@@ -919,7 +950,7 @@ function Get-DriveHistoryCandidates {
         (-not ($_.PSObject.Properties.Name -contains 'status') -or $_.status -ne 'failed') -and
         [datetime]$_.completedAt -lt [datetime]$Current.startedAt -and
         @($_.drives | Where-Object {
-            $_.drive -eq $Drive -and $_.status -in @('baseline','complete') -and
+            $_.drive -eq $Drive -and (Test-DiskPulseSameVolume $_ $currentDrive) -and $_.status -in @('baseline','complete') -and
             $_.PSObject.Properties.Name -contains 'usedBytes' -and [string]$_.rootPath -eq $expectedRoot
         }).Count
     } | Sort-Object { [datetime]$_.completedAt } -Descending)
@@ -977,6 +1008,9 @@ function Get-DiskPulseRecordConfidence {
 
 function Get-DiskPulseComparisonReason {
     param($Current,$Baseline,$Record,$Prior)
+    if (-not $Baseline) { return 'no-baseline' }
+    if (-not (Get-DiskPulseDriveIdentityKey $Current) -or -not (Get-DiskPulseDriveIdentityKey $Baseline)) { return 'volume-identity-unknown' }
+    if (-not (Test-DiskPulseSameVolume $Current $Baseline)) { return 'volume-mismatch' }
     $r=if($Record){$Record}else{$Prior}
     $path=if($r.kind -eq 'rootFiles'){$Current.rootPath}else{$r.displayPath}
     $reason=Get-DiskPulseRecordConfidence $Current $Record $path
@@ -1021,6 +1055,9 @@ function Compare-DriveRecords {
 
 function Get-ChangeCoverage {
     param($Current,$Baseline,[array]$Rows)
+    if (-not (Test-DiskPulseSameVolume $Current $Baseline)) {
+        return [pscustomobject]@{addedBytes=[int64]0;releasedBytes=[int64]0;locatedNetBytes=[int64]0;actualNetBytes=$null;unexplainedBytes=$null;rate=$null;activityPreferred=$false}
+    }
     $top=@($Rows|Where-Object{$_.level-eq 1-and$_.state-in@('created','changed','removed')});[int64]$added=0;[int64]$released=0;[int64]$located=0
     foreach($r in $top){$located+=[int64]$r.deltaBytes;if($r.deltaBytes-gt 0){$added+=[int64]$r.deltaBytes}elseif($r.deltaBytes-lt 0){$released+=[math]::Abs([int64]$r.deltaBytes)}}
     $actual=if($Baseline){[int64]$Current.usedBytes-[int64]$Baseline.usedBytes}else{[int64]0}
@@ -1733,6 +1770,20 @@ function New-DiskPulseAIInput {
         [array]$HistoryCenter,
         $Snapshot
     )
+    # The normalized Windows identity stays local. References are allocated anew for each
+    # input and cannot identify a volume across analyses or disclose its GUID to a provider.
+    $volumeReferences = @{}
+    $volumeByDrive = @{}
+    foreach ($snapshotDrive in @(Get-DiskPulseMemberValue $Snapshot 'drives')) {
+        if (-not $snapshotDrive) { continue }
+        $key = Get-DiskPulseDriveIdentityKey $snapshotDrive
+        $reference = $null
+        if ($key) {
+            if (-not $volumeReferences.ContainsKey($key)) { $volumeReferences[$key] = 'volume-' + ($volumeReferences.Count + 1) }
+            $reference = $volumeReferences[$key]
+        }
+        $volumeByDrive[[string]$snapshotDrive.drive] = $reference
+    }
     $trendIndex = @{}
     foreach ($hc in @($HistoryCenter)) {
         $driveTrends = @{}
@@ -1750,18 +1801,23 @@ function New-DiskPulseAIInput {
 
     foreach ($dr in @($DirectoryResults)) {
         $drive = [string]$dr.drive
+        $volumeRef = $volumeByDrive[$drive]
         $cov = $dr.coverage
+        $comparisonAvailable = [bool]$volumeRef -and [bool]$dr.baselineScanId -and $cov -and $null -ne $cov.actualNetBytes
         $drives.Add([PSCustomObject]@{
             drive                  = $drive
+            volumeRef              = $volumeRef
+            volumeIdentityState    = if ($volumeRef) { 'known' } else { 'unknown' }
             scanStatus             = [string]$dr.status
-            actualNetChangeBytes   = if ($cov) { [int64]$cov.actualNetBytes } else { [int64]0 }
-            locatedNetChangeBytes  = if ($cov) { [int64]$cov.locatedNetBytes } else { [int64]0 }
-            unexplainedBytes       = if ($cov -and $cov.PSObject.Properties.Name -contains 'unexplainedBytes') { [int64]$cov.unexplainedBytes } else { [int64]0 }
-            coverageRate           = if ($cov) { [double]$cov.rate } else { [double]0 }
+            comparisonAvailable    = [bool]$comparisonAvailable
+            actualNetChangeBytes   = if ($comparisonAvailable) { [int64]$cov.actualNetBytes } else { $null }
+            locatedNetChangeBytes  = if ($comparisonAvailable) { [int64]$cov.locatedNetBytes } else { $null }
+            unexplainedBytes       = if ($comparisonAvailable -and $cov.PSObject.Properties.Name -contains 'unexplainedBytes' -and $null -ne $cov.unexplainedBytes) { [int64]$cov.unexplainedBytes } else { $null }
+            coverageRate           = if ($comparisonAvailable -and $null -ne $cov.rate) { [double]$cov.rate } else { $null }
             unavailablePathCount   = @($dr.unavailable).Count
         })
 
-        $reliable = @($dr.changes | Where-Object { $_.state -in @('created','changed','removed') })
+        $reliable = @($dr.changes | Where-Object { $comparisonAvailable -and $_.state -in @('created','changed','removed') })
         $l1 = @($reliable | Where-Object { $_.level -eq 1 })
         $l2 = @($reliable | Where-Object { $_.level -eq 2 })
 
@@ -1791,6 +1847,7 @@ function New-DiskPulseAIInput {
             $obj = [PSCustomObject]@{
                 path             = ConvertTo-DiskPulseRedactedPath ([string]$item.displayPath)
                 drive            = $drive
+                volumeRef        = $volumeRef
                 level            = [int]$item.level
                 state            = [string]$item.state
                 deltaBytes       = [int64]$item.deltaBytes
@@ -1810,6 +1867,7 @@ function New-DiskPulseAIInput {
                         parentPath       = ConvertTo-DiskPulseRedactedPath ([string]$item.displayPath)
                         path             = ConvertTo-DiskPulseRedactedPath ([string]$child.displayPath)
                         drive            = $drive
+                        volumeRef        = $volumeRef
                         level            = [int]$child.level
                         state            = [string]$child.state
                         deltaBytes       = [int64]$child.deltaBytes
@@ -1824,10 +1882,11 @@ function New-DiskPulseAIInput {
     $allTrends = [System.Collections.Generic.List[object]]::new()
     foreach ($hc in @($HistoryCenter)) {
         foreach ($t in @($hc.trends)) {
-            if ([int64]$t.cumulativeBytes -ne 0) {
+            if ($volumeByDrive[[string]$hc.drive] -and [int64]$t.cumulativeBytes -ne 0) {
                 $allTrends.Add([PSCustomObject]@{
                     path             = ConvertTo-DiskPulseRedactedPath ([string]$t.displayPath)
                     drive            = [string]$hc.drive
+                    volumeRef        = $volumeByDrive[[string]$hc.drive]
                     level            = [int]$t.level
                     label            = [string]$t.label
                     cumulativeBytes  = [int64]$t.cumulativeBytes
@@ -2703,7 +2762,7 @@ function Invoke-DiskPulseMigration {
                             }
                             Invoke-DiskPulsePublication $Paths.Runtime {
                                 $current=if(Test-Path -LiteralPath $destination){@(Import-Csv -LiteralPath $destination)}else{@()}
-                                $seen=@{}; $merged=@($current)+@($import) | Where-Object { $k=$_.Timestamp+'|'+$_.ID; if(-not $seen.ContainsKey($k)){$seen[$k]=$true;$true} }
+                                $seen=@{}; $merged=@($current)+@($import) | Where-Object { $k=$_.Timestamp+'|'+$_.ID+'|'+(ConvertTo-DiskPulseVolumeGuid ([string](Get-DiskPulseMemberValue $_ 'VolumeGuid'))); if(-not $seen.ContainsKey($k)){$seen[$k]=$true;$true} }
                                 Write-DiskPulseAtomicCsv -FinalPath $destination -Rows @($merged)
                             }
                         } else {
@@ -2798,11 +2857,13 @@ function New-HistoryRow {
         [double] $Total,
         [double] $Free,
         [double] $Used,
-        [double] $Percent
+        [double] $Percent,
+        [string] $VolumeGuid
     )
     [PSCustomObject]@{
         Timestamp = $Timestamp
         ID        = $ID
+        VolumeGuid = ConvertTo-DiskPulseVolumeGuid $VolumeGuid
         Total     = [math]::Round($Total, 2)
         Free      = [math]::Round($Free, 2)
         Used      = [math]::Round($Used, 2)
@@ -2837,7 +2898,7 @@ if ($historySource) {
                 0
             }
 
-            $historyRows.Add((New-HistoryRow -Timestamp $rowTs -ID $rowId -Total $total -Free $free -Used $used -Percent $percent))
+            $historyRows.Add((New-HistoryRow -Timestamp $rowTs -ID $rowId -Total $total -Free $free -Used $used -Percent $percent -VolumeGuid ([string](Get-DiskPulseMemberValue $row 'VolumeGuid'))))
         }
     }
     catch {
@@ -2845,11 +2906,6 @@ if ($historySource) {
     }
 }
 Profile-Mark "readHistory"
-
-$previousById = @{}
-foreach ($row in ($historyRows | Sort-Object Timestamp)) {
-    $previousById[$row.ID] = $row
-}
 
 $drives = @()
 try {
@@ -2903,8 +2959,8 @@ foreach ($d in $drives) {
     $free    = [math]::Round($d.FreeSpace / 1GB, 2)
     $used    = [math]::Round($total - $free, 2)
     $percent = if ($total -gt 0) { [math]::Round(($used / $total) * 100, 1) } else { 0 }
-    $lastUsed = if ($previousById.ContainsKey($d.DeviceID)) { [double]$previousById[$d.DeviceID].Used } else { $used }
-    $diff    = [math]::Round($used - $lastUsed, 2)
+    $prev = Get-DiskPulseCapacityHistory -Rows ([object[]]$historyRows) -Drive $d.DeviceID -VolumeGuid $d.VolumeGuid | Select-Object -Last 1
+    $diff = if ($prev) { [math]::Round($used - [double]$prev.Used, 2) } else { $null }
     $status  = if ($percent -ge 90) { "critical" } elseif ($percent -ge 75) { "warning" } else { "good" }
 
     if ($status -eq "critical" -and $notifiedIds.Add($d.DeviceID)) {
@@ -2922,6 +2978,7 @@ foreach ($d in $drives) {
 
     $currentResults.Add([PSCustomObject]@{
         id      = $id
+        volumeGuid = ConvertTo-DiskPulseVolumeGuid $d.VolumeGuid
         total   = $total
         free    = $free
         used    = $used
@@ -2930,13 +2987,12 @@ foreach ($d in $drives) {
         status  = $status
     })
 
-    $prev = if ($previousById.ContainsKey($d.DeviceID)) { $previousById[$d.DeviceID] } else { $null }
     $isDup = $prev -and
         ([math]::Abs([double]$prev.Total - $total) -lt 0.01) -and
         ([math]::Abs([double]$prev.Free - $free) -lt 0.01) -and
         ([math]::Abs([double]$prev.Percent - $percent) -lt 0.1)
     if (-not $isDup) {
-        $historyRows.Add((New-HistoryRow -Timestamp $timestamp -ID $d.DeviceID -Total $total -Free $free -Used $used -Percent $percent))
+        $historyRows.Add((New-HistoryRow -Timestamp $timestamp -ID $d.DeviceID -Total $total -Free $free -Used $used -Percent $percent -VolumeGuid $d.VolumeGuid))
     }
 }
 
@@ -2963,12 +3019,12 @@ foreach ($d in $drives) {
         $consoleProgressState.Active = $true
     }
     Profile-Mark "scan:$($d.DeviceID)"
-    $scan = Invoke-DirectoryScan -Drive $d.DeviceID -RootPath ($d.DeviceID + '\') -ProgressCallback $consoleProgress
+    $scan = Invoke-DirectoryScan -Drive $d.DeviceID -RootPath ($d.DeviceID + '\') -ProgressCallback $consoleProgress -VolumeGuid $d.VolumeGuid
     Profile-Mark "scanDone:$($d.DeviceID)"
     $completedDrives++
     & $publishProgress 'running' 'scan' $d.DeviceID $null $true
     $consoleProgressState.LastRenderedMilliseconds = -1
-    $priorComplete = $priorSnapshots | Where-Object { @($_.drives | Where-Object { $_.drive -eq $d.DeviceID -and $_.status -in @('baseline','complete') }).Count } | Select-Object -First 1
+    $priorComplete = $priorSnapshots | Where-Object { @($_.drives | Where-Object { $_.drive -eq $d.DeviceID -and (Test-DiskPulseSameVolume $_ $scan) -and $_.status -in @('baseline','complete') }).Count } | Select-Object -First 1
     if ($scan.status -eq 'complete' -and -not $priorComplete) { $scan.status = 'baseline' }
     $scan | Add-Member totalBytes ([int64]$d.Size)
     $scan | Add-Member freeBytes ([int64]$d.FreeSpace)
@@ -3979,6 +4035,16 @@ function normalizeDriveId(value) {
   return String(value ?? "").replace(/\\/g, "").trim().toUpperCase();
 }
 
+function normalizeVolumeGuid(value) {
+  const guid = String(value ?? "").trim().replace(/\\+$/, "");
+  return /^\\\\\?\\VOLUME\{[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}\}$/i.test(guid) ? guid.toUpperCase() : "";
+}
+
+function capacityHistoryFor(history, current) {
+  const guid = normalizeVolumeGuid(current?.volumeGuid);
+  return guid ? history.filter((row) => normalizeDriveId(row.ID) === normalizeDriveId(current.id) && normalizeVolumeGuid(row.VolumeGuid) === guid) : [];
+}
+
 function compareDriveId(a, b) {
   const left = normalizeDriveId(a), right = normalizeDriveId(b);
   return left < right ? -1 : left > right ? 1 : 0;
@@ -4008,7 +4074,7 @@ function defaultCapacityDrive(drives, systemDrive) {
 
 function cleanCapacitySamples(history, current, driveId, reportTimestamp) {
   const wanted = normalizeDriveId(driveId);
-  const rows = history.filter((row) => normalizeDriveId(row.ID) === wanted);
+  const rows = current && normalizeDriveId(current.id) === wanted ? capacityHistoryFor(history, current) : [];
   if (current && normalizeDriveId(current.id) === wanted) {
     rows.push({ Timestamp: reportTimestamp, ID: current.id, Total: current.total, Used: current.used });
   }
@@ -4059,10 +4125,8 @@ function buildAttentionItems(drives, directoryItems, reliableRows) {
 // TESTABLE_CAPACITY_HELPERS_END
 
 const historyMap = {};
-HISTORY.forEach((row) => {
-  const id = normalizeDriveId(row.ID);
-  if (!historyMap[id]) historyMap[id] = [];
-  historyMap[id].push(row);
+DATA.forEach((drive) => {
+  historyMap[normalizeDriveId(drive.id)] = capacityHistoryFor(HISTORY, drive);
 });
 Object.values(historyMap).forEach((arr) =>
   arr.sort((a, b) => String(a.Timestamp).localeCompare(String(b.Timestamp)))
@@ -4329,7 +4393,7 @@ function announce(message) {
 })();
 
 $("ts").textContent = "更新于 " + TS;
-$("footer").textContent = "历史记录保留最近 " + HISTORY.length + " 条采样";
+$("footer").textContent = "历史记录保留最近 " + HISTORY.length + " 条采样；仅比较身份已确认的同一卷。旧版或其他卷记录保留在 CSV/快照中，不用于当前卷趋势。";
 
 function fmt(gb) {
   const value = Number(gb) || 0;
@@ -4386,7 +4450,7 @@ function estimateDays(drive, rows) {
 
 function trend(diff) {
   const value = Number(diff) || 0;
-  const text = formatCapacityDelta(value);
+  const text = formatCapacityDelta(diff);
   return element("span",text === "容量基本不变" ? "trend-st" : value > 0 ? "trend-up" : "trend-dn",text);
 }
 
@@ -4482,6 +4546,7 @@ function classifyScanEvidence(items) {
 }
 
 function formatCapacityDelta(gb) {
+  if (gb == null) return "等待同卷容量基线";
   const value = Number(gb) || 0;
   const bytes = Math.abs(value) * 1024 * 1024 * 1024;
   if (bytes < 1024) return "容量基本不变";
@@ -4661,7 +4726,7 @@ function changeRowNode(row, maxMagnitude, contributionBase) {
 
 function stateChangeRowNode(row) {
   const label = row.state === "unknown" ? "未知变化" : "当前不可用";
-  const reason = {"scan-incomplete":"扫描范围不完整", "scope-mismatch":"与基线的扫描范围不同", "legacy-evidence-missing":"历史完整性证据不足", "no-baseline":"尚无比较基线"}[row.reason] || label;
+  const reason = {"scan-incomplete":"扫描范围不完整", "scope-mismatch":"与基线的扫描范围不同", "legacy-evidence-missing":"历史完整性证据不足", "no-baseline":"尚无同卷比较基线", "volume-identity-unknown":"卷身份未确认", "volume-mismatch":"与基线不是同一卷"}[row.reason] || label;
   const root=element("div","change-item"), main=element("div","change-main"), path=element("span","change-path expandable-path",row.displayPath); path.title=String(row.displayPath ?? "");
   main.append(path,element("div","change-context",`${row.drive} · ${row.level} 级 · ${reason}`)); root.append(main,element("span","status-badge waiting",label)); return root;
 }
@@ -5267,7 +5332,7 @@ $("copy").addEventListener("click", async () => {
   const lines = [
     `磁盘容量看板 ${TS}`,
     `总容量 ${fmt(t.total)} / 已用 ${fmt(t.used)} / 剩余 ${fmt(t.free)}`,
-    ...DATA.map((d) => `${d.id} 使用率 ${pct(d.percent)}，剩余 ${fmt(d.free)}，本次${(Number(d.diff) || 0) >= 0 ? "增加" : "减少"} ${fmt(Math.abs(Number(d.diff) || 0))}`)
+    ...DATA.map((d) => `${d.id} 使用率 ${pct(d.percent)}，剩余 ${fmt(d.free)}，${formatCapacityDelta(d.diff)}`)
   ];
   const ok = await copyText(lines.join("\n"));
   if (!ok) return;

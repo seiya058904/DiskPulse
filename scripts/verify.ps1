@@ -181,6 +181,7 @@ function Invoke-PowerShell7Compatibility {
     $testFiles = @(
         'tests\DiskPulse.Phase3.Tests.ps1'
         'tests\DiskPulse.Phase4.Tests.ps1'
+        'tests\DiskPulse.VolumeIdentity.Tests.ps1'
     )
     $anyFailure = $false
     foreach ($relativePath in $testFiles) {

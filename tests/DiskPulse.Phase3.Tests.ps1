@@ -6,17 +6,17 @@ foreach($name in 'Compare-DriveRecords','Find-DriveBaseline','Get-ChangeCoverage
     if(-not(Get-Command $name -ErrorAction SilentlyContinue)){throw "Missing Phase 3 helper: $name"}
 }
 function Rec($key,$size,$level=1,$complete=$true){[pscustomobject]@{key=$key;displayPath=$key;kind='directory';level=$level;sizeBytes=[int64]$size;enumerationComplete=$complete;childrenEnumerationComplete=$complete}}
-$baseline=[pscustomobject]@{drive='T:';status='complete';usedBytes=1000;records=@((Rec 'same' 10),(Rec 'changed' 20),(Rec 'removed' 30),(Rec 'blocked' 40),(Rec 'excluded' 50))}
-$current=[pscustomobject]@{drive='T:';status='partial';usedBytes=1015;records=@((Rec 'same' 10),(Rec 'changed' 25),(Rec 'created' 10));unavailable=@([pscustomobject]@{path='blocked'});excluded=@([pscustomobject]@{path='excluded'})}
+$baseline=[pscustomobject]@{volumeGuid='\\?\Volume{11111111-1111-1111-1111-111111111111}';drive='T:';rootPath='T:\';status='complete';usedBytes=1000;records=@((Rec 'same' 10),(Rec 'changed' 20),(Rec 'removed' 30),(Rec 'blocked' 40),(Rec 'excluded' 50))}
+$current=[pscustomobject]@{volumeGuid='\\?\Volume{11111111-1111-1111-1111-111111111111}';drive='T:';rootPath='T:\';status='partial';usedBytes=1015;records=@((Rec 'same' 10),(Rec 'changed' 25),(Rec 'created' 10));unavailable=@([pscustomobject]@{path='blocked'});excluded=@([pscustomobject]@{path='excluded'})}
 $rows=@(Compare-DriveRecords $current $baseline);$counts=@{};$rows|Group-Object state|ForEach-Object{$counts[$_.Name]=$_.Count}
 foreach($state in 'created','changed','unavailable','unchanged'){if($counts[$state]-ne 1){throw "Expected one $state state."}}
 if($counts['unknown']-ne 2){throw 'Partial comparison must keep unconfirmed missing paths unknown.'}
-$complete=[pscustomobject]@{drive='T:';status='complete';usedBytes=1015;records=$current.records;unavailable=@();excluded=@()}
+$complete=[pscustomobject]@{volumeGuid='\\?\Volume{11111111-1111-1111-1111-111111111111}';drive='T:';rootPath='T:\';status='complete';usedBytes=1015;records=$current.records;unavailable=@();excluded=@()}
 if(@(Compare-DriveRecords $complete $baseline|Where-Object state -eq 'removed').Count-ne 3){throw 'Complete comparison must emit removed records.'}
-$now=[pscustomobject]@{scanId='now';startedAt='2026-07-13T12:00:00Z'}
+$now=[pscustomobject]@{drives=@($complete);scanId='now';startedAt='2026-07-13T12:00:00Z'}
 $emptyBaseline=Find-DriveBaseline -Snapshots @() -Drive 'T:' -Current $now
 if($null-ne$emptyBaseline){throw 'First run with no snapshots must return no baseline.'}
-$snaps=@([pscustomobject]@{scanId='future';completedAt='2026-07-13T13:00:00Z';drives=@($baseline)},[pscustomobject]@{scanId='partial';completedAt='2026-07-13T11:00:00Z';drives=@([pscustomobject]@{drive='T:';status='partial'})},[pscustomobject]@{scanId='base';completedAt='2026-07-13T10:00:00Z';drives=@($baseline)})
+$snaps=@([pscustomobject]@{scanId='future';completedAt='2026-07-13T13:00:00Z';drives=@($baseline)},[pscustomobject]@{scanId='partial';completedAt='2026-07-13T11:00:00Z';drives=@([pscustomobject]@{volumeGuid='\\?\Volume{11111111-1111-1111-1111-111111111111}';drive='T:';rootPath='T:\';status='partial'})},[pscustomobject]@{scanId='base';completedAt='2026-07-13T10:00:00Z';drives=@($baseline)})
 if((Find-DriveBaseline $snaps 'T:' $now).scanId-ne'base'){throw 'Baseline selection is incorrect.'}
 $coverage=Get-ChangeCoverage $complete $baseline (Compare-DriveRecords $complete $baseline)
 if($coverage.rate-lt 0-or $coverage.rate-gt 100){throw 'Coverage rate must be clamped.'}
@@ -31,10 +31,10 @@ try{
     if(@(Read-Snapshots $paths).Count-ne 0){throw 'A snapshot whose final event failed must not become a baseline candidate.'}
     $oldTmp=Join-Path $paths.Snapshots 'old.tmp';'x'|Set-Content $oldTmp;[IO.File]::SetLastWriteTime($oldTmp,(Get-Date).AddHours(-25));Remove-StaleTemporaryFiles $paths;if(Test-Path $oldTmp){throw 'Stale temporary snapshot must be removed.'}
     $retention=@(
-        [pscustomobject]@{scanId='oldpartial';completedAt='2026-07-13T08:00:00Z';drives=@([pscustomobject]@{drive='T:';status='partial'})},
-        [pscustomobject]@{scanId='oldcomplete';completedAt='2026-07-13T09:00:00Z';drives=@([pscustomobject]@{drive='T:';status='complete'})},
-        [pscustomobject]@{scanId='newcomplete';completedAt='2026-07-13T10:00:00Z';drives=@([pscustomobject]@{drive='T:';status='complete'})},
-        [pscustomobject]@{scanId='current';completedAt='2026-07-13T11:00:00Z';drives=@([pscustomobject]@{drive='T:';status='complete'})}
+        [pscustomobject]@{scanId='oldpartial';completedAt='2026-07-13T08:00:00Z';drives=@([pscustomobject]@{volumeGuid='\\?\Volume{11111111-1111-1111-1111-111111111111}';drive='T:';rootPath='T:\';status='partial'})},
+        [pscustomobject]@{scanId='oldcomplete';completedAt='2026-07-13T09:00:00Z';drives=@([pscustomobject]@{volumeGuid='\\?\Volume{11111111-1111-1111-1111-111111111111}';drive='T:';rootPath='T:\';status='complete'})},
+        [pscustomobject]@{scanId='newcomplete';completedAt='2026-07-13T10:00:00Z';drives=@([pscustomobject]@{volumeGuid='\\?\Volume{11111111-1111-1111-1111-111111111111}';drive='T:';rootPath='T:\';status='complete'})},
+        [pscustomobject]@{scanId='current';completedAt='2026-07-13T11:00:00Z';drives=@([pscustomobject]@{volumeGuid='\\?\Volume{11111111-1111-1111-1111-111111111111}';drive='T:';rootPath='T:\';status='complete'})}
     )
     foreach($s in $retention){[IO.File]::WriteAllText((Join-Path $paths.Snapshots ($s.scanId+'.json')),($s|ConvertTo-Json -Depth 12),[Text.UTF8Encoding]::new($false))}
     Invoke-SnapshotRetention $paths $retention @('T:') 'current' 3
@@ -186,7 +186,14 @@ try{
 }finally{$env:USERPROFILE=$origProfile}
 
 # --- AI Input construction tests ---
+# Explicit authoritative identities for these known-volume AI fixtures.
+$aiVolumeDrives=@(
+    [pscustomobject]@{drive='C:';volumeGuid='\\?\Volume{11111111-1111-1111-1111-111111111111}'}
+    [pscustomobject]@{drive='D:';volumeGuid='\\?\Volume{22222222-2222-2222-2222-222222222222}'}
+    [pscustomobject]@{drive='T:';volumeGuid='\\?\Volume{33333333-3333-3333-3333-333333333333}'}
+)
 $snap=[pscustomobject]@{scanId='test-scan';completedAt='2026-07-14T10:30:00Z';status='complete';drives=@([pscustomobject]@{drive='C:';status='complete';rootPath='C:\'})}
+$snap | Add-Member -NotePropertyName drives -NotePropertyValue $aiVolumeDrives -Force
 $baseline=[pscustomobject]@{scanId='base';completedAt='2026-07-13T10:00:00Z';drives=@([pscustomobject]@{drive='C:';status='complete';rootPath='C:\';usedBytes=1000;records=@(
     [pscustomobject]@{key='c- programs';displayPath='C:\Program Files';kind='directory';level=1;sizeBytes=500},
     [pscustomobject]@{key='c- users';displayPath='C:\Users';kind='directory';level=1;sizeBytes=300},
@@ -201,6 +208,7 @@ $current=[pscustomobject]@{drive='C:';status='complete';rootPath='C:\';usedBytes
     [pscustomobject]@{key='c- new';displayPath='C:\NewDir';kind='directory';level=1;sizeBytes=30}
 );excluded=@();unavailable=@();errors=@()}
 $baselineDrive=$baseline.drives[0]
+foreach($drive in @($current,$baselineDrive)) { $drive | Add-Member volumeGuid '\\?\Volume{11111111-1111-1111-1111-111111111111}' }
 foreach($record in @($current.records)+@($baselineDrive.records)) { $record | Add-Member -NotePropertyName enumerationComplete -NotePropertyValue $true; $record | Add-Member -NotePropertyName childrenEnumerationComplete -NotePropertyValue $true }
 $dirResults=@([pscustomobject]@{
     drive='C:';status='complete';baselineScanId='base';baselineCompletedAt='2026-07-13T10:00:00Z'
@@ -256,10 +264,11 @@ for($i=1;$i -le 20;$i++){
     $manyRecords+=$rec
     $changeRecords+=[pscustomobject]@{key=$rec.key;displayPath=$rec.displayPath;level=1;sizeBytes=[int64]$rec.sizeBytes;deltaBytes=[int64]$rec.sizeBytes;state='created';kind='directory'}
 }
-$manyBaseline=[pscustomobject]@{drive='T:';status='complete';rootPath='T:\';usedBytes=0;records=@();unavailable=@();excluded=@();errors=@()}
-$manyCurrent=[pscustomobject]@{drive='T:';status='complete';rootPath='T:\';usedBytes=1000;records=[array]$manyRecords;unavailable=@();excluded=@();errors=@()}
-$manyDir=@([pscustomobject]@{drive='T:';status='complete';baselineScanId='base';changes=[array]$changeRecords;coverage=[pscustomobject]@{actualNetBytes=1000;locatedNetBytes=1000;addedBytes=1000;releasedBytes=0;rate=100;activityPreferred=$false};errors=@();unavailable=@();excluded=@()})
+$manyBaseline=[pscustomobject]@{volumeGuid='\\?\Volume{11111111-1111-1111-1111-111111111111}';drive='T:';rootPath='T:\';status='complete';usedBytes=0;records=@();unavailable=@();excluded=@();errors=@()}
+$manyCurrent=[pscustomobject]@{volumeGuid='\\?\Volume{11111111-1111-1111-1111-111111111111}';drive='T:';rootPath='T:\';status='complete';usedBytes=1000;records=[array]$manyRecords;unavailable=@();excluded=@();errors=@()}
+$manyDir=@([pscustomobject]@{volumeGuid='\\?\Volume{11111111-1111-1111-1111-111111111111}';drive='T:';rootPath='T:\';status='complete';baselineScanId='base';changes=[array]$changeRecords;coverage=[pscustomobject]@{actualNetBytes=1000;locatedNetBytes=1000;addedBytes=1000;releasedBytes=0;rate=100;activityPreferred=$false};errors=@();unavailable=@();excluded=@()})
 $manySnap=[pscustomobject]@{scanId='many';completedAt='2026-07-14T11:00:00Z';status='complete'}
+$manySnap | Add-Member -NotePropertyName drives -NotePropertyValue $aiVolumeDrives -Force
 $manyInput=New-DiskPulseAIInput -DirectoryResults $manyDir -HistoryCenter @() -Snapshot $manySnap
 if($manyInput.primaryGrowth.Count-ne15){throw "Growth must be capped at 15, got $($manyInput.primaryGrowth.Count)."}
 if($manyInput.omitted.growthCount-ne5){throw "Omitted growth must be 5, got $($manyInput.omitted.growthCount)."}
@@ -268,6 +277,7 @@ if($manyInput.omitted.growthBytes-le0){throw "Omitted growth bytes must be posit
 # --- No baseline / no reliable changes / all failed ---
 $emptyDir=@([pscustomobject]@{drive='C:';status='baseline';baselineScanId=$null;changes=@();coverage=$null;errors=@();unavailable=@();excluded=@()})
 $emptySnap=[pscustomobject]@{scanId='empty';completedAt='2026-07-14T10:30:00Z';status='complete'}
+$emptySnap | Add-Member -NotePropertyName drives -NotePropertyValue $aiVolumeDrives -Force
 $emptyInput=New-DiskPulseAIInput -DirectoryResults $emptyDir -HistoryCenter @() -Snapshot $emptySnap
 if($emptyInput.primaryGrowth.Count-ne0){throw 'No baseline must have 0 growth.'}
 if($emptyInput.primaryRelease.Count-ne0){throw 'No baseline must have 0 release.'}
@@ -298,6 +308,7 @@ if($multiInput.primaryGrowth.Count-ne2){throw 'Must have 2 growth items across d
 
 # --- Sort stability (same |deltaBytes|) ---
 $snapA=[pscustomobject]@{scanId='sort-test';completedAt='2026-07-14T10:30:00Z';status='complete'}
+$snapA | Add-Member -NotePropertyName drives -NotePropertyValue $aiVolumeDrives -Force
 $sortChanges=@(
     [pscustomobject]@{key='c-bbb';displayPath='C:\BBB';level=1;sizeBytes=100;deltaBytes=50;state='changed';kind='directory'}
     [pscustomobject]@{key='c-aaa';displayPath='C:\AAA';level=1;sizeBytes=100;deltaBytes=50;state='changed';kind='directory'}
@@ -355,6 +366,7 @@ Write-Host 'PASS: AI input construction, path redaction, Top N, omitted, sort st
 
 # Two disks each exceeding Top N, confirm per-disk truncation
 $regSnap=[pscustomobject]@{scanId='reg';completedAt='2026-07-14T10:30:00Z';status='complete'}
+$regSnap | Add-Member -NotePropertyName drives -NotePropertyValue $aiVolumeDrives -Force
 $regChangesC=@(); $regChangesD=@()
 for($i=1;$i -le 20;$i++){
     $regChangesC+=[pscustomobject]@{key="c-g$i";displayPath="C:\G$((200-$i).ToString('000'))";kind='directory';level=1;sizeBytes=[int64]($i*10);deltaBytes=[int64]($i*10);state='created'}
@@ -674,6 +686,7 @@ if(-not(Get-Command Invoke-DiskPulseAIAnalysis -ErrorAction SilentlyContinue)){t
 # --- Shared test data ---
 $orcDir=@([pscustomobject]@{drive='C:';status='complete';baselineScanId='base';changes=@([pscustomobject]@{key='c-g';displayPath='C:\Grow';kind='directory';level=1;sizeBytes=100;deltaBytes=50;state='changed'});coverage=[pscustomobject]@{actualNetBytes=50;locatedNetBytes=50;addedBytes=50;releasedBytes=0;rate=100;activityPreferred=$false;unexplainedBytes=0};errors=@();unavailable=@();excluded=@()})
 $orcSnap=[pscustomobject]@{scanId='orc-test';completedAt='2026-07-14T10:30:00Z';status='complete'}
+$orcSnap | Add-Member -NotePropertyName drives -NotePropertyValue $aiVolumeDrives -Force
 $orcDirNoBaseline=@([pscustomobject]@{drive='C:';status='baseline';baselineScanId=$null;changes=@();coverage=$null;errors=@();unavailable=@();excluded=@()})
 $orcDirNoChange=@([pscustomobject]@{drive='C:';status='complete';baselineScanId='base';changes=@([pscustomobject]@{key='c-u';displayPath='C:\Unchanged';kind='directory';level=1;sizeBytes=100;deltaBytes=0;state='unchanged'});coverage=[pscustomobject]@{actualNetBytes=0;locatedNetBytes=0;addedBytes=0;releasedBytes=0;rate=100;activityPreferred=$false;unexplainedBytes=0};errors=@();unavailable=@();excluded=@()})
 $orcDirAllFailed=@([pscustomobject]@{drive='C:';status='failed';baselineScanId='base';changes=@();coverage=$null;errors=@([pscustomobject]@{path='C:\';reason='fail'});unavailable=@();excluded=@()})
@@ -1033,7 +1046,7 @@ function renderAIAnalysis(){ return AI_ANALYSIS.status; }
 "@
     [IO.File]::WriteAllText($workerHtml,$htmlTemplate,[Text.UTF8Encoding]::new($false))
     @{schemaVersion=1;enabled=$true;endpoint='https://api.example.com/v1/chat/completions';model='test-model';protectedApiKey=(Protect-DiskPulseSecret 'worker-key');timeoutSeconds=10}|ConvertTo-Json -Depth 4|Set-Content -LiteralPath $workerCfg -Encoding UTF8
-    $realWorkerInput=New-DiskPulseAIInput -DirectoryResults @([pscustomobject]@{drive='C:';status='complete';baselineScanId='base';changes=@([pscustomobject]@{state='changed';level=1;displayPath='C:\A';deltaBytes=1;sizeBytes=1;key='a'});coverage=[pscustomobject]@{actualNetBytes=1;locatedNetBytes=1;rate=100};errors=@();unavailable=@();excluded=@()}) -HistoryCenter @() -Snapshot ([pscustomobject]@{scanId='scan-1';status='complete';completedAt='2026-07-14T10:30:00Z'})
+    $realWorkerInput=New-DiskPulseAIInput -DirectoryResults @([pscustomobject]@{drive='C:';status='complete';baselineScanId='base';changes=@([pscustomobject]@{state='changed';level=1;displayPath='C:\A';deltaBytes=1;sizeBytes=1;key='a'});coverage=[pscustomobject]@{actualNetBytes=1;locatedNetBytes=1;rate=100};errors=@();unavailable=@();excluded=@()}) -HistoryCenter @() -Snapshot ([pscustomobject]@{scanId='scan-1';status='complete';completedAt='2026-07-14T10:30:00Z';drives=$aiVolumeDrives})
     $workerInputObj=[pscustomobject]@{
         scanId='scan-1'
         analysisId='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
@@ -1198,7 +1211,7 @@ function renderAIAnalysis(){ return AI_ANALYSIS.status; }
 
     # ready scan replaces the previous result before any worker runs
     Write-DiskPulseAIResult -ScanId 'scan-A' -Status 'success' -Model 'test-model' -Format 'structured' -Analysis ([pscustomobject]@{summary='old'}) -RawText $null -OutputPath $workerOut
-    $readyState=Get-DiskPulseAIAnalysisState -DirectoryResults $orcDir -HistoryCenter @() -Snapshot ([pscustomobject]@{scanId='scan-B';status='complete'})
+    $readyState=Get-DiskPulseAIAnalysisState -DirectoryResults $orcDir -HistoryCenter @() -Snapshot ([pscustomobject]@{scanId='scan-B';status='complete';drives=$aiVolumeDrives})
     if(-not $readyState.ready){throw 'Ready fixture must be ready.'}
     $analyzing=New-DiskPulseAIStatus -ScanId 'scan-B' -Status 'analyzing' -Model 'test-model' -Analysis $null -RawText $null -Format 'none'
     Write-DiskPulseAIResult -ScanId 'scan-B' -Status $analyzing.status -Model $analyzing.model -Format $analyzing.format -Analysis $analyzing.analysis -RawText $analyzing.rawText -OutputPath $workerOut

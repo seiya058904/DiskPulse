@@ -22,7 +22,7 @@ function Find-DriveBaseline {
     $Snapshots | Where-Object {
         $_.scanId -ne $Current.scanId -and [datetime]$_.completedAt -lt [datetime]$Current.startedAt -and
         @($_.drives | Where-Object {
-            $_.drive -eq $Drive -and $_.status -in @('baseline','complete') -and
+            $_.drive -eq $Drive -and (Test-DiskPulseSameVolume $_ $currentDrive) -and $_.status -in @('baseline','complete') -and
             $_.PSObject.Properties.Name -contains 'usedBytes' -and
             (-not $expectedRoot -or [string]$_.rootPath -eq $expectedRoot)
         }).Count
@@ -40,7 +40,7 @@ function Get-DriveHistoryCandidates {
         (-not ($_.PSObject.Properties.Name -contains 'status') -or $_.status -ne 'failed') -and
         [datetime]$_.completedAt -lt [datetime]$Current.startedAt -and
         @($_.drives | Where-Object {
-            $_.drive -eq $Drive -and $_.status -in @('baseline','complete') -and
+            $_.drive -eq $Drive -and (Test-DiskPulseSameVolume $_ $currentDrive) -and $_.status -in @('baseline','complete') -and
             $_.PSObject.Properties.Name -contains 'usedBytes' -and [string]$_.rootPath -eq $expectedRoot
         }).Count
     } | Sort-Object { [datetime]$_.completedAt } -Descending)
@@ -98,6 +98,9 @@ function Get-DiskPulseRecordConfidence {
 
 function Get-DiskPulseComparisonReason {
     param($Current,$Baseline,$Record,$Prior)
+    if (-not $Baseline) { return 'no-baseline' }
+    if (-not (Get-DiskPulseDriveIdentityKey $Current) -or -not (Get-DiskPulseDriveIdentityKey $Baseline)) { return 'volume-identity-unknown' }
+    if (-not (Test-DiskPulseSameVolume $Current $Baseline)) { return 'volume-mismatch' }
     $r=if($Record){$Record}else{$Prior}
     $path=if($r.kind -eq 'rootFiles'){$Current.rootPath}else{$r.displayPath}
     $reason=Get-DiskPulseRecordConfidence $Current $Record $path
@@ -142,6 +145,9 @@ function Compare-DriveRecords {
 
 function Get-ChangeCoverage {
     param($Current,$Baseline,[array]$Rows)
+    if (-not (Test-DiskPulseSameVolume $Current $Baseline)) {
+        return [pscustomobject]@{addedBytes=[int64]0;releasedBytes=[int64]0;locatedNetBytes=[int64]0;actualNetBytes=$null;unexplainedBytes=$null;rate=$null;activityPreferred=$false}
+    }
     $top=@($Rows|Where-Object{$_.level-eq 1-and$_.state-in@('created','changed','removed')});[int64]$added=0;[int64]$released=0;[int64]$located=0
     foreach($r in $top){$located+=[int64]$r.deltaBytes;if($r.deltaBytes-gt 0){$added+=[int64]$r.deltaBytes}elseif($r.deltaBytes-lt 0){$released+=[math]::Abs([int64]$r.deltaBytes)}}
     $actual=if($Baseline){[int64]$Current.usedBytes-[int64]$Baseline.usedBytes}else{[int64]0}

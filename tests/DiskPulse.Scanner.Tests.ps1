@@ -128,11 +128,11 @@ if (-not (Should-RenderConsoleProgress -Progress ([pscustomobject]@{ filesProces
     throw 'The final console progress update must render immediately.'
 }
 
-$baselineNow = [pscustomobject]@{ scanId='now'; startedAt='2026-07-13T12:00:00Z'; drives=@([pscustomobject]@{ drive='T:'; rootPath='T:\' }) }
+$baselineNow = [pscustomobject]@{ scanId='now'; startedAt='2026-07-13T12:00:00Z'; drives=@([pscustomobject]@{ volumeGuid='\\?\Volume{11111111-1111-1111-1111-111111111111}'; drive='T:'; rootPath='T:\' }) }
 $baselineCandidates = @(
-    [pscustomobject]@{ scanId='broken'; completedAt='2026-07-13T11:00:00Z'; drives=@([pscustomobject]@{ drive='T:'; status='complete' }) }
-    [pscustomobject]@{ scanId='wrong-root'; completedAt='2026-07-13T10:30:00Z'; drives=@([pscustomobject]@{ drive='T:'; rootPath='T:'; status='complete'; usedBytes=1 }) }
-    [pscustomobject]@{ scanId='valid'; completedAt='2026-07-13T10:00:00Z'; drives=@([pscustomobject]@{ drive='T:'; rootPath='T:\'; status='complete'; usedBytes=1 }) }
+    [pscustomobject]@{ scanId='broken'; completedAt='2026-07-13T11:00:00Z'; drives=@([pscustomobject]@{ volumeGuid='\\?\Volume{11111111-1111-1111-1111-111111111111}'; drive='T:'; status='complete' }) }
+    [pscustomobject]@{ scanId='wrong-root'; completedAt='2026-07-13T10:30:00Z'; drives=@([pscustomobject]@{ volumeGuid='\\?\Volume{11111111-1111-1111-1111-111111111111}'; drive='T:'; rootPath='T:'; status='complete'; usedBytes=1 }) }
+    [pscustomobject]@{ scanId='valid'; completedAt='2026-07-13T10:00:00Z'; drives=@([pscustomobject]@{ volumeGuid='\\?\Volume{11111111-1111-1111-1111-111111111111}'; drive='T:'; rootPath='T:\'; status='complete'; usedBytes=1 }) }
 )
 if ((Find-DriveBaseline -Snapshots $baselineCandidates -Drive 'T:' -Current $baselineNow).scanId -ne 'valid') {
     throw 'An incomplete snapshot must never be selected as a drive baseline.'
@@ -188,7 +188,7 @@ try {
     if ($finalProgress.completedTopLevel -ne $finalProgress.totalTopLevel -or $finalProgress.totalTopLevel -ne 4) {
         throw "Every top-level subtree must be complete in final progress."
     }
-    $expectedScanProperties = @('childrenEnumerationComplete','drive','enumerationComplete','errors','excluded','records','rootPath','scopeSignature','scopeVersion','status','unavailable')
+    $expectedScanProperties = @('childrenEnumerationComplete','drive','enumerationComplete','errors','excluded','records','rootPath','scopeSignature','scopeVersion','status','unavailable','volumeGuid')
     $actualScanProperties = @($scan.PSObject.Properties.Name | Sort-Object)
     if (($actualScanProperties -join ',') -ne ($expectedScanProperties -join ',')) {
         throw "Progress support must not change the snapshot drive structure."

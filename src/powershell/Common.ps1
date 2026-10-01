@@ -262,7 +262,11 @@ function Write-DiskPulseAtomicCsv {
     param([string] $FinalPath, $Rows)
     $temporaryPath = New-DiskPulseTempPath $FinalPath
     try {
-        $Rows | Export-Csv -LiteralPath $temporaryPath -NoTypeInformation -Encoding UTF8
+        # Export-Csv takes its schema from the first row. Materialize the optional identity
+        # column for every row so a legacy first row cannot discard newer identities.
+        $Rows | Select-Object Timestamp,ID,Total,Free,Used,Percent,@{Name='VolumeGuid';Expression={
+            ConvertTo-DiskPulseVolumeGuid ([string](Get-DiskPulseMemberValue $_ 'VolumeGuid'))
+        }} | Export-Csv -LiteralPath $temporaryPath -NoTypeInformation -Encoding UTF8
         Import-Csv -LiteralPath $temporaryPath | Out-Null
         Publish-DiskPulseAtomicFile -FinalPath $FinalPath -TemporaryPath $temporaryPath
     }
@@ -353,15 +357,32 @@ function Get-DiskPulseMemberValue {
 # aliases resolve to the same GUID, while distinct volumes keep distinct GUIDs. Volume serial +
 # capacity is intentionally NOT used as a fallback because serial numbers are not globally unique;
 # if Windows cannot provide a GUID, the drive is kept and "unknown" stays unknown.
+function ConvertTo-DiskPulseVolumeGuid {
+    param([string]$Value)
+    $value = $Value.Trim().TrimEnd('\')
+    if ($value -notmatch '^\\\\\?\\Volume\{[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\}$') { return '' }
+    return $value.ToUpperInvariant()
+}
+
+function Test-DiskPulseSameVolume {
+    param($First, $Second)
+    $firstKey = Get-DiskPulseDriveIdentityKey $First
+    $secondKey = Get-DiskPulseDriveIdentityKey $Second
+    # Unknown == unknown is never proof of identity, including pre-identity snapshots.
+    return ($firstKey -and $secondKey -and $firstKey -eq $secondKey)
+}
+
+function Get-DiskPulseCapacityHistory {
+    param([array]$Rows, [string]$Drive, [string]$VolumeGuid)
+    $identity = [pscustomobject]@{VolumeGuid=$VolumeGuid}
+    @($Rows | Where-Object { $_.ID -eq $Drive -and (Test-DiskPulseSameVolume $_ $identity) } | Sort-Object Timestamp)
+}
+
 function Get-DiskPulseDriveIdentityKey {
     param($Drive)
-    $volumeGuid = [string](Get-DiskPulseMemberValue $Drive 'VolumeGuid')
-    if ([string]::IsNullOrWhiteSpace($volumeGuid)) { return $null }
-    $volumeGuid = $volumeGuid.Trim().TrimEnd('\')
-    if (-not $volumeGuid.StartsWith('\\?\Volume{', [StringComparison]::OrdinalIgnoreCase) -or -not $volumeGuid.EndsWith('}')) {
-        return $null
-    }
-    return 'VOLUME-GUID|' + $volumeGuid.ToUpperInvariant()
+    $volumeGuid = ConvertTo-DiskPulseVolumeGuid ([string](Get-DiskPulseMemberValue $Drive 'VolumeGuid'))
+    if (-not $volumeGuid) { return $null }
+    return 'VOLUME-GUID|' + $volumeGuid
 }
 
 function Get-DiskPulseDriveCanonicalRank {

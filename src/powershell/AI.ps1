@@ -362,6 +362,20 @@ function New-DiskPulseAIInput {
         [array]$HistoryCenter,
         $Snapshot
     )
+    # The normalized Windows identity stays local. References are allocated anew for each
+    # input and cannot identify a volume across analyses or disclose its GUID to a provider.
+    $volumeReferences = @{}
+    $volumeByDrive = @{}
+    foreach ($snapshotDrive in @(Get-DiskPulseMemberValue $Snapshot 'drives')) {
+        if (-not $snapshotDrive) { continue }
+        $key = Get-DiskPulseDriveIdentityKey $snapshotDrive
+        $reference = $null
+        if ($key) {
+            if (-not $volumeReferences.ContainsKey($key)) { $volumeReferences[$key] = 'volume-' + ($volumeReferences.Count + 1) }
+            $reference = $volumeReferences[$key]
+        }
+        $volumeByDrive[[string]$snapshotDrive.drive] = $reference
+    }
     $trendIndex = @{}
     foreach ($hc in @($HistoryCenter)) {
         $driveTrends = @{}
@@ -379,18 +393,23 @@ function New-DiskPulseAIInput {
 
     foreach ($dr in @($DirectoryResults)) {
         $drive = [string]$dr.drive
+        $volumeRef = $volumeByDrive[$drive]
         $cov = $dr.coverage
+        $comparisonAvailable = [bool]$volumeRef -and [bool]$dr.baselineScanId -and $cov -and $null -ne $cov.actualNetBytes
         $drives.Add([PSCustomObject]@{
             drive                  = $drive
+            volumeRef              = $volumeRef
+            volumeIdentityState    = if ($volumeRef) { 'known' } else { 'unknown' }
             scanStatus             = [string]$dr.status
-            actualNetChangeBytes   = if ($cov) { [int64]$cov.actualNetBytes } else { [int64]0 }
-            locatedNetChangeBytes  = if ($cov) { [int64]$cov.locatedNetBytes } else { [int64]0 }
-            unexplainedBytes       = if ($cov -and $cov.PSObject.Properties.Name -contains 'unexplainedBytes') { [int64]$cov.unexplainedBytes } else { [int64]0 }
-            coverageRate           = if ($cov) { [double]$cov.rate } else { [double]0 }
+            comparisonAvailable    = [bool]$comparisonAvailable
+            actualNetChangeBytes   = if ($comparisonAvailable) { [int64]$cov.actualNetBytes } else { $null }
+            locatedNetChangeBytes  = if ($comparisonAvailable) { [int64]$cov.locatedNetBytes } else { $null }
+            unexplainedBytes       = if ($comparisonAvailable -and $cov.PSObject.Properties.Name -contains 'unexplainedBytes' -and $null -ne $cov.unexplainedBytes) { [int64]$cov.unexplainedBytes } else { $null }
+            coverageRate           = if ($comparisonAvailable -and $null -ne $cov.rate) { [double]$cov.rate } else { $null }
             unavailablePathCount   = @($dr.unavailable).Count
         })
 
-        $reliable = @($dr.changes | Where-Object { $_.state -in @('created','changed','removed') })
+        $reliable = @($dr.changes | Where-Object { $comparisonAvailable -and $_.state -in @('created','changed','removed') })
         $l1 = @($reliable | Where-Object { $_.level -eq 1 })
         $l2 = @($reliable | Where-Object { $_.level -eq 2 })
 
@@ -420,6 +439,7 @@ function New-DiskPulseAIInput {
             $obj = [PSCustomObject]@{
                 path             = ConvertTo-DiskPulseRedactedPath ([string]$item.displayPath)
                 drive            = $drive
+                volumeRef        = $volumeRef
                 level            = [int]$item.level
                 state            = [string]$item.state
                 deltaBytes       = [int64]$item.deltaBytes
@@ -439,6 +459,7 @@ function New-DiskPulseAIInput {
                         parentPath       = ConvertTo-DiskPulseRedactedPath ([string]$item.displayPath)
                         path             = ConvertTo-DiskPulseRedactedPath ([string]$child.displayPath)
                         drive            = $drive
+                        volumeRef        = $volumeRef
                         level            = [int]$child.level
                         state            = [string]$child.state
                         deltaBytes       = [int64]$child.deltaBytes
@@ -453,10 +474,11 @@ function New-DiskPulseAIInput {
     $allTrends = [System.Collections.Generic.List[object]]::new()
     foreach ($hc in @($HistoryCenter)) {
         foreach ($t in @($hc.trends)) {
-            if ([int64]$t.cumulativeBytes -ne 0) {
+            if ($volumeByDrive[[string]$hc.drive] -and [int64]$t.cumulativeBytes -ne 0) {
                 $allTrends.Add([PSCustomObject]@{
                     path             = ConvertTo-DiskPulseRedactedPath ([string]$t.displayPath)
                     drive            = [string]$hc.drive
+                    volumeRef        = $volumeByDrive[[string]$hc.drive]
                     level            = [int]$t.level
                     label            = [string]$t.label
                     cumulativeBytes  = [int64]$t.cumulativeBytes

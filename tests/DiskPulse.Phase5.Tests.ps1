@@ -12,7 +12,7 @@ function Rec([string]$Key,[int64]$Size,[int]$Level=1) {
     [pscustomobject]@{ key=$Key; kind='directory'; displayPath=('T:\' + $Key); level=$Level; sizeBytes=$Size; enumerationComplete=$true; childrenEnumerationComplete=$true }
 }
 function Drive([string]$Drive,[string]$Status,[string]$Root,[int64]$Used,[array]$Records) {
-    [pscustomobject]@{ drive=$Drive; status=$Status; rootPath=$Root; usedBytes=$Used; records=$Records; unavailable=@(); excluded=@(); errors=@() }
+    [pscustomobject]@{ volumeGuid='\\?\Volume{11111111-1111-1111-1111-111111111111}'; drive=$Drive; status=$Status; rootPath=$Root; usedBytes=$Used; records=$Records; unavailable=@(); excluded=@(); errors=@() }
 }
 function Snap([string]$Id,[string]$At,[array]$Drives) {
     [pscustomobject]@{ scanId=$Id; startedAt=$At; completedAt=$At; status='complete'; drives=$Drives }
