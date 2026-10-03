@@ -10,6 +10,8 @@ DiskPulse 是一个零依赖、离线运行的 Windows 磁盘容量与目录变�
 
 ## 使用方法
 
+当前正式版本：[v1.5.1](https://github.com/seiya058904/DiskPulse/releases/tag/v1.5.1)。本维护版交付 PR #22 的卷身份历史隔离及未知 AI 测量值修复。
+
 普通用户请下载 GitHub Release 中最新的 `DiskPulse-Setup-*.exe`（带版本号）安装包并运行。安装程序会在当前用户目录创建程序、桌面快捷方式和开始菜单入口，不需要管理员权限。安装后双击 `DiskPulse`，点击“扫描磁盘”即可；扫描完成后会自动用默认浏览器打开看板。
 
 | 入口 | 说明 |
