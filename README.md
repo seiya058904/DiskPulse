@@ -1,20 +1,17 @@
-<div align="center">
-
 # DiskPulse
 
 **Know where disk space went — and what changed since last time.**
 
 面向 Windows 的离线磁盘容量、趋势与目录变化看板。扫描、建立基线、比较增减，最后生成可以直接在浏览器打开的本地报告。
 
-[**Download latest release**](https://github.com/seiya058904/DiskPulse/releases/latest) · [Getting started](#quick-start) · [Privacy](#privacy) · [Developer guide](AGENTS.md)
-
-![Windows](https://img.shields.io/badge/platform-Windows-blue?style=flat-square) ![Core](https://img.shields.io/badge/core-offline%20PowerShell-555?style=flat-square) ![Optional AI](https://img.shields.io/badge/AI-opt--in-6772e5?style=flat-square)
+**[⬇️ Get DiskPulse](https://github.com/seiya058904/DiskPulse/releases/latest)** · [Run a scan](#quick-start) · [Optional AI](#optional-ai-explanation-off-by-default) · [Privacy](#privacy-and-trust) · [Source guide](AGENTS.md)
 
 <img width="760" alt="DiskPulse project artwork" src="https://github.com/user-attachments/assets/4b06b439-eb31-4c4f-9e0e-f17e7529a342" />
 
-</div>
 
-## ✨ What DiskPulse shows / 核心能力
+## 📊 What the report tells you
+
+> **Two questions, one report:** How much space is left? What actually grew or shrank since the previous scan?
 
 | View | What it tells you |
 | --- | --- |
@@ -28,7 +25,9 @@
 
 ## Quick start
 
-**推荐方式：** 打开 [GitHub Releases](https://github.com/seiya058904/DiskPulse/releases/latest)，下载正式版本的 `DiskPulse-Setup-*.exe` 安装包。仓库预审计时记录的发行版为 [v1.5.1](https://github.com/seiya058904/DiskPulse/releases/tag/v1.5.1)。安装后运行 DiskPulse，点击“扫描磁盘”，报告会在默认浏览器打开。
+1. 从 [GitHub Releases](https://github.com/seiya058904/DiskPulse/releases/latest) 获取 `DiskPulse-Setup-*.exe`（预审计时记录的版本为 [v1.5.1](https://github.com/seiya058904/DiskPulse/releases/tag/v1.5.1)）。
+2. 安装后启动 **DiskPulse**，点击 **扫描磁盘**。
+3. 等待浏览器打开本地 HTML 看板。首次扫描建立基线；从第二次扫描开始查看目录增减与趋势。
 
 开发仓库中也保留了几种运行入口：
 
@@ -39,9 +38,9 @@
 | `check-profile.bat` | 性能诊断，生成 profile 记录 |
 | `configure-ai.bat` | 可选 AI 配置与关闭 |
 
-**运行环境：** Windows、Windows PowerShell 5.1+。日常扫描不需要安装 Node.js 或 Python。历史与报告默认位于 `%LOCALAPPDATA%\DiskPulse\data\runtime`，升级和默认卸载会保留这些数据。
+**Requirements:** Windows + Windows PowerShell 5.1 or newer. Normal use needs neither Node.js nor Python. History and reports live under `%LOCALAPPDATA%\DiskPulse\data\runtime`; ordinary upgrades and uninstall do not silently erase them.
 
-## 🧠 Optional AI — your choice / AI 分析完全可选
+## Optional AI explanation (off by default)
 
 DiskPulse 的磁盘扫描和 HTML 报告**完全离线**。仅在用户主动启用、配置 API 后，才尝试向所选服务发送脱敏的容量和目录变化摘要。也可完全不提供 API Key，使用报告中的 **“复制给 AI”** 功能进行手动解释。
 
@@ -52,7 +51,7 @@ DiskPulse 的磁盘扫描和 HTML 报告**完全离线**。仅在用户主动启
 
 运行 `configure-ai.bat` 可配置兼容 Chat Completions 的提供方或自定义接口，关闭或删除本地 AI 配置。API Key 在当前 Windows 用户范围使用 DPAPI 加密存储。AI 结果是辅助性解释，不应替代原始扫描事实；接口失败不影响磁盘报告。
 
-## Privacy
+## Privacy and trust
 
 - **不会读取文件内容**，只聚合允许的磁盘/目录容量信息；不跟踪单个文件，也不会自动删除文件。
 - 跳过 Reparse Point、Junction、符号链接及明确排除的系统目录。扫描不完整时不会覆盖最近的完整基线。
@@ -60,7 +59,7 @@ DiskPulse 的磁盘扫描和 HTML 报告**完全离线**。仅在用户主动启
 - 不发送 API Key、磁盘硬件标识或完整用户目录路径。卷 GUID 仅用于本地历史可靠性判断。
 - 只有身份确认且基线可比较的卷才形成有效趋势；未知变化保持未知，而非伪装为 `0`。
 
-## 🛠️ Develop & verify / 开发验证
+## Development / verification
 
 `src/` 是权威源代码；`check.bat` 是生成工件。**不要直接编辑生成文件中的程序逻辑。**
 
