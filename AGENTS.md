@@ -70,7 +70,7 @@ installer/              NSIS installer script
 - Browser QA is currently an **extended/local verification** step, not a required canonical CI stage.
 - Run it with:
   ```powershell
-  powershell.exe -NoProfile -ExecutionPolicy Bypass -File testsrowser\Invoke-DiskPulseBrowserQA.ps1 -HtmlPath <generated-DiskPulse.html>
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\browser\Invoke-DiskPulseBrowserQA.ps1 -HtmlPath <generated-DiskPulse.html>
   ```
 - The browser harness uses headless Chrome/Edge, monitors console errors, checks desktop/mobile overflow, toggles theme/compact controls, and captures screenshots under a temporary output directory.
 - Canonical dashboard source tests (`DiskPulse.DashboardSource.Tests.ps1`) run in the normal suite.
