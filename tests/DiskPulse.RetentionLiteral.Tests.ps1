@@ -75,8 +75,6 @@ function Get-RetainedIds {
 
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) ('DiskPulse-Retention-Suite-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $testRoot -Force | Out-Null
-# Every fixture root is created beneath $testRoot and passed explicitly.
-$fixtureArgs = @{ SuiteRoot = $testRoot }
 
 try {
     # --- 29 and 30 snapshots: nothing is removed, in both directory shapes ---
