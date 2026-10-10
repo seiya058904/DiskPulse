@@ -14,11 +14,14 @@ function Assert-True {
 }
 
 function New-RetentionPaths {
-    param([string]$Name)
+    param([string]$Name, [string]$SuiteRoot)
+    if (-not $SuiteRoot) { throw 'New-RetentionPaths requires the exclusive suite root so every fixture is auditable and cleanable.' }
     # The bracketed variant exercises literal-path handling: '[' and ']' are
     # wildcard characters for -Path but literal for -LiteralPath.
     $leafName = if ($Name -like '*bracket') { 'data[retention-test]' } else { 'data-retention-test' }
-    $root = Join-Path ([IO.Path]::GetTempPath()) ('DiskPulse-Retention-' + [guid]::NewGuid().ToString('N'))
+    # F-6: every fixture derives from the single suite root passed in, so the
+    # finally block can remove all created paths with one auditable deletion.
+    $root = Join-Path $SuiteRoot $Name
     $runtime = Join-Path $root $leafName
     $snapshots = Join-Path $runtime 'snapshots'
     New-Item -ItemType Directory -Path $snapshots -Force | Out-Null
@@ -72,12 +75,14 @@ function Get-RetainedIds {
 
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) ('DiskPulse-Retention-Suite-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $testRoot -Force | Out-Null
+# Every fixture root is created beneath $testRoot and passed explicitly.
+$fixtureArgs = @{ SuiteRoot = $testRoot }
 
 try {
     # --- 29 and 30 snapshots: nothing is removed, in both directory shapes ---
     foreach ($count in @(29, 30)) {
         foreach ($shape in @('plain', 'bracket')) {
-            $paths = New-RetentionPaths ('keep' + $count + $shape)
+            $paths = New-RetentionPaths ('keep' + $count + $shape) $testRoot
             $ids = 0..($count - 1) | ForEach-Object { 'ret-{0:D2}' -f $_ }
             Write-RetentionSnapshots -Paths $paths -Snapshots @($ids | ForEach-Object { New-RetentionSnapshot -ScanId $_ })
             Invoke-SnapshotRetention -Paths $paths -Snapshots @(Read-Snapshots $paths) -CurrentDrives @('C:') -CurrentScanId 'ret-29' -Limit 30
@@ -89,7 +94,7 @@ try {
     # --- 31 snapshots: exactly the oldest snapshot is removed; plain and
     #     bracketed directories must produce the identical retention set ---
     foreach ($shape in @('plain', 'bracket')) {
-        $paths = New-RetentionPaths ('limit31' + $shape)
+        $paths = New-RetentionPaths ('limit31' + $shape) $testRoot
         $ids = 0..30 | ForEach-Object { 'ret-{0:D2}' -f $_ }
         Write-RetentionSnapshots -Paths $paths -Snapshots @($ids | ForEach-Object { New-RetentionSnapshot -ScanId $_ })
         Invoke-SnapshotRetention -Paths $paths -Snapshots @(Read-Snapshots $paths) -CurrentDrives @('C:') -CurrentScanId 'ret-30' -Limit 30
@@ -101,7 +106,7 @@ try {
 
     # --- 35 snapshots: the five oldest go, the newest 30 remain in both shapes ---
     foreach ($shape in @('plain', 'bracket')) {
-        $paths = New-RetentionPaths ('limit35' + $shape)
+        $paths = New-RetentionPaths ('limit35' + $shape) $testRoot
         $ids = 0..34 | ForEach-Object { 'ret-{0:D2}' -f $_ }
         Write-RetentionSnapshots -Paths $paths -Snapshots @($ids | ForEach-Object { New-RetentionSnapshot -ScanId $_ })
         Invoke-SnapshotRetention -Paths $paths -Snapshots @(Read-Snapshots $paths) -CurrentDrives @('C:') -CurrentScanId 'ret-34' -Limit 30
@@ -113,7 +118,7 @@ try {
 
     # --- per-drive protection: the only D: snapshot survives even when oldest ---
     foreach ($shape in @('plain', 'bracket')) {
-        $paths = New-RetentionPaths ('driveprot' + $shape)
+        $paths = New-RetentionPaths ('driveprot' + $shape) $testRoot
         $ids = 0..30 | ForEach-Object { 'ret-{0:D2}' -f $_ }
         $snapshots = @($ids | ForEach-Object { New-RetentionSnapshot -ScanId $_ })
         # ret-00 is the oldest overall but the only snapshot containing a D: drive
@@ -128,7 +133,7 @@ try {
 
     # --- malformed files and other extensions are ignored and preserved ---
     foreach ($shape in @('plain', 'bracket')) {
-        $paths = New-RetentionPaths ('malformed' + $shape)
+        $paths = New-RetentionPaths ('malformed' + $shape) $testRoot
         $ids = 0..30 | ForEach-Object { 'ret-{0:D2}' -f $_ }
         Write-RetentionSnapshots -Paths $paths -Snapshots @($ids | ForEach-Object { New-RetentionSnapshot -ScanId $_ })
         Set-Content -LiteralPath (Join-Path $paths.Snapshots 'bad.json') -Value '{bad json' -Encoding UTF8
@@ -148,5 +153,10 @@ try {
 finally {
     if (Test-Path -LiteralPath $testRoot) {
         Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    if (Test-Path -LiteralPath $testRoot) {
+        # F-6: never leave an unowned fixture root behind silently; surface the
+        # exact path so it can be audited and cleaned deliberately.
+        Write-Warning ("DiskPulse retention fixture root could not be fully removed; audit and clean it manually: {0}" -f $testRoot)
     }
 }
