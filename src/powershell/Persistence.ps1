@@ -85,6 +85,6 @@ function Remove-StaleTemporaryFiles {
 function Invoke-SnapshotRetention {
     param($Paths,[array]$Snapshots,[array]$CurrentDrives,[string]$CurrentScanId,[int]$Limit=30)
     $protected=@{$CurrentScanId=$true};foreach($drive in $CurrentDrives){$Snapshots|Where-Object{@($_.drives|Where-Object{$_.drive-eq$drive-and$_.status-in@('baseline','complete')}).Count}|Sort-Object{[datetime]$_.completedAt}-Descending|Select-Object -First 2|ForEach-Object{$protected[[string]$_.scanId]=$true}}
-    $files=@(Get-ChildItem -LiteralPath $Paths.Snapshots -Filter '*.json' -File|ForEach-Object{$s=try{Get-Content -Raw $_.FullName -Encoding UTF8|ConvertFrom-Json}catch{$null};if($s){[pscustomobject]@{File=$_;Snapshot=$s;Partial=(@($s.drives|Where-Object{$_.status-eq'partial'}).Count-gt 0)}}})
+    $files=@(Get-ChildItem -LiteralPath $Paths.Snapshots -Filter '*.json' -File|ForEach-Object{$s=try{Get-Content -Raw -LiteralPath $_.FullName -Encoding UTF8|ConvertFrom-Json}catch{$null};if($s){[pscustomobject]@{File=$_;Snapshot=$s;Partial=(@($s.drives|Where-Object{$_.status-eq'partial'}).Count-gt 0)}}})
     foreach($candidate in @($files|Where-Object{-not$protected.ContainsKey([string]$_.Snapshot.scanId)}|Sort-Object @{e='Partial';Descending=$true},@{e={$_.Snapshot.completedAt};Ascending=$true})){if($files.Count-le$Limit){break};try{Remove-Item -LiteralPath $candidate.File.FullName -Force;$files=@($files|Where-Object{$_.File.FullName-ne$candidate.File.FullName})}catch{Write-Warning "无法清理快照 $($candidate.File.Name)"}}
 }
