@@ -3064,7 +3064,7 @@ $directoryResults = New-Object 'Collections.Generic.List[object]'
 foreach ($driveSnapshot in $snapshot.drives) {
     $baselineSnapshot = Find-DriveBaseline -Snapshots @($priorSnapshots) -Drive $driveSnapshot.drive -Current $snapshot
     $baselineDrive = if ($baselineSnapshot) { $baselineSnapshot.drives | Where-Object drive -eq $driveSnapshot.drive | Select-Object -First 1 } else { $null }
-    $changes = Compare-DriveRecords $driveSnapshot $baselineDrive
+    $changes = @(Compare-DriveRecords $driveSnapshot $baselineDrive)
     $directoryResults.Add([PSCustomObject]@{ drive=$driveSnapshot.drive; status=$driveSnapshot.status; baselineScanId=if($baselineSnapshot){$baselineSnapshot.scanId}else{$null}; baselineCompletedAt=if($baselineSnapshot){$baselineSnapshot.completedAt}else{$null}; changes=$changes; coverage=Get-ChangeCoverage $driveSnapshot $baselineDrive $changes; errors=$driveSnapshot.errors; unavailable=$driveSnapshot.unavailable; excluded=$driveSnapshot.excluded })
 }
 Profile-Mark "compareRecords"
