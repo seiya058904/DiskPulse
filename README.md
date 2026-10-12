@@ -74,9 +74,11 @@
 
 Download the current Windows installer from **[GitHub Releases](https://github.com/seiya058904/DiskPulse/releases/latest)**.
 
-- **Current verified version:** [v1.5.1](https://github.com/seiya058904/DiskPulse/releases/tag/v1.5.1)
-- **Installer:** [DiskPulse-Setup-1.5.1.exe](https://github.com/seiya058904/DiskPulse/releases/download/v1.5.1/DiskPulse-Setup-1.5.1.exe)
-- **Checksum:** [SHA-256 file](https://github.com/seiya058904/DiskPulse/releases/download/v1.5.1/DiskPulse-Setup-1.5.1.sha256)
+- **Current verified version:** [v1.5.2](https://github.com/seiya058904/DiskPulse/releases/tag/v1.5.2)
+- **Installer:** [DiskPulse-Setup-1.5.2.exe](https://github.com/seiya058904/DiskPulse/releases/download/v1.5.2/DiskPulse-Setup-1.5.2.exe)
+- **Checksum:** [SHA-256 file](https://github.com/seiya058904/DiskPulse/releases/download/v1.5.2/DiskPulse-Setup-1.5.2.sha256)
+
+Migration initialization now publishes a verified ledger before its completion marker. If an older installation already has `migration-initialized.json` but its ledger is missing, migration stops to protect historical state. Preserve the data and original sources, and recover the original ledger after confirming ownership; do not delete the marker or restart imports merely because the runtime directory looks empty.
 
 ### 2. Run a scan
 
