@@ -108,7 +108,13 @@ function Read-IdentityReport($Name) {
     $html=Get-Content -Raw -LiteralPath (Join-Path $env:DISKPULSE_DATA_ROOT 'runtime/DiskPulse.html') -Encoding UTF8
     $match=[regex]::Match($html, ('const RAW_'+$Name+' = (?<json>[^\r\n]+);'))
     if(-not $match.Success){throw "Missing report field $Name"}
-    return ConvertFrom-Json $match.Groups['json'].Value
+    $value = ConvertFrom-Json $match.Groups['json'].Value
+    if ($Name -eq 'DIRECTORY') {
+        foreach ($entry in $value) {
+            Assert-Identity ($entry.changes -is [array]) 'Generated directory changes must stay an array, including single-row reports.'
+        }
+    }
+    return $value
 }
 try {
     $script:fixtureGuid=$guidA; $script:fixtureUsed=1000; Invoke-DiskPulse

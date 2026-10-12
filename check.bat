@@ -2678,9 +2678,22 @@ function Invoke-DiskPulseMigration {
             } catch { throw 'migration state unavailable; original ledger preserved.' }
         } else {
             if (Test-Path -LiteralPath $initialized) { throw 'migration state unavailable; ledger missing.' }
-            Write-DiskPulseAtomicText -FinalPath $initialized -Content '{"schemaVersion":1}'
             $ledger = [pscustomobject]@{schemaVersion=1;sources=@()}
             Save-DiskPulseMigrationLedger $ledgerPath $ledger
+        }
+        # The ledger is the recovery authority. Publish and verify it before
+        # declaring initialization complete; a failed marker write can retry
+        # against the valid ledger without restarting imported sources.
+        if (-not (Test-Path -LiteralPath $initialized)) {
+            $verified = Get-Content -Raw -LiteralPath $ledgerPath -Encoding UTF8 | ConvertFrom-Json
+            if ($verified.schemaVersion -ne 1 -or $verified.sources -isnot [array]) { throw 'migration ledger initialization verification failed.' }
+            Write-DiskPulseAtomicText -FinalPath $initialized -Content '{"schemaVersion":1}' -Validate {
+                param($temporary)
+                $value = Get-Content -Raw -LiteralPath $temporary -Encoding UTF8 | ConvertFrom-Json
+                return $value.schemaVersion -eq 1
+            }
+            $verifiedMarker = Get-Content -Raw -LiteralPath $initialized -Encoding UTF8 | ConvertFrom-Json
+            if ($verifiedMarker.schemaVersion -ne 1) { throw 'migration marker initialization verification failed.' }
         }
         $markerSources = @(); $markers=@{}
         $markerFiles=@(Get-ChildItem -LiteralPath $data -Filter '*.migration-source' -File | ForEach-Object FullName)
@@ -3051,7 +3064,7 @@ $directoryResults = New-Object 'Collections.Generic.List[object]'
 foreach ($driveSnapshot in $snapshot.drives) {
     $baselineSnapshot = Find-DriveBaseline -Snapshots @($priorSnapshots) -Drive $driveSnapshot.drive -Current $snapshot
     $baselineDrive = if ($baselineSnapshot) { $baselineSnapshot.drives | Where-Object drive -eq $driveSnapshot.drive | Select-Object -First 1 } else { $null }
-    $changes = Compare-DriveRecords $driveSnapshot $baselineDrive
+    $changes = @(Compare-DriveRecords $driveSnapshot $baselineDrive)
     $directoryResults.Add([PSCustomObject]@{ drive=$driveSnapshot.drive; status=$driveSnapshot.status; baselineScanId=if($baselineSnapshot){$baselineSnapshot.scanId}else{$null}; baselineCompletedAt=if($baselineSnapshot){$baselineSnapshot.completedAt}else{$null}; changes=$changes; coverage=Get-ChangeCoverage $driveSnapshot $baselineDrive $changes; errors=$driveSnapshot.errors; unavailable=$driveSnapshot.unavailable; excluded=$driveSnapshot.excluded })
 }
 Profile-Mark "compareRecords"
