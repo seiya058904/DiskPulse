@@ -2888,7 +2888,7 @@ $historyRows = [System.Collections.Generic.List[PSObject]]::new()
 $historySource = if (Test-Path -LiteralPath $logFile) { $logFile } elseif (Test-Path -LiteralPath $legacyFile) { $legacyFile } else { $null }
 if ($historySource) {
     try {
-        $imported = Import-Csv -LiteralPath $historySource
+        $imported = Import-Csv -LiteralPath $historySource -ErrorAction Stop
         foreach ($row in $imported) {
             $props = $row.PSObject.Properties.Name
             $rowId = if ($props -contains "ID") { [string]$row.ID } else { "" }
@@ -2915,7 +2915,8 @@ if ($historySource) {
         }
     }
     catch {
-        Write-Warning "History unreadable, starting fresh."
+        # Unknown history is not empty history. Abort before any result publication.
+        throw "History unreadable; scan cancelled to preserve existing history. Close the application holding the CSV and retry. $($_.Exception.Message)"
     }
 }
 Profile-Mark "readHistory"
