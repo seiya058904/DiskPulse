@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 320" role="img" aria-labelledby="t d">
+  <title id="t">DiskPulse</title>
+  <desc id="d">Two stacked capacity bars labeled before and after, with the growth segment highlighted and a pulse line running through them. An illustration of the report's comparison model, not a screenshot.</desc>
+  <rect width="1200" height="320" fill="#0d1520"/>
+  <g stroke="#1b2a3b" stroke-width="2">
+    <path d="M620 40V280M740 40V280M860 40V280M980 40V280M1100 40V280"/>
+  </g>
+  <text x="56" y="152" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="76" font-weight="700" fill="#f1f5f9">DiskPulse</text>
+  <text x="58" y="212" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="38" fill="#4ad3d1">See where the space went.</text>
+  <path d="M58 250h64l12-16 14 32 12-24 10 8h70" fill="none" stroke="#4ad3d1" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Baseline bar -->
+  <rect x="560" y="84" width="580" height="54" rx="10" fill="#17283b"/>
+  <rect x="560" y="84" width="318" height="54" rx="10" fill="#3b82f6"/>
+  <rect x="640" y="84" width="4" height="54" fill="#0d1520"/>
+  <!-- Current bar -->
+  <rect x="560" y="178" width="580" height="54" rx="10" fill="#17283b"/>
+  <rect x="560" y="178" width="318" height="54" rx="10" fill="#3b82f6"/>
+  <rect x="878" y="178" width="118" height="54" fill="#f5a524"/>
+  <rect x="640" y="178" width="4" height="54" fill="#0d1520"/>
+  <!-- Pulse through both bars -->
+  <path d="M520 262H700l24-84 28 112 26-92 20 64H1140" fill="none" stroke="#4ad3d1" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M996 160V232" stroke="#f5a524" stroke-width="3" stroke-dasharray="6 6"/>
+</svg>
