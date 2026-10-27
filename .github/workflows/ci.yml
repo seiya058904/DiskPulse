@@ -2,9 +2,17 @@ name: DiskPulse CI
 
 on:
   pull_request:
+    paths-ignore:
+      - 'AGENTS.md'
+      - 'CLAUDE.md'
+      - '**/readme-*'
   push:
     branches:
       - main
+    paths-ignore:
+      - 'AGENTS.md'
+      - 'CLAUDE.md'
+      - '**/readme-*'
   workflow_dispatch:
 
 permissions:
