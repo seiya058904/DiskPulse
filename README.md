@@ -21,7 +21,7 @@
 
 <p align="center">
   <sub>WINDOWS &nbsp;·&nbsp; OFFLINE-FIRST &nbsp;·&nbsp; LOCAL HTML REPORTS &nbsp;·&nbsp; AI OPTIONAL</sub><br>
-  <sub>LATEST VERIFIED RELEASE: v1.5.2</sub>
+  <sub>LATEST VERIFIED RELEASE: v1.5.3</sub>
 </p>
 
 <p align="center">
@@ -74,9 +74,9 @@
 
 Download the current Windows installer from **[GitHub Releases](https://github.com/seiya058904/DiskPulse/releases/latest)**.
 
-- **Current verified version:** [v1.5.2](https://github.com/seiya058904/DiskPulse/releases/tag/v1.5.2)
-- **Installer:** [DiskPulse-Setup-1.5.2.exe](https://github.com/seiya058904/DiskPulse/releases/download/v1.5.2/DiskPulse-Setup-1.5.2.exe)
-- **Checksum:** [SHA-256 file](https://github.com/seiya058904/DiskPulse/releases/download/v1.5.2/DiskPulse-Setup-1.5.2.sha256)
+- **Current verified version:** [v1.5.3](https://github.com/seiya058904/DiskPulse/releases/tag/v1.5.3)
+- **Installer:** [DiskPulse-Setup-1.5.3.exe](https://github.com/seiya058904/DiskPulse/releases/download/v1.5.3/DiskPulse-Setup-1.5.3.exe)
+- **Checksum:** [SHA-256 file](https://github.com/seiya058904/DiskPulse/releases/download/v1.5.3/DiskPulse-Setup-1.5.3.sha256)
 
 ### 2. Run a scan
 
