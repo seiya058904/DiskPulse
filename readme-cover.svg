@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="480" viewBox="0 0 1440 480" role="img" aria-labelledby="title desc">
+<title id="title">DiskPulse — see where the space went</title><desc id="desc">Original conceptual storage rings and comparison bars, not measured scan results or a dashboard screenshot.</desc>
+<defs><linearGradient id="bg" x2="1" y2="1"><stop stop-color="#1b1832"/><stop offset="1" stop-color="#102c38"/></linearGradient><linearGradient id="bar" x2="1"><stop stop-color="#e7b576"/><stop offset="1" stop-color="#f2d6a5"/></linearGradient></defs>
+<rect width="1440" height="480" rx="24" fill="url(#bg)"/><path d="M718 0v480M744 0v480" stroke="#b9cad7" stroke-opacity=".06"/>
+<g font-family="Segoe UI,Arial,sans-serif"><text x="76" y="90" fill="#e6b77d" font-size="15" font-weight="600" letter-spacing="4">KNOW WHAT CHANGED</text><text x="70" y="204" fill="#f5f0e9" font-size="86" font-weight="700">DiskPulse</text><text x="76" y="265" fill="#ced4df" font-size="29">See where the space went.</text><text x="76" y="317" fill="#9dacbe" font-size="20">Local scans. Clear comparisons. Useful history.</text>
+<rect x="76" y="367" width="141" height="36" rx="18" fill="#303247"/><text x="146" y="391" text-anchor="middle" fill="#efe1ce" font-size="14" letter-spacing="1">OFFLINE FIRST</text><text x="242" y="391" fill="#b7cad3" font-size="15" letter-spacing="2">WINDOWS / HTML REPORTS</text></g>
+<g transform="translate(1027 228) rotate(-90)"><circle r="146" fill="none" stroke="#35414f" stroke-width="29"/><circle r="146" fill="none" stroke="#eabb84" stroke-width="29" stroke-dasharray="354 564"/><circle r="146" fill="none" stroke="#75c8c0" stroke-width="29" stroke-dasharray="210 708" stroke-dashoffset="-369"/><circle r="146" fill="none" stroke="#829ed0" stroke-width="29" stroke-dasharray="151 767" stroke-dashoffset="-594"/>
+<circle r="105" fill="none" stroke="#819caa" stroke-width="1" stroke-dasharray="3 10"/><circle r="76" fill="none" stroke="#476270" stroke-width="1"/></g>
+<circle cx="1027" cy="228" r="35" fill="#183d48" stroke="#527889"/><circle cx="1027" cy="228" r="8" fill="#d3e9e5"/>
+<path d="M1178 228h91v-91h100M1140 320h129v42h100" fill="none" stroke="#678493" stroke-width="1.5"/>
+<rect x="1269" y="92" width="88" height="9" rx="4" fill="url(#bar)"/><rect x="1269" y="111" width="66" height="9" rx="4" fill="#75c8c0"/><rect x="1269" y="130" width="42" height="9" rx="4" fill="#829ed0"/>
+<g font-family="Segoe UI,Arial,sans-serif" font-size="12" letter-spacing="2" fill="#aec6cd"><text x="861" y="434">SCAN</text><text x="988" y="434">COMPARE</text><text x="1152" y="434">UNDERSTAND</text></g><path d="M920 429h37m118 0h45" stroke="#557989"/>
+</svg>

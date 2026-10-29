@@ -1,6 +1,10 @@
 <h1 align="center">💽 DiskPulse</h1>
 
 <p align="center">
+  <img src="readme-cover.svg" width="100%" alt="An original illustration of storage rings and comparison bars" />
+</p>
+
+<p align="center">
   <strong>See where the space went.</strong>
 </p>
 
