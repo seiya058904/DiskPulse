@@ -48,6 +48,8 @@ installer/              NSIS installer script
 
 **Key constraint:** The here-string closing delimiter `'@` must appear at the start of a line. The HTML template body must not contain a line starting with `'@`.
 
+Runtime diagnostics use `runtime/last-run.log` and, with `DISKPULSE_PROFILE=1`, `runtime/last-profile.json`. `DISKPULSE_SILENT=1` suppresses progress/host output but retains critical-disk notifications. Read `src/powershell/Common.ps1` and `src/powershell/App.ps1` for mode handling, history limits and status thresholds; do not change these during documentation maintenance.
+
 ## Scanner and Test Architecture
 
 - Canonical C# scanner source lives in `src/scanner/DiskPulseFastScanner.cs`; the PowerShell wrapper is `src/powershell/Scanner.ps1`.
@@ -174,7 +176,7 @@ git diff --check        # whitespace errors
 ## Coding Style
 
 - Follow adjacent code conventions; no formatter or linter is configured
-- PowerShell: `Set-StrictMode -Version Latest`, `$ErrorActionPreference = "Stop"`
+- PowerShell: `Set-StrictMode -Version Latest`, `$ErrorActionPreference = "Stop"`; remain compatible with Windows PowerShell 5.1 (no `??`, `[string]::Take` or PS7-only syntax).
 - Functions use `Verb-Noun` naming (e.g., `Compare-DriveRecords`, `New-HistoryComparisonCenter`)
 - C# code embedded in `Add-Type` uses inline style
 - HTML template is a single-quoted here-string — no PowerShell interpolation inside it
